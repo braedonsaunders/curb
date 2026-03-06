@@ -14,8 +14,22 @@ export async function GET(request: NextRequest) {
     const grade = searchParams.get('grade');
     const search = searchParams.get('search');
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '20', 10)));
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || searchParams.get('pageSize') || '20', 10)));
     const offset = (page - 1) * limit;
+
+    // Sorting
+    const allowedSortColumns: Record<string, string> = {
+      name: 'b.name',
+      category: 'b.category',
+      city: 'b.city',
+      status: 'b.status',
+      grade: 'latest_audit.overall_grade',
+      created_at: 'b.created_at',
+    };
+    const sortParam = searchParams.get('sort');
+    const dirParam = searchParams.get('dir');
+    const sortColumn = (sortParam && allowedSortColumns[sortParam]) || 'b.updated_at';
+    const sortDirection = dirParam === 'asc' ? 'ASC' : 'DESC';
 
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -36,9 +50,9 @@ export async function GET(request: NextRequest) {
     }
 
     if (search) {
-      conditions.push('(b.name LIKE ? OR b.city LIKE ? OR b.address LIKE ?)');
+      conditions.push('(b.name LIKE ? OR b.category LIKE ? OR b.city LIKE ? OR b.address LIKE ?)');
       const searchTerm = `%${search}%`;
-      params.push(searchTerm, searchTerm, searchTerm);
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm);
     }
 
     // Exclude archived by default unless explicitly requested
@@ -67,13 +81,20 @@ export async function GET(request: NextRequest) {
         latest_audit.overall_grade,
         latest_audit.performance_score,
         latest_audit.has_website as audit_has_website,
-        latest_audit.created_at as audit_date
+        latest_audit.created_at as audit_date,
+        latest_site.id as site_id,
+        latest_site.slug as site_slug,
+        latest_site.version as site_version,
+        latest_site.created_at as site_created_at
       FROM businesses b
       LEFT JOIN audits latest_audit ON latest_audit.id = (
         SELECT a2.id FROM audits a2 WHERE a2.business_id = b.id ORDER BY a2.created_at DESC LIMIT 1
       )
+      LEFT JOIN generated_sites latest_site ON latest_site.id = (
+        SELECT gs.id FROM generated_sites gs WHERE gs.business_id = b.id ORDER BY gs.version DESC LIMIT 1
+      )
       ${whereClause}
-      ORDER BY b.updated_at DESC
+      ORDER BY ${sortColumn} ${sortDirection}
       LIMIT ? OFFSET ?
     `;
 

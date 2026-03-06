@@ -95,10 +95,9 @@ export async function updateEmailStatus(
 
   const validStatuses = [
     "draft",
-    "ready",
+    "approved",
     "sent",
     "bounced",
-    "replied",
   ];
   if (!validStatuses.includes(status)) {
     throw new Error(

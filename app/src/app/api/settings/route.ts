@@ -7,21 +7,36 @@ function maskKey(key: string): string {
   return `${key.slice(0, 8)}...${key.slice(-4)}`;
 }
 
-function getMaskedConfig(): Record<string, unknown> {
+function getStructuredConfig(): Record<string, unknown> {
   const config = getConfig();
   return {
-    ...config,
-    anthropicApiKey: maskKey(config.anthropicApiKey),
-    googlePlacesApiKey: maskKey(config.googlePlacesApiKey),
-    googlePageSpeedApiKey: maskKey(config.googlePageSpeedApiKey),
+    apiKeys: {
+      googlePlaces: maskKey(config.googlePlacesApiKey),
+      pageSpeed: maskKey(config.googlePageSpeedApiKey),
+      anthropic: maskKey(config.anthropicApiKey),
+    },
+    defaults: {
+      location: config.defaultLocation,
+      radius: config.defaultRadiusKm,
+      categories: [],
+    },
+    outreach: {
+      yourName: config.ownerName,
+      businessName: config.businessName,
+      address: config.businessAddress,
+      email: config.businessEmail,
+    },
+    pricing: {
+      text: "",
+    },
   };
 }
 
 export async function GET() {
   try {
     initializeDatabase();
-    const config = getMaskedConfig();
-    return NextResponse.json({ settings: config });
+    const config = getStructuredConfig();
+    return NextResponse.json(config);
   } catch (err) {
     console.error('Get settings error:', err);
     const message = err instanceof Error ? err.message : 'Internal server error';
@@ -82,11 +97,7 @@ export async function PUT(request: NextRequest) {
       googlePageSpeedApiKey: maskKey(merged.googlePageSpeedApiKey),
     };
 
-    return NextResponse.json({
-      success: true,
-      message: 'Settings received. To persist API key changes, update your .env file and restart the server.',
-      settings: response,
-    });
+    return NextResponse.json(response);
   } catch (err) {
     console.error('Update settings error:', err);
     const message = err instanceof Error ? err.message : 'Internal server error';
@@ -95,4 +106,8 @@ export async function PUT(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function PATCH(request: NextRequest) {
+  return PUT(request);
 }

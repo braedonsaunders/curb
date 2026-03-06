@@ -41,11 +41,35 @@ export async function GET(
       'SELECT * FROM emails WHERE business_id = ? ORDER BY created_at DESC'
     ).all(businessId);
 
+    // Add camelCase aliases for audits
+    const normalizedAudits = (audits as Record<string, unknown>[]).map((audit) => ({
+      ...audit,
+      performance: audit.performance_score,
+      accessibility: audit.accessibility_score,
+      seo: audit.seo_score,
+      mobile: audit.is_mobile_friendly,
+      ssl: audit.is_ssl,
+      grade: audit.overall_grade,
+      hasWebsite: audit.has_website,
+    }));
+
+    // Add camelCase aliases for generated_sites
+    const normalizedSites = (generatedSites as Record<string, unknown>[]).map((site) => ({
+      ...site,
+      generatedAt: site.created_at,
+    }));
+
+    // Add camelCase aliases for emails
+    const normalizedEmails = (emails as Record<string, unknown>[]).map((email) => ({
+      ...email,
+      createdAt: email.created_at,
+    }));
+
     return NextResponse.json({
       ...(business as Record<string, unknown>),
-      audits,
-      generatedSites,
-      emails,
+      audits: normalizedAudits,
+      generatedSites: normalizedSites,
+      emails: normalizedEmails,
     });
   } catch (err) {
     console.error('Get business error:', err);
