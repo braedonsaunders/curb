@@ -120,7 +120,7 @@ export async function generateSite(
   businessData: BusinessData
 ): Promise<string> {
   const client = getClient();
-  const promptTemplate = loadPromptTemplate("generate-site.txt");
+  const promptTemplate = loadPromptTemplate("site-generation.md");
   const businessContext = buildBusinessContext(businessData);
 
   let userPrompt: string;
@@ -157,7 +157,7 @@ export async function generateEmail(
   config: Config
 ): Promise<{ subject: string; body: string }> {
   const client = getClient();
-  const promptTemplate = loadPromptTemplate("generate-email.txt");
+  const promptTemplate = loadPromptTemplate("email-outreach.md");
   const businessContext = buildBusinessContext(businessData);
 
   let userPrompt: string;
@@ -217,7 +217,7 @@ export async function auditWebsite(
   businessName: string
 ): Promise<{ grade: string; summary: string }> {
   const client = getClient();
-  const promptTemplate = loadPromptTemplate("audit-website.txt");
+  const promptTemplate = loadPromptTemplate("audit-scoring.md");
 
   let userPrompt: string;
   if (promptTemplate) {

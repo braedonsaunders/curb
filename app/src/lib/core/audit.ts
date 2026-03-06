@@ -163,7 +163,7 @@ export async function auditBusiness(
     );
 
     db.prepare(
-      "UPDATE businesses SET status = 'audited', updated_at = datetime('now') WHERE id = ?"
+      "UPDATE businesses SET status = 'flagged', updated_at = datetime('now') WHERE id = ?"
     ).run(businessId);
 
     return {
@@ -205,7 +205,7 @@ export async function auditBusiness(
     );
 
     db.prepare(
-      "UPDATE businesses SET status = 'audited', updated_at = datetime('now') WHERE id = ?"
+      "UPDATE businesses SET status = 'flagged', updated_at = datetime('now') WHERE id = ?"
     ).run(businessId);
 
     return {
@@ -282,9 +282,10 @@ export async function auditBusiness(
     rawJson
   );
 
+  const newStatus = grade === 'A' ? 'skipped' : (grade === 'D' || grade === 'F') ? 'flagged' : 'audited';
   db.prepare(
-    "UPDATE businesses SET status = 'audited', updated_at = datetime('now') WHERE id = ?"
-  ).run(businessId);
+    "UPDATE businesses SET status = ?, updated_at = datetime('now') WHERE id = ?"
+  ).run(newStatus, businessId);
 
   return {
     businessId,

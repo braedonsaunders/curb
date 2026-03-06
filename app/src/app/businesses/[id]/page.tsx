@@ -79,48 +79,62 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 interface AuditData {
+  id: number;
   performance: number;
   accessibility: number;
   seo: number;
   grade: string;
-  mobile: boolean;
-  ssl: boolean;
+  mobile: boolean | number;
+  ssl: boolean | number;
   notes: string;
+  performance_score: number;
+  accessibility_score: number;
+  seo_score: number;
+  overall_grade: string;
+  is_mobile_friendly: boolean | number;
+  is_ssl: boolean | number;
+  has_website: boolean | number;
+  hasWebsite: boolean | number;
+  created_at: string;
 }
 
 interface SiteData {
+  id: number;
   slug: string;
   version: number;
   generatedAt: string;
-  prompt: string;
+  created_at: string;
+  prompt_used: string;
+  site_path: string;
 }
 
 interface EmailDraft {
-  id: string;
+  id: number;
   subject: string;
   body: string;
   status: string;
   createdAt: string;
+  created_at: string;
 }
 
 interface BusinessDetail {
-  id: string;
+  id: number;
   name: string;
   category: string;
   address: string;
   city: string;
   phone: string;
-  website: string;
+  website_url: string;
+  place_id: string;
+  google_maps_url: string;
   rating: number;
-  reviewCount: number;
-  placeId: string;
+  review_count: number;
   status: string;
   notes: string;
-  hours: Record<string, string>;
-  photos: string[];
-  reviews: Array<{ author: string; rating: number; text: string; time: string }>;
-  audit: AuditData | null;
-  site: SiteData | null;
+  hours_json: string | null;
+  photos_json: string | null;
+  audits: AuditData[];
+  generatedSites: SiteData[];
   emails: EmailDraft[];
 }
 
@@ -138,7 +152,7 @@ export default function BusinessDetailPage() {
   const [editSubject, setEditSubject] = useState("");
   const [editBody, setEditBody] = useState("");
   const [editEmailOpen, setEditEmailOpen] = useState(false);
-  const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set());
+  const [expandedEmails, setExpandedEmails] = useState<Set<number>>(new Set());
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   useEffect(() => {
@@ -223,6 +237,24 @@ export default function BusinessDetailPage() {
     }
   }
 
+  // Derived data from arrays
+  const audit = biz?.audits?.[0] ?? null;
+  const site = biz?.generatedSites?.[0] ?? null;
+  const hours: Record<string, string> = (() => {
+    try {
+      return biz?.hours_json ? JSON.parse(biz.hours_json) : {};
+    } catch {
+      return {};
+    }
+  })();
+  const photos: string[] = (() => {
+    try {
+      return biz?.photos_json ? JSON.parse(biz.photos_json) : [];
+    } catch {
+      return [];
+    }
+  })();
+
   async function exportSite() {
     try {
       const res = await fetch(`/api/businesses/${id}/export`);
@@ -231,7 +263,7 @@ export default function BusinessDetailPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${biz?.site?.slug ?? "site"}.zip`;
+      a.download = `${site?.slug ?? "site"}.zip`;
       a.click();
       URL.revokeObjectURL(url);
       toast.success("Site exported");
@@ -254,7 +286,7 @@ export default function BusinessDetailPage() {
     }
   }
 
-  async function updateEmail(emailId: string, updates: Partial<EmailDraft>) {
+  async function updateEmail(emailId: number, updates: Partial<EmailDraft>) {
     try {
       const res = await fetch(`/api/emails/${emailId}`, {
         method: "PATCH",
@@ -269,11 +301,11 @@ export default function BusinessDetailPage() {
     }
   }
 
-  async function approveEmail(emailId: string) {
+  async function approveEmail(emailId: number) {
     await updateEmail(emailId, { status: "approved" } as Partial<EmailDraft>);
   }
 
-  async function markSent(emailId: string) {
+  async function markSent(emailId: number) {
     await updateEmail(emailId, { status: "sent" } as Partial<EmailDraft>);
   }
 
@@ -362,12 +394,12 @@ export default function BusinessDetailPage() {
             {biz.rating > 0 && (
               <div className="flex items-center gap-1">
                 {renderStars(biz.rating)}
-                <span>({biz.reviewCount})</span>
+                <span>({biz.review_count})</span>
               </div>
             )}
-            {biz.placeId && (
+            {biz.place_id && (
               <a
-                href={`https://www.google.com/maps/place/?q=place_id:${biz.placeId}`}
+                href={biz.google_maps_url || `https://www.google.com/maps/place/?q=place_id:${biz.place_id}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1 text-blue-600 hover:underline"
@@ -448,14 +480,14 @@ export default function BusinessDetailPage() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Website</span>
                   <span>
-                    {biz.website ? (
+                    {biz.website_url ? (
                       <a
-                        href={biz.website}
+                        href={biz.website_url}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-blue-600 hover:underline"
                       >
-                        {biz.website}
+                        {biz.website_url}
                       </a>
                     ) : (
                       "--"
@@ -467,7 +499,7 @@ export default function BusinessDetailPage() {
                   <span className="text-muted-foreground">Rating</span>
                   <div className="flex items-center gap-1">
                     {renderStars(biz.rating)}
-                    <span className="text-muted-foreground">({biz.reviewCount})</span>
+                    <span className="text-muted-foreground">({biz.review_count})</span>
                   </div>
                 </div>
               </CardContent>
@@ -475,7 +507,7 @@ export default function BusinessDetailPage() {
 
             <div className="space-y-6">
               {/* Hours */}
-              {biz.hours && Object.keys(biz.hours).length > 0 && (
+              {Object.keys(hours).length > 0 && (
                 <Card>
                   <CardHeader>
                     <CardTitle>Hours</CardTitle>
@@ -483,10 +515,10 @@ export default function BusinessDetailPage() {
                   <CardContent>
                     <Table>
                       <TableBody>
-                        {Object.entries(biz.hours).map(([day, hours]) => (
+                        {Object.entries(hours).map(([day, h]) => (
                           <TableRow key={day}>
                             <TableCell className="font-medium capitalize">{day}</TableCell>
-                            <TableCell className="text-right text-muted-foreground">{hours}</TableCell>
+                            <TableCell className="text-right text-muted-foreground">{h}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -513,14 +545,14 @@ export default function BusinessDetailPage() {
             </div>
 
             {/* Photos */}
-            {biz.photos && biz.photos.length > 0 && (
+            {photos.length > 0 && (
               <Card className="lg:col-span-2">
                 <CardHeader>
                   <CardTitle>Photos</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                    {biz.photos.map((url, i) => (
+                    {photos.map((url, i) => (
                       <div
                         key={i}
                         className="aspect-square overflow-hidden rounded-lg bg-muted"
@@ -537,35 +569,13 @@ export default function BusinessDetailPage() {
               </Card>
             )}
 
-            {/* Reviews */}
-            {biz.reviews && biz.reviews.length > 0 && (
-              <Card className="lg:col-span-2">
-                <CardHeader>
-                  <CardTitle>Reviews</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {biz.reviews.map((review, i) => (
-                    <div key={i} className="space-y-1 rounded-lg border border-border p-3">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium text-sm">{review.author}</span>
-                        {renderStars(review.rating)}
-                      </div>
-                      <p className="text-sm text-muted-foreground">{review.text}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(review.time).toLocaleDateString()}
-                      </p>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
           </div>
         </TabsContent>
 
         {/* Audit Tab */}
         <TabsContent value="audit">
           <div className="space-y-6">
-            {biz.audit ? (
+            {audit ? (
               <div className="grid grid-cols-1 gap-6 md:grid-cols-4">
                 {/* Overall Grade */}
                 <Card>
@@ -573,10 +583,10 @@ export default function BusinessDetailPage() {
                     <p className="mb-2 text-sm text-muted-foreground">Overall Grade</p>
                     <div
                       className={`flex size-20 items-center justify-center rounded-2xl border-2 text-4xl font-bold ${gradeColor(
-                        biz.audit.grade
+                        audit.grade
                       )}`}
                     >
-                      {biz.audit.grade}
+                      {audit.grade}
                     </div>
                   </CardContent>
                 </Card>
@@ -585,8 +595,8 @@ export default function BusinessDetailPage() {
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-6">
                     <p className="mb-2 text-sm text-muted-foreground">Performance</p>
-                    <p className={`text-3xl font-bold ${scoreColor(biz.audit.performance)}`}>
-                      {biz.audit.performance}
+                    <p className={`text-3xl font-bold ${scoreColor(audit.performance)}`}>
+                      {audit.performance}
                     </p>
                     <p className="text-xs text-muted-foreground">/100</p>
                   </CardContent>
@@ -596,8 +606,8 @@ export default function BusinessDetailPage() {
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-6">
                     <p className="mb-2 text-sm text-muted-foreground">Accessibility</p>
-                    <p className={`text-3xl font-bold ${scoreColor(biz.audit.accessibility)}`}>
-                      {biz.audit.accessibility}
+                    <p className={`text-3xl font-bold ${scoreColor(audit.accessibility)}`}>
+                      {audit.accessibility}
                     </p>
                     <p className="text-xs text-muted-foreground">/100</p>
                   </CardContent>
@@ -607,8 +617,8 @@ export default function BusinessDetailPage() {
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-6">
                     <p className="mb-2 text-sm text-muted-foreground">SEO</p>
-                    <p className={`text-3xl font-bold ${scoreColor(biz.audit.seo)}`}>
-                      {biz.audit.seo}
+                    <p className={`text-3xl font-bold ${scoreColor(audit.seo)}`}>
+                      {audit.seo}
                     </p>
                     <p className="text-xs text-muted-foreground">/100</p>
                   </CardContent>
@@ -620,7 +630,7 @@ export default function BusinessDetailPage() {
                     <div className="flex items-center gap-2">
                       <Smartphone className="size-4" />
                       <span className="text-sm">Mobile Friendly</span>
-                      {biz.audit.mobile ? (
+                      {audit.mobile ? (
                         <Badge className="bg-green-100 text-green-700">Yes</Badge>
                       ) : (
                         <Badge variant="destructive">No</Badge>
@@ -630,16 +640,16 @@ export default function BusinessDetailPage() {
                     <div className="flex items-center gap-2">
                       <ShieldCheck className="size-4" />
                       <span className="text-sm">SSL</span>
-                      {biz.audit.ssl ? (
+                      {audit.ssl ? (
                         <Badge className="bg-green-100 text-green-700">Secure</Badge>
                       ) : (
                         <Badge variant="destructive">Not Secure</Badge>
                       )}
                     </div>
-                    {biz.audit.notes && (
+                    {audit.notes && (
                       <>
                         <Separator orientation="vertical" className="h-6" />
-                        <p className="text-sm text-muted-foreground">{biz.audit.notes}</p>
+                        <p className="text-sm text-muted-foreground">{audit.notes}</p>
                       </>
                     )}
                   </CardContent>
@@ -670,16 +680,16 @@ export default function BusinessDetailPage() {
         {/* Site Tab */}
         <TabsContent value="site">
           <div className="space-y-6">
-            {biz.site ? (
+            {site ? (
               <>
                 <div className="flex flex-wrap items-center gap-4">
-                  <Badge variant="secondary">Version {biz.site.version}</Badge>
+                  <Badge variant="secondary">Version {site.version}</Badge>
                   <span className="text-sm text-muted-foreground">
-                    Generated {new Date(biz.site.generatedAt).toLocaleString()}
+                    Generated {new Date(site.generatedAt).toLocaleString()}
                   </span>
                   <div className="ml-auto flex gap-2">
                     <a
-                      href={`/sites/${biz.site.slug}`}
+                      href={`/sites/${site.slug}`}
                       target="_blank"
                       rel="noopener noreferrer"
                     >
@@ -734,7 +744,7 @@ export default function BusinessDetailPage() {
 
                 <Card className="overflow-hidden p-0">
                   <iframe
-                    src={`/sites/${biz.site.slug}`}
+                    src={`/sites/${site.slug}`}
                     className="h-[600px] w-full border-0"
                     title={`${biz.name} site preview`}
                   />
