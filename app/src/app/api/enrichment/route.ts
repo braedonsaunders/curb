@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import {
   ensureEnrichmentWorkerRunning,
+  requeueAllBusinessesForEnrichment,
   requeueBusinessesForEnrichment,
   runPendingEnrichmentPass,
   setAutoEnrichmentEnabled,
@@ -68,6 +69,18 @@ export async function POST(request: NextRequest) {
       }
 
       const result = requeueBusinessesForEnrichment(ids);
+      void runPendingEnrichmentPass();
+
+      return NextResponse.json({
+        success: true,
+        enabled: getConfig().autoEnrichmentEnabled,
+        queued: result.queued,
+        skippedInProgress: result.skippedInProgress,
+      });
+    }
+
+    if (body.action === "rerun-all") {
+      const result = requeueAllBusinessesForEnrichment();
       void runPendingEnrichmentPass();
 
       return NextResponse.json({

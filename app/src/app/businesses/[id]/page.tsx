@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -191,10 +191,22 @@ function extractLatestGenerationRun(
   return latestRunDescending.slice().reverse();
 }
 
+function getBusinessesReturnHref(returnTo: string | null) {
+  if (returnTo && returnTo.startsWith("/businesses")) {
+    return returnTo;
+  }
+
+  return "/businesses";
+}
+
 export default function BusinessDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const id = params.id as string;
+  const businessesReturnHref = getBusinessesReturnHref(
+    searchParams.get("returnTo")
+  );
 
   const [biz, setBiz] = useState<BusinessDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -746,20 +758,20 @@ export default function BusinessDetailPage() {
     generationRunning ||
     generationActivity.length > 0 ||
     generationError ? (
-      <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-medium">
+      <div className="min-w-0 space-y-3 rounded-lg border bg-muted/30 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 space-y-1">
+            <p className="break-words text-sm font-medium">
               {latestGenerationActivity?.message ||
                 "Preparing website generation..."}
             </p>
-            <p className="text-xs text-muted-foreground">
+            <p className="break-words text-xs text-muted-foreground">
               Building a production-ready site bundle from source content,
               screenshots, and business data.
             </p>
           </div>
           {generationRunning ? (
-            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+            <Loader2 className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
           ) : null}
         </div>
 
@@ -788,9 +800,11 @@ export default function BusinessDetailPage() {
                       : "border-border bg-background text-muted-foreground"
                 }`}
               >
-                <div className="flex items-center justify-between gap-3">
-                  <span>{GENERATION_STAGE_LABELS[stage] ?? stage}</span>
-                  <span>{index + 1}</span>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0 break-words">
+                    {GENERATION_STAGE_LABELS[stage] ?? stage}
+                  </span>
+                  <span className="shrink-0">{index + 1}</span>
                 </div>
               </div>
             );
@@ -798,18 +812,20 @@ export default function BusinessDetailPage() {
         </div>
 
         {generationActivity.length > 0 ? (
-          <div className="max-h-40 space-y-2 overflow-y-auto rounded-md border bg-background p-3 text-xs">
+          <div className="max-h-40 min-w-0 space-y-2 overflow-y-auto rounded-md border bg-background p-3 text-xs">
             {generationActivity.map((item) => (
-              <div key={item.id} className="space-y-1">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium">
+              <div key={item.id} className="min-w-0 space-y-1">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="min-w-0 break-words font-medium">
                     {GENERATION_STAGE_LABELS[item.stage] ?? item.stage}
                   </span>
-                  <span className="text-muted-foreground">
+                  <span className="shrink-0 text-muted-foreground">
                     {formatStoredTime(item.createdAt)}
                   </span>
                 </div>
-                <p className="text-muted-foreground">{item.message}</p>
+                <p className="break-words text-muted-foreground">
+                  {item.message}
+                </p>
               </div>
             ))}
           </div>
@@ -835,7 +851,10 @@ export default function BusinessDetailPage() {
     return (
       <div className="flex h-96 flex-col items-center justify-center gap-4">
         <p className="text-muted-foreground">Business not found</p>
-        <Button variant="outline" onClick={() => router.push("/businesses")}>
+        <Button
+          variant="outline"
+          onClick={() => router.push(businessesReturnHref)}
+        >
           <ArrowLeft className="size-4" />
           Back to businesses
         </Button>
@@ -846,7 +865,11 @@ export default function BusinessDetailPage() {
   return (
     <div className="space-y-6">
       {/* Back button */}
-      <Button variant="ghost" size="sm" onClick={() => router.push("/businesses")}>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => router.push(businessesReturnHref)}
+      >
         <ArrowLeft className="size-4" />
         Back
       </Button>
@@ -1320,6 +1343,7 @@ export default function BusinessDetailPage() {
                     src={sitePreviewUrl ?? `/sites/${site.slug}`}
                     className="h-[600px] w-full border-0"
                     title={`${biz.name} site preview`}
+                    sandbox="allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-scripts"
                   />
                 </Card>
               </>
@@ -1364,11 +1388,11 @@ export default function BusinessDetailPage() {
                 }
               }}
             >
-              <DialogContent>
+              <DialogContent className="sm:max-w-lg">
                 <DialogHeader>
                   <DialogTitle>{siteDialogTitle}</DialogTitle>
                 </DialogHeader>
-                <div className="space-y-3">
+                <div className="min-w-0 space-y-3">
                   {siteDialogShowsPrompt ? (
                     <>
                       <Label>{siteDialogPromptLabel} (optional)</Label>

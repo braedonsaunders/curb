@@ -72,6 +72,14 @@ function injectBaseHref(html: string, baseHref: string): string {
   return `<base href="${baseHref}">\n${html}`;
 }
 
+function getBaseHref(pathname: string): string {
+  if (/\/[^/]+\.html$/i.test(pathname)) {
+    return pathname.replace(/\/[^/]+\.html$/i, "/");
+  }
+
+  return pathname.endsWith("/") ? pathname : `${pathname}/`;
+}
+
 async function serveSiteAsset(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -86,9 +94,7 @@ async function serveSiteAsset(
 
   if (getContentType(filePath).startsWith("text/html")) {
     const html = fs.readFileSync(filePath, "utf-8");
-    const baseHref = request.nextUrl.pathname.endsWith("/")
-      ? request.nextUrl.pathname
-      : `${request.nextUrl.pathname}/`;
+    const baseHref = getBaseHref(request.nextUrl.pathname);
     const body = injectBaseHref(html, baseHref);
 
     return new NextResponse(body, {

@@ -47,6 +47,9 @@ export interface WebsiteSourceSnapshot {
   requestedUrl: string;
   finalUrl: string;
   pageCount: number;
+  estimatedPageCount: number;
+  estimatedPageCountIsLowerBound: boolean;
+  captureLimitReached: boolean;
   pages: CrawledPage[];
   brand: {
     colorPalette: string[];
@@ -706,6 +709,7 @@ async function crawlWebsite(
   const queue: string[] = [rootPageUrl];
   const seen = new Set<string>();
   const queued = new Set<string>(queue);
+  const discoveredPageUrls = new Set<string>(queue);
   const pages: CrawledPage[] = [];
   const savedFiles: string[] = [];
   const colorCounts = new Map<string, number>();
@@ -811,10 +815,6 @@ async function crawlWebsite(
       }
 
       for (const discoveredUrl of extracted.discoveredPageUrls) {
-        if (pages.length + queue.length >= maxPages) {
-          break;
-        }
-
         try {
           const candidate = new URL(discoveredUrl);
           if (candidate.origin !== rootUrl.origin) {
@@ -830,7 +830,10 @@ async function crawlWebsite(
             continue;
           }
 
+          discoveredPageUrls.add(normalizedCandidate);
+
           if (
+            pages.length + queue.length < maxPages &&
             !seen.has(normalizedCandidate) &&
             !queued.has(normalizedCandidate)
           ) {
@@ -853,10 +856,17 @@ async function crawlWebsite(
       .map(([value]) => value)
       .slice(0, limit);
 
+  const estimatedPageCount = Math.max(pages.length, discoveredPageUrls.size);
+  const captureLimitReached =
+    pages.length >= maxPages && estimatedPageCount > pages.length;
+
   const snapshot: WebsiteMirrorResult = {
     requestedUrl: rawUrl,
     finalUrl: reachability.finalUrl,
     pageCount: pages.length,
+    estimatedPageCount,
+    estimatedPageCountIsLowerBound: captureLimitReached,
+    captureLimitReached,
     pages,
     brand: {
       colorPalette: summarizeCounts(colorCounts, 8),
@@ -910,6 +920,9 @@ export async function captureWebsiteSourceSnapshot(
     requestedUrl: snapshot.requestedUrl,
     finalUrl: snapshot.finalUrl,
     pageCount: snapshot.pageCount,
+    estimatedPageCount: snapshot.estimatedPageCount,
+    estimatedPageCountIsLowerBound: snapshot.estimatedPageCountIsLowerBound,
+    captureLimitReached: snapshot.captureLimitReached,
     pages: snapshot.pages,
     brand: snapshot.brand,
   };

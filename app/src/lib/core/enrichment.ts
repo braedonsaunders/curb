@@ -114,11 +114,21 @@ export function requeueBusinessesForEnrichment(
       `SELECT id
       FROM businesses
       WHERE id IN (${ids.map(() => "?").join(", ")})
+        AND status != 'archived'
         AND enrichment_status = 'in_progress'`
     )
     .all(...ids) as Array<{ id: number }>;
   const inProgressIds = new Set(inProgressRows.map((row) => row.id));
-  const queueableIds = ids.filter((id) => !inProgressIds.has(id));
+  const queueableRows = db
+    .prepare(
+      `SELECT id, name
+      FROM businesses
+      WHERE id IN (${ids.map(() => "?").join(", ")})
+        AND status != 'archived'
+        AND COALESCE(enrichment_status, 'pending') != 'in_progress'`
+    )
+    .all(...ids) as Array<{ id: number; name: string }>;
+  const queueableIds = queueableRows.map((row) => row.id);
 
   if (queueableIds.length > 0) {
     db.prepare(
@@ -130,19 +140,10 @@ export function requeueBusinessesForEnrichment(
         enrichment_completed_at = NULL,
         enrichment_error = NULL,
         updated_at = datetime('now')
-      WHERE id IN (${queueableIds.map(() => "?").join(", ")})
-        AND status != 'archived'`
+      WHERE id IN (${queueableIds.map(() => "?").join(", ")})`
     ).run(...queueableIds);
 
-    const names = db
-      .prepare(
-        `SELECT id, name
-        FROM businesses
-        WHERE id IN (${queueableIds.map(() => "?").join(", ")})`
-      )
-      .all(...queueableIds) as Array<{ id: number; name: string }>;
-
-    for (const row of names) {
+    for (const row of queueableRows) {
       logActivity({
         kind: "enrichment",
         stage: "requeued",
@@ -160,6 +161,64 @@ export function requeueBusinessesForEnrichment(
   return {
     queued: queueableIds.length,
     skippedInProgress: inProgressIds.size,
+  };
+}
+
+export function requeueAllBusinessesForEnrichment(): {
+  queued: number;
+  skippedInProgress: number;
+} {
+  initializeDatabase();
+  const db = getDb();
+
+  const skippedInProgressRow = db
+    .prepare(
+      `SELECT COUNT(*) as count
+      FROM businesses
+      WHERE status != 'archived'
+        AND enrichment_status = 'in_progress'`
+    )
+    .get() as { count: number };
+  const queuedRow = db
+    .prepare(
+      `SELECT COUNT(*) as count
+      FROM businesses
+      WHERE status != 'archived'
+        AND COALESCE(enrichment_status, 'pending') != 'in_progress'`
+    )
+    .get() as { count: number };
+
+  const skippedInProgress = skippedInProgressRow.count;
+  const queued = queuedRow.count;
+
+  if (queued > 0) {
+    db.prepare(
+      `UPDATE businesses
+      SET
+        enrichment_status = 'pending',
+        details_enriched_at = NULL,
+        enrichment_started_at = NULL,
+        enrichment_completed_at = NULL,
+        enrichment_error = NULL,
+        updated_at = datetime('now')
+      WHERE status != 'archived'
+        AND COALESCE(enrichment_status, 'pending') != 'in_progress'`
+    ).run();
+
+    logActivity({
+      kind: "enrichment",
+      stage: "requeued",
+      message: `Requeued enrichment for ${queued} business${queued === 1 ? "" : "es"}`,
+    });
+  }
+
+  if (queued > 0 && isAutoEnrichmentEnabled()) {
+    scheduleFollowUpPass(0);
+  }
+
+  return {
+    queued,
+    skippedInProgress,
   };
 }
 

@@ -15,6 +15,7 @@ import {
   OPENAI_OAUTH_CODEX_MODELS,
 } from "./openai-oauth";
 import { getConfig, updateConfig } from "./config";
+import { listProviderModelsFromApi } from "./provider-models";
 
 const CALLBACK_PORT = 1455;
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
@@ -148,20 +149,43 @@ export async function startOpenAIOAuthFlow(): Promise<string> {
             }
           }
 
-          const nextModel =
-            platformApiKey || OPENAI_OAUTH_CODEX_MODELS.has(existing.openaiModel)
+          const oauthUpdates = buildOpenAIOAuthConfigUpdates(tokens, {
+            refreshToken: existing.openaiOAuthRefreshToken,
+            expiresAtMs: existing.openaiOAuthExpiresAtMs,
+            authMode: "oauth",
+            platformApiKey,
+            existingPlatformApiKey: existing.openaiOAuthApiKey,
+            existingAccountId: existing.openaiOAuthAccountId,
+          });
+          const provisionalConfig = {
+            ...existing,
+            ...oauthUpdates,
+          };
+          const providerModels = await listProviderModelsFromApi("openai", {
+            config: provisionalConfig,
+            forceRefresh: true,
+          });
+          const preferredModel = platformApiKey
+            ? existing.openaiModel
+            : OPENAI_OAUTH_CODEX_MODELS.has(existing.openaiModel)
               ? existing.openaiModel
               : DEFAULT_OPENAI_OAUTH_MODEL;
+          const nextModel =
+            providerModels.models.includes(preferredModel)
+              ? preferredModel
+              : platformApiKey
+                ? (providerModels.selectedModel ??
+                  providerModels.models[0] ??
+                  preferredModel)
+                : (providerModels.models.find((model) =>
+                    OPENAI_OAUTH_CODEX_MODELS.has(model)
+                  ) ??
+                  providerModels.selectedModel ??
+                  providerModels.models[0] ??
+                  preferredModel);
 
           updateConfig({
-            ...buildOpenAIOAuthConfigUpdates(tokens, {
-              refreshToken: existing.openaiOAuthRefreshToken,
-              expiresAtMs: existing.openaiOAuthExpiresAtMs,
-              authMode: "oauth",
-              platformApiKey,
-              existingPlatformApiKey: existing.openaiOAuthApiKey,
-              existingAccountId: existing.openaiOAuthAccountId,
-            }),
+            ...oauthUpdates,
             openaiModel: nextModel,
           });
 

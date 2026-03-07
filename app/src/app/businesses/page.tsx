@@ -77,6 +77,9 @@ const COLUMN_BORDER_COLORS: Record<string, string> = {
 };
 
 const STATUSES = ["all", ...BUSINESS_STATUSES];
+const SORT_FIELDS = ["name", "category", "city", "status", "grade"] as const;
+const SORT_DIRECTIONS = ["asc", "desc"] as const;
+const VIEW_MODES = ["table", "board"] as const;
 
 const CATEGORIES_FILTER = [
   "all",
@@ -91,6 +94,88 @@ const CATEGORIES_FILTER = [
   "pets",
   "cleaning",
 ];
+
+type SortField = (typeof SORT_FIELDS)[number];
+type SortDirection = (typeof SORT_DIRECTIONS)[number];
+type ViewMode = (typeof VIEW_MODES)[number];
+
+function getEnumSearchParam<T extends string>(
+  value: string | null,
+  allowed: readonly T[],
+  fallback: T
+): T {
+  if (value && (allowed as readonly string[]).includes(value)) {
+    return value as T;
+  }
+
+  return fallback;
+}
+
+function getPositiveIntegerSearchParam(value: string | null, fallback: number) {
+  const parsed = Number.parseInt(value || "", 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function buildBusinessesApiParams({
+  page,
+  pageSize,
+  statusFilter,
+  categoryFilter,
+  searchQuery,
+  sortField,
+  sortDir,
+}: {
+  page: number;
+  pageSize: number;
+  statusFilter: string;
+  categoryFilter: string;
+  searchQuery: string;
+  sortField: SortField;
+  sortDir: SortDirection;
+}) {
+  const params = new URLSearchParams();
+  params.set("page", String(page));
+  params.set("limit", String(pageSize));
+
+  if (statusFilter !== "all") params.set("status", statusFilter);
+  if (categoryFilter !== "all") params.set("category", categoryFilter);
+  if (searchQuery) params.set("search", searchQuery);
+
+  params.set("sort", sortField);
+  params.set("dir", sortDir);
+
+  return params;
+}
+
+function buildBusinessesListParams({
+  page,
+  statusFilter,
+  categoryFilter,
+  searchQuery,
+  sortField,
+  sortDir,
+  viewMode,
+}: {
+  page: number;
+  statusFilter: string;
+  categoryFilter: string;
+  searchQuery: string;
+  sortField: SortField;
+  sortDir: SortDirection;
+  viewMode: ViewMode;
+}) {
+  const params = new URLSearchParams();
+
+  if (page > 1) params.set("page", String(page));
+  if (statusFilter !== "all") params.set("status", statusFilter);
+  if (categoryFilter !== "all") params.set("category", categoryFilter);
+  if (searchQuery) params.set("search", searchQuery);
+  if (sortField !== "name") params.set("sort", sortField);
+  if (sortDir !== "asc") params.set("dir", sortDir);
+  if (viewMode !== "table") params.set("view", viewMode);
+
+  return params;
+}
 
 interface Business {
   id: string;
@@ -125,32 +210,58 @@ function BusinessesContent() {
   const searchParams = useSearchParams();
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() =>
+    getPositiveIntegerSearchParam(searchParams.get("page"), 1)
+  );
   const [pageSize] = useState(20);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "all");
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [sortField, setSortField] = useState("name");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const [viewMode, setViewMode] = useState<"table" | "board">("table");
+  const [statusFilter, setStatusFilter] = useState(() =>
+    getEnumSearchParam(searchParams.get("status"), STATUSES, "all")
+  );
+  const [categoryFilter, setCategoryFilter] = useState(() =>
+    getEnumSearchParam(searchParams.get("category"), CATEGORIES_FILTER, "all")
+  );
+  const [searchQuery, setSearchQuery] = useState(
+    () => searchParams.get("search") || ""
+  );
+  const [sortField, setSortField] = useState<SortField>(() =>
+    getEnumSearchParam(searchParams.get("sort"), SORT_FIELDS, "name")
+  );
+  const [sortDir, setSortDir] = useState<SortDirection>(() =>
+    getEnumSearchParam(searchParams.get("dir"), SORT_DIRECTIONS, "asc")
+  );
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    getEnumSearchParam(searchParams.get("view"), VIEW_MODES, "table")
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [enrichmentEnabled, setEnrichmentEnabled] = useState(true);
   const [enrichmentActionLoading, setEnrichmentActionLoading] = useState<
-    "pause" | "resume" | "rerun" | null
+    "pause" | "resume" | "rerun" | "rerunAll" | null
   >(null);
+  const currentUrlSearch = searchParams.toString();
+  const listSearch = buildBusinessesListParams({
+    page,
+    statusFilter,
+    categoryFilter,
+    searchQuery,
+    sortField,
+    sortDir,
+    viewMode,
+  }).toString();
+  const currentListHref = listSearch ? `/businesses?${listSearch}` : "/businesses";
 
   const fetchBusinesses = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      params.set("page", String(page));
-      params.set("limit", String(pageSize));
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      if (categoryFilter !== "all") params.set("category", categoryFilter);
-      if (searchQuery) params.set("search", searchQuery);
-      params.set("sort", sortField);
-      params.set("dir", sortDir);
+      const params = buildBusinessesApiParams({
+        page,
+        pageSize,
+        statusFilter,
+        categoryFilter,
+        searchQuery,
+        sortField,
+        sortDir,
+      });
 
       const res = await fetch(`/api/businesses?${params}`);
       if (!res.ok) throw new Error("Failed to fetch");
@@ -173,6 +284,14 @@ function BusinessesContent() {
     fetchBusinesses();
   }, [fetchBusinesses]);
 
+  useEffect(() => {
+    if (listSearch === currentUrlSearch) {
+      return;
+    }
+
+    router.replace(currentListHref, { scroll: false });
+  }, [currentListHref, currentUrlSearch, listSearch, router]);
+
   const fetchEnrichmentState = useCallback(async () => {
     try {
       const res = await fetch("/api/enrichment");
@@ -188,13 +307,24 @@ function BusinessesContent() {
     void fetchEnrichmentState();
   }, [fetchEnrichmentState]);
 
-  function handleSort(field: string) {
+  function handleSort(field: SortField) {
     if (sortField === field) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
       setSortField(field);
       setSortDir("asc");
     }
+  }
+
+  function getBusinessDetailHref(businessId: string) {
+    const detailPath = `/businesses/${businessId}`;
+    return currentListHref === "/businesses"
+      ? detailPath
+      : `${detailPath}?returnTo=${encodeURIComponent(currentListHref)}`;
+  }
+
+  function openBusinessDetail(businessId: string) {
+    router.push(getBusinessDetailHref(businessId));
   }
 
   async function handleAction(
@@ -352,11 +482,70 @@ function BusinessesContent() {
 
       const queued = data.queued ?? 0;
       const skipped = data.skippedInProgress ?? 0;
-      toast.success(
-        skipped > 0
-          ? `Queued ${queued} business(es); skipped ${skipped} currently running`
-          : `Queued ${queued} business(es) for enrichment`
+      if (queued === 0 && skipped === 0) {
+        toast.success("No businesses were queued for enrichment");
+      } else if (queued === 0) {
+        toast.success(`Skipped ${skipped} currently running business(es)`);
+      } else {
+        toast.success(
+          skipped > 0
+            ? `Queued ${queued} business(es); skipped ${skipped} currently running`
+            : `Queued ${queued} business(es) for enrichment`
+        );
+      }
+      setSelectedIds(new Set());
+      await fetchBusinesses();
+      await fetchEnrichmentState();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to rerun enrichment"
       );
+    } finally {
+      setEnrichmentActionLoading(null);
+    }
+  }
+
+  async function rerunAllBusinessesEnrichment() {
+    if (
+      !window.confirm(
+        "Rerun enrichment for every non-archived business? Businesses already in progress will be skipped."
+      )
+    ) {
+      return;
+    }
+
+    setEnrichmentActionLoading("rerunAll");
+    try {
+      const res = await fetch("/api/enrichment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "rerun-all",
+        }),
+      });
+      const data = (await res.json()) as {
+        queued?: number;
+        skippedInProgress?: number;
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to rerun enrichment");
+      }
+
+      const queued = data.queued ?? 0;
+      const skipped = data.skippedInProgress ?? 0;
+      if (queued === 0 && skipped === 0) {
+        toast.success("No businesses were queued for enrichment");
+      } else if (queued === 0) {
+        toast.success(`Skipped ${skipped} currently running business(es)`);
+      } else {
+        toast.success(
+          skipped > 0
+            ? `Queued ${queued} business(es); skipped ${skipped} currently running`
+            : `Queued ${queued} business(es) for enrichment`
+        );
+      }
+
       setSelectedIds(new Set());
       await fetchBusinesses();
       await fetchEnrichmentState();
@@ -371,7 +560,13 @@ function BusinessesContent() {
 
   const totalPages = Math.ceil(total / pageSize);
 
-  function SortHeader({ field, children }: { field: string; children: React.ReactNode }) {
+  function SortHeader({
+    field,
+    children,
+  }: {
+    field: SortField;
+    children: React.ReactNode;
+  }) {
     return (
       <button
         type="button"
@@ -501,7 +696,9 @@ function BusinessesContent() {
               size="sm"
               onClick={rerunSelectedEnrichment}
               disabled={
-                selectedIds.size === 0 || enrichmentActionLoading === "rerun"
+                selectedIds.size === 0 ||
+                enrichmentActionLoading === "rerun" ||
+                enrichmentActionLoading === "rerunAll"
               }
             >
               {enrichmentActionLoading === "rerun" ? (
@@ -509,7 +706,23 @@ function BusinessesContent() {
               ) : (
                 <RefreshCw className="size-4" />
               )}
-              Rerun Enrichment
+              Rerun Selected
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={rerunAllBusinessesEnrichment}
+              disabled={
+                enrichmentActionLoading === "rerun" ||
+                enrichmentActionLoading === "rerunAll"
+              }
+            >
+              {enrichmentActionLoading === "rerunAll" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="size-4" />
+              )}
+              Rerun All Businesses
             </Button>
             <Button
               variant={enrichmentEnabled ? "outline" : "default"}
@@ -584,7 +797,7 @@ function BusinessesContent() {
                       <TableRow
                         key={biz.id}
                         className="cursor-pointer"
-                        onClick={() => router.push(`/businesses/${biz.id}`)}
+                        onClick={() => openBusinessDetail(biz.id)}
                       >
                         <TableCell onClick={(e) => e.stopPropagation()}>
                           <input
@@ -787,7 +1000,7 @@ function BusinessesContent() {
                         <button
                           key={biz.id}
                           type="button"
-                          onClick={() => router.push(`/businesses/${biz.id}`)}
+                          onClick={() => openBusinessDetail(biz.id)}
                           className="rounded-md border bg-background p-3 text-left shadow-sm transition-colors hover:bg-muted/50"
                         >
                           <p className="truncate text-sm font-medium">

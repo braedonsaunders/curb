@@ -57,6 +57,13 @@ interface GeneratedSiteFile {
   content: string;
 }
 
+interface MissingBundleReference {
+  fromFilePath: string;
+  rawReference: string;
+  resolvedTarget: string;
+  targetType: "file" | "route";
+}
+
 function isEditableSiteFile(filePath: string): boolean {
   return EDITABLE_SITE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
@@ -97,16 +104,173 @@ function inferImageExtension(
   return null;
 }
 
-function scoreLogoCandidate(candidateUrl: string): number {
-  let score = 0;
-  const normalized = candidateUrl.toLowerCase();
+type SourceLogoCandidate = {
+  altTexts: string[];
+  explicit: boolean;
+  frequency: number;
+  url: string;
+};
 
+const LOGO_CONTEXT_STOPWORDS = new Set([
+  "and",
+  "ca",
+  "com",
+  "contact",
+  "home",
+  "http",
+  "https",
+  "inc",
+  "ltd",
+  "map",
+  "the",
+  "us",
+  "www",
+]);
+
+const THIRD_PARTY_LOGO_HINTS = [
+  "americanexpress",
+  "amex",
+  "facebook",
+  "fedex",
+  "google",
+  "instagram",
+  "mastercard",
+  "paypal",
+  "pngwing",
+  "qrcode",
+  "qr-code",
+  "twitter",
+  "u-haul",
+  "uhaul",
+  "visa",
+  "youtube",
+];
+
+function tokenizeLogoContext(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((token) => token.trim())
+    .filter(
+      (token) =>
+        token.length >= 2 && !LOGO_CONTEXT_STOPWORDS.has(token)
+    );
+}
+
+function buildBrandTokens(
+  snapshot: WebsiteSourceSnapshot | null | undefined
+): Set<string> {
+  const tokens = new Set<string>();
+
+  if (!snapshot) {
+    return tokens;
+  }
+
+  const contextValues: string[] = [snapshot.finalUrl];
+  for (const page of snapshot.pages) {
+    if (page.title) {
+      contextValues.push(page.title);
+    }
+
+    for (const heading of page.headings.slice(0, 6)) {
+      contextValues.push(heading);
+    }
+  }
+
+  for (const value of contextValues) {
+    for (const token of tokenizeLogoContext(value)) {
+      tokens.add(token);
+    }
+  }
+
+  return tokens;
+}
+
+function buildLogoCandidatePool(
+  snapshot: WebsiteSourceSnapshot | null | undefined
+): SourceLogoCandidate[] {
+  if (!snapshot) {
+    return [];
+  }
+
+  const candidates = new Map<string, SourceLogoCandidate>();
+
+  const upsertCandidate = (
+    url: string | null | undefined,
+    altText: string | null | undefined,
+    explicit: boolean
+  ) => {
+    const trimmedUrl = url?.trim();
+    if (!trimmedUrl) {
+      return;
+    }
+
+    const existing = candidates.get(trimmedUrl);
+    if (existing) {
+      existing.frequency += 1;
+      existing.explicit = existing.explicit || explicit;
+
+      const normalizedAltText = altText?.trim();
+      if (
+        normalizedAltText &&
+        !existing.altTexts.includes(normalizedAltText)
+      ) {
+        existing.altTexts.push(normalizedAltText);
+      }
+      return;
+    }
+
+    candidates.set(trimmedUrl, {
+      url: trimmedUrl,
+      altTexts: altText?.trim() ? [altText.trim()] : [],
+      explicit,
+      frequency: 1,
+    });
+  };
+
+  for (const candidate of snapshot.brand.logoCandidates.filter(Boolean)) {
+    upsertCandidate(candidate, "", true);
+  }
+
+  for (const page of snapshot.pages) {
+    for (const image of page.images) {
+      upsertCandidate(image.src, image.alt, false);
+    }
+  }
+
+  return Array.from(candidates.values());
+}
+
+function scoreLogoCandidate(
+  candidate: SourceLogoCandidate,
+  brandTokens: Set<string>
+): number {
+  let score = 0;
+  const normalized = `${candidate.url} ${candidate.altTexts.join(" ")}`
+    .toLowerCase();
+
+  if (candidate.explicit) score += 20;
+  score += Math.min(candidate.frequency * 8, 48);
   if (normalized.includes(".svg")) score += 20;
   if (normalized.includes("logo")) score += 12;
   if (normalized.includes("brand")) score += 6;
-  if (normalized.includes("header")) score += 3;
+  if (normalized.includes("header")) score += 18;
   if (normalized.includes("icon")) score -= 10;
   if (normalized.includes("favicon")) score -= 20;
+
+  let brandMatches = 0;
+  for (const token of brandTokens) {
+    if (normalized.includes(token)) {
+      brandMatches += 1;
+    }
+  }
+  score += Math.min(brandMatches * 10, 30);
+
+  for (const hint of THIRD_PARTY_LOGO_HINTS) {
+    if (normalized.includes(hint)) {
+      score -= 40;
+    }
+  }
 
   return score;
 }
@@ -115,9 +279,31 @@ async function downloadSourceLogoAsset(
   siteDir: string,
   snapshot: WebsiteSourceSnapshot | null | undefined
 ): Promise<SourceBrandAsset | null> {
-  const candidates = Array.from(
-    new Set(snapshot?.brand.logoCandidates.filter(Boolean) ?? [])
-  ).sort((left, right) => scoreLogoCandidate(right) - scoreLogoCandidate(left));
+  const brandTokens = buildBrandTokens(snapshot);
+  const candidates = buildLogoCandidatePool(snapshot)
+    .filter((candidate) => {
+      const normalized = `${candidate.url} ${candidate.altTexts.join(" ")}`
+        .toLowerCase();
+
+      const hasBrandToken = Array.from(brandTokens).some((token) =>
+        normalized.includes(token)
+      );
+
+      return (
+        candidate.explicit ||
+        candidate.frequency > 1 ||
+        hasBrandToken ||
+        normalized.includes("logo") ||
+        normalized.includes("brand") ||
+        normalized.includes("header")
+      );
+    })
+    .sort(
+      (left, right) =>
+        scoreLogoCandidate(right, brandTokens) -
+        scoreLogoCandidate(left, brandTokens)
+    )
+    .map((candidate) => candidate.url);
 
   if (candidates.length === 0) {
     return null;
@@ -204,10 +390,50 @@ function buildMultiPageCorrectionPrompt(
   return [
     "Architecture correction:",
     "This website must be returned as a multi-page static site bundle.",
-    "Return at least two HTML pages with a clear separation of concerns instead of collapsing everything into a single scrolling homepage.",
+    `Return at least ${recommendation.minimumHtmlPageCount} substantive HTML pages with a clear separation of concerns instead of collapsing everything into a single scrolling homepage.`,
     recommendation.reasons.length > 0
       ? `Reasons: ${recommendation.reasons.join(" ")}`
       : "Reasons: the captured source material indicates a multi-page architecture.",
+  ].join(" ");
+}
+
+function buildPageComplexityCorrectionPrompt(
+  recommendation: SiteArchitectureRecommendation,
+  currentHtmlPageCount: number
+): string {
+  const targetRange =
+    recommendation.targetHtmlPageCountMin === recommendation.targetHtmlPageCountMax
+      ? `${recommendation.targetHtmlPageCountMin}`
+      : `${recommendation.targetHtmlPageCountMin}-${recommendation.targetHtmlPageCountMax}`;
+  const sourcePageEstimateLabel = recommendation.sourcePageEstimateIsLowerBound
+    ? `at least ${recommendation.sourcePageEstimate}`
+    : `${recommendation.sourcePageEstimate}`;
+
+  return [
+    "Page complexity correction:",
+    `The source/current site is roughly a ${sourcePageEstimateLabel}-page experience, but the current bundle only has ${currentHtmlPageCount} substantive HTML pages.`,
+    `Return a richer multi-page bundle in roughly the ${targetRange}-page range, with no fewer than ${recommendation.minimumHtmlPageCount} substantive HTML pages.`,
+    "Preserve page-level separation for major sections, service groups, locations, galleries, resources, and utility flows instead of collapsing them into one or two pages.",
+  ].join(" ");
+}
+
+function buildBundleIntegrityCorrectionPrompt(
+  missingReferences: MissingBundleReference[]
+): string {
+  const examples = missingReferences
+    .slice(0, 8)
+    .map(
+      (issue) =>
+        `${issue.fromFilePath} references "${issue.rawReference}" but the bundle is missing ${issue.targetType} ${issue.resolvedTarget}.`
+    )
+    .join(" ");
+
+  return [
+    "Bundle integrity correction:",
+    "Every local href, src, poster, action, srcset, and CSS url() reference must resolve to a real page or asset inside the returned static bundle.",
+    "Add the missing files or pages, or rewrite the references to existing bundle paths.",
+    "Do not reference assets/style.css, contact/index.html, products/index.html, or any other local path unless that exact file exists in the returned bundle.",
+    examples,
   ].join(" ");
 }
 
@@ -242,40 +468,89 @@ function normalizeGeneratedFilePath(filePath: string): string | null {
   return normalized;
 }
 
+function stripGeneratedPayloadCodeFences(text: string): string {
+  let result = text.trim();
+  if (result.startsWith("```html")) {
+    result = result.slice(7);
+  } else if (result.startsWith("```json")) {
+    result = result.slice(7);
+  } else if (result.startsWith("```")) {
+    result = result.slice(3);
+  }
+
+  if (result.endsWith("```")) {
+    result = result.slice(0, -3);
+  }
+
+  return result.trim();
+}
+
+function extractGeneratedSiteFileBlocks(payload: string): GeneratedSiteFile[] {
+  const startPattern = /<<<\s*FILE:\s*([^\n>]+?)\s*>>>/gi;
+  const endPattern = /<<<\s*END\s+FILE(?:\s*:[^\n>]+)?\s*>>>/i;
+  const markers = Array.from(payload.matchAll(startPattern));
+
+  if (markers.length === 0) {
+    return [];
+  }
+
+  const fileMap = new Map<string, string>();
+
+  for (let index = 0; index < markers.length; index += 1) {
+    const marker = markers[index];
+    const markerIndex = marker.index;
+    const nextMarkerIndex = markers[index + 1]?.index ?? payload.length;
+    const nextPath = normalizeGeneratedFilePath(marker[1] ?? "");
+
+    if (markerIndex == null || !nextPath) {
+      continue;
+    }
+
+    let blockContent = payload.slice(
+      markerIndex + marker[0].length,
+      nextMarkerIndex
+    );
+    const endMatch = endPattern.exec(blockContent);
+    if (endMatch && endMatch.index != null) {
+      blockContent = blockContent.slice(0, endMatch.index);
+    }
+
+    const nextContent = stripGeneratedPayloadCodeFences(blockContent.trim());
+    if (!nextContent) {
+      continue;
+    }
+
+    fileMap.set(nextPath, nextContent);
+  }
+
+  return Array.from(fileMap.entries()).map(([path, content]) => ({
+    path,
+    content,
+  }));
+}
+
+function extractHtmlDocumentFromPayload(payload: string): string | null {
+  const doctypeMatch = payload.match(/<!DOCTYPE html[\s\S]*$/i);
+  if (doctypeMatch?.[0]) {
+    return stripGeneratedPayloadCodeFences(doctypeMatch[0].trim());
+  }
+
+  const htmlMatch = payload.match(/<html[\s\S]*$/i);
+  if (htmlMatch?.[0]) {
+    return stripGeneratedPayloadCodeFences(htmlMatch[0].trim());
+  }
+
+  return null;
+}
+
 function parseGeneratedSiteFiles(payload: string): GeneratedSiteFile[] {
   const trimmed = payload.trim();
   if (!trimmed) {
     throw new Error("Site generation returned an empty response.");
   }
 
-  const hasFileMarkers = /<<<FILE:[^\n>]+>>>/i.test(trimmed);
-  const matches = hasFileMarkers
-    ? Array.from(
-        trimmed.matchAll(/<<<FILE:([^\n>]+)>>>\s*([\s\S]*?)\s*<<<END FILE>>>/gi)
-      )
-    : [];
-
-  if (matches.length > 0) {
-    const fileMap = new Map<string, string>();
-    for (const match of matches) {
-      const nextPath = normalizeGeneratedFilePath(match[1] ?? "");
-      const nextContent = (match[2] ?? "").trim();
-      if (!nextPath || !nextContent) {
-        continue;
-      }
-
-      fileMap.set(nextPath, nextContent);
-    }
-
-    const files = Array.from(fileMap.entries()).map(([filePath, content]) => ({
-      path: filePath,
-      content,
-    }));
-
-    if (files.length === 0) {
-      throw new Error("Site generation returned no usable files.");
-    }
-
+  const files = extractGeneratedSiteFileBlocks(trimmed);
+  if (files.length > 0) {
     if (!files.some((file) => file.path === "index.html")) {
       throw new Error("Site generation must include an index.html homepage.");
     }
@@ -283,11 +558,15 @@ function parseGeneratedSiteFiles(payload: string): GeneratedSiteFile[] {
     return files;
   }
 
-  if (/^<!DOCTYPE html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) {
-    return [{ path: "index.html", content: trimmed }];
+  const htmlDocument = extractHtmlDocumentFromPayload(trimmed);
+  if (htmlDocument) {
+    return [{ path: "index.html", content: htmlDocument }];
   }
 
-  throw new Error("Site generation returned no valid site files.");
+  const preview = trimmed.replace(/\s+/g, " ").slice(0, 180);
+  throw new Error(
+    `Site generation returned no valid site files. Response preview: ${preview}`
+  );
 }
 
 function isHtmlFile(filePath: string): boolean {
@@ -312,6 +591,290 @@ function routeKeysForGeneratedFile(filePath: string): string[] {
     keys.add(routePathFromFilePath(filePath));
   }
   return Array.from(keys);
+}
+
+interface RouteAliasTarget<T> {
+  route: string;
+  value: T;
+  tokens: string[];
+  segmentCount: number;
+}
+
+function normalizeRouteAliasToken(token: string): string {
+  const trimmed = token.trim().toLowerCase();
+  if (!trimmed) {
+    return "";
+  }
+
+  if (trimmed.endsWith("ies") && trimmed.length > 4) {
+    return `${trimmed.slice(0, -3)}y`;
+  }
+
+  if (trimmed.endsWith("s") && !trimmed.endsWith("ss") && trimmed.length > 3) {
+    return trimmed.slice(0, -1);
+  }
+
+  return trimmed;
+}
+
+function routeAliasPathname(rawRoute: string): string | null {
+  const trimmed = rawRoute.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const resolvedUrl = new URL(trimmed, "https://generated.local/");
+    return resolvedUrl.pathname || "/";
+  } catch {
+    return null;
+  }
+}
+
+function routeAliasTokens(rawRoute: string): string[] {
+  const pathname = routeAliasPathname(rawRoute);
+  if (!pathname || pathname === "/") {
+    return [];
+  }
+
+  return pathname
+    .replace(/\/index\.html?$/i, "")
+    .replace(/\.html?$/i, "")
+    .split("/")
+    .flatMap((segment) => segment.split(/[^a-z0-9]+/i))
+    .map((token) => normalizeRouteAliasToken(token))
+    .filter(Boolean);
+}
+
+function routeAliasSegmentCount(rawRoute: string): number {
+  const pathname = routeAliasPathname(rawRoute);
+  if (!pathname || pathname === "/") {
+    return 0;
+  }
+
+  return pathname
+    .replace(/\/index\.html?$/i, "")
+    .replace(/\.html?$/i, "")
+    .split("/")
+    .filter(Boolean).length;
+}
+
+function buildRouteAliasTarget<T>(route: string, value: T): RouteAliasTarget<T> {
+  return {
+    route,
+    value,
+    tokens: routeAliasTokens(route),
+    segmentCount: routeAliasSegmentCount(route),
+  };
+}
+
+function findBestRouteAliasTarget<T>(
+  rawRoute: string,
+  candidates: RouteAliasTarget<T>[]
+): RouteAliasTarget<T> | null {
+  const target = buildRouteAliasTarget(rawRoute, null);
+  const targetTokenSet = new Set(target.tokens);
+  if (target.tokens.length === 0 || targetTokenSet.size === 0) {
+    return null;
+  }
+
+  const scoredCandidates = candidates
+    .map((candidate) => {
+      if (candidate.tokens.length === 0) {
+        return { candidate, score: Number.NEGATIVE_INFINITY };
+      }
+
+      const candidateTokenSet = new Set(candidate.tokens);
+      const sharedTokenCount = Array.from(targetTokenSet).filter((token) =>
+        candidateTokenSet.has(token)
+      ).length;
+
+      if (sharedTokenCount === 0) {
+        return { candidate, score: Number.NEGATIVE_INFINITY };
+      }
+
+      let score = sharedTokenCount * 5;
+      const targetLastToken = target.tokens[target.tokens.length - 1];
+      const candidateLastToken = candidate.tokens[candidate.tokens.length - 1];
+
+      if (targetLastToken === candidateLastToken) {
+        score += 4;
+      }
+
+      if (target.tokens[0] === candidate.tokens[0]) {
+        score += 2;
+      }
+
+      if (target.tokens.every((token) => candidateTokenSet.has(token))) {
+        score += 2;
+      }
+
+      if (candidate.tokens.every((token) => targetTokenSet.has(token))) {
+        score += 2;
+      }
+
+      score -= Math.max(0, candidate.segmentCount - target.segmentCount) * 4;
+      score -= Math.max(0, candidate.tokens.length - target.tokens.length);
+
+      return { candidate, score };
+    })
+    .filter(({ score }) => Number.isFinite(score) && score >= 6)
+    .sort((left, right) => right.score - left.score);
+
+  if (scoredCandidates.length === 0) {
+    return null;
+  }
+
+  const [best, second] = scoredCandidates;
+  if (second && best.score - second.score < 2) {
+    return null;
+  }
+
+  return best.candidate;
+}
+
+function generatedFilePathFromRoute(route: string): string | null {
+  const pathname = routeAliasPathname(route);
+  if (!pathname) {
+    return null;
+  }
+
+  if (pathname === "/") {
+    return "index.html";
+  }
+
+  if (/\.html?$/i.test(pathname)) {
+    return normalizeGeneratedFilePath(pathname.replace(/^\/+/, ""));
+  }
+
+  const normalizedPath = normalizeGeneratedFilePath(
+    pathname.replace(/^\/+/, "").replace(/\/+$/, "")
+  );
+  if (!normalizedPath) {
+    return null;
+  }
+
+  return `${normalizedPath}/index.html`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildRouteAliasRedirectPage(targetHref: string): string {
+  const escapedHref = escapeHtml(targetHref);
+
+  return [
+    "<!DOCTYPE html>",
+    '<html lang="en">',
+    "<head>",
+    '  <meta charset="utf-8">',
+    '  <meta name="viewport" content="width=device-width, initial-scale=1">',
+    "  <title>Redirecting...</title>",
+    `  <meta http-equiv="refresh" content="0;url=${escapedHref}">`,
+    `  <link rel="canonical" href="${escapedHref}">`,
+    "  <style>",
+    "    :root { color-scheme: light; }",
+    "    body { margin: 0; font-family: Arial, sans-serif; background: #111827; color: #f9fafb; display: grid; min-height: 100vh; place-items: center; }",
+    "    main { width: min(32rem, calc(100vw - 2rem)); padding: 1.5rem; border-radius: 1rem; background: rgba(17, 24, 39, 0.92); box-shadow: 0 20px 45px rgba(0, 0, 0, 0.28); }",
+    "    a { color: #fbbf24; }",
+    "  </style>",
+    "</head>",
+    "<body>",
+    "  <main>",
+    "    <p>Redirecting...</p>",
+    `    <p><a href="${escapedHref}">Continue</a></p>`,
+    "  </main>",
+    "</body>",
+    "</html>",
+  ].join("\n");
+}
+
+function synthesizeMissingRouteAliasPages(
+  files: GeneratedSiteFile[],
+  sourceSiteSnapshot: GenerateSiteOptions["sourceSiteSnapshot"]
+): GeneratedSiteFile[] {
+  const missingRouteReferences = findMissingLocalBundleReferences(files).filter(
+    (issue) => issue.targetType === "route"
+  );
+  if (missingRouteReferences.length === 0) {
+    return files;
+  }
+
+  const nextFiles = [...files];
+  const existingPaths = new Set(files.map((file) => file.path));
+  const htmlAliasTargets = files
+    .filter((file) => isHtmlFile(file.path))
+    .map((file) => buildRouteAliasTarget(routePathFromFilePath(file.path), file.path));
+  const sourceAnchorTargets =
+    sourceSiteSnapshot?.pages
+      .filter((page) => page.localPath !== "index.html")
+      .map((page) =>
+        buildRouteAliasTarget(
+          routePathFromFilePath(page.localPath),
+          toAnchorIdFromLocalPath(page.localPath)
+        )
+      ) ?? [];
+
+  let createdAliasCount = 0;
+  for (const issue of missingRouteReferences) {
+    if (createdAliasCount >= 12) {
+      break;
+    }
+
+    const route = issue.resolvedTarget;
+    if (
+      route === "/" ||
+      route.startsWith("/assets/") ||
+      route.startsWith("/api/")
+    ) {
+      continue;
+    }
+
+    const aliasFilePath = generatedFilePathFromRoute(route);
+    if (!aliasFilePath || existingPaths.has(aliasFilePath)) {
+      continue;
+    }
+
+    const bestExistingTarget = findBestRouteAliasTarget(route, htmlAliasTargets);
+    let redirectHref: string | null = null;
+
+    if (bestExistingTarget && bestExistingTarget.value !== aliasFilePath) {
+      redirectHref = relativeHrefBetweenFiles(
+        aliasFilePath,
+        bestExistingTarget.value
+      );
+    } else {
+      const sourceAnchorTarget = findBestRouteAliasTarget(
+        route,
+        sourceAnchorTargets
+      );
+      const homeHref = relativeHrefBetweenFiles(aliasFilePath, "index.html");
+      redirectHref =
+        sourceAnchorTarget && sourceAnchorTarget.value !== "top"
+          ? `${homeHref}#${sourceAnchorTarget.value}`
+          : homeHref;
+    }
+
+    if (!redirectHref) {
+      continue;
+    }
+
+    nextFiles.push({
+      path: aliasFilePath,
+      content: buildRouteAliasRedirectPage(redirectHref),
+    });
+    existingPaths.add(aliasFilePath);
+    htmlAliasTargets.push(buildRouteAliasTarget(route, aliasFilePath));
+    createdAliasCount += 1;
+  }
+
+  return nextFiles;
 }
 
 function relativeHrefBetweenFiles(
@@ -343,6 +906,174 @@ function relativeHrefBetweenFiles(
   }
 
   return relativeHref;
+}
+
+function isSkippableBundleReference(rawReference: string): boolean {
+  const trimmed = rawReference.trim();
+  return (
+    !trimmed ||
+    trimmed.startsWith("#") ||
+    trimmed.startsWith("mailto:") ||
+    trimmed.startsWith("tel:") ||
+    trimmed.startsWith("javascript:") ||
+    trimmed.startsWith("data:") ||
+    /^(https?:)?\/\//i.test(trimmed)
+  );
+}
+
+function resolveBundleReference(
+  rawReference: string,
+  currentFilePath: string
+):
+  | { target: string; targetType: "file" | "route" }
+  | null {
+  if (isSkippableBundleReference(rawReference)) {
+    return null;
+  }
+
+  const sanitizedReference = rawReference
+    .trim()
+    .split("#", 1)[0]
+    .split("?", 1)[0]
+    .trim();
+
+  if (!sanitizedReference) {
+    return null;
+  }
+
+  try {
+    const baseUrl = new URL(`https://generated.local/${currentFilePath}`);
+    const resolvedUrl = new URL(sanitizedReference, baseUrl);
+    const pathname = resolvedUrl.pathname || "/";
+
+    if (pathname === "/") {
+      return { target: "/", targetType: "route" };
+    }
+
+    if (/\.html?$/i.test(pathname)) {
+      return {
+        target: pathname.startsWith("/") ? pathname : `/${pathname}`,
+        targetType: "route",
+      };
+    }
+
+    if (path.posix.extname(pathname)) {
+      const normalizedPath = normalizeGeneratedFilePath(
+        pathname.replace(/^\/+/, "")
+      );
+      if (!normalizedPath) {
+        return null;
+      }
+
+      return { target: normalizedPath, targetType: "file" };
+    }
+
+    return {
+      target: pathname.endsWith("/") ? pathname : `${pathname}/`,
+      targetType: "route",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function collectHtmlReferences(content: string): string[] {
+  const references: string[] = [];
+  const attrPattern = /(?:href|src|poster|action)=(["'])([^"']+)\1/gi;
+  const srcsetPattern = /srcset=(["'])([^"']+)\1/gi;
+
+  for (const match of content.matchAll(attrPattern)) {
+    const reference = (match[2] ?? "").trim();
+    if (reference) {
+      references.push(reference);
+    }
+  }
+
+  for (const match of content.matchAll(srcsetPattern)) {
+    const rawSrcset = (match[2] ?? "").trim();
+    if (!rawSrcset) {
+      continue;
+    }
+
+    for (const candidate of rawSrcset.split(",")) {
+      const [reference] = candidate.trim().split(/\s+/, 1);
+      if (reference) {
+        references.push(reference);
+      }
+    }
+  }
+
+  return references;
+}
+
+function collectCssReferences(content: string): string[] {
+  const references: string[] = [];
+  const urlPattern = /url\(([^)]+)\)/gi;
+
+  for (const match of content.matchAll(urlPattern)) {
+    const reference = (match[1] ?? "")
+      .trim()
+      .replace(/^['"]|['"]$/g, "");
+    if (reference) {
+      references.push(reference);
+    }
+  }
+
+  return references;
+}
+
+function findMissingLocalBundleReferences(
+  files: GeneratedSiteFile[],
+  extraFilePaths: Iterable<string> = []
+): MissingBundleReference[] {
+  const routeKeys = new Set(files.flatMap((file) => routeKeysForGeneratedFile(file.path)));
+  const filePaths = new Set<string>(extraFilePaths);
+  for (const file of files) {
+    filePaths.add(file.path);
+  }
+  const missingReferences = new Map<string, MissingBundleReference>();
+
+  for (const file of files) {
+    const references = new Set<string>();
+
+    if (isHtmlFile(file.path)) {
+      for (const reference of collectHtmlReferences(file.content)) {
+        references.add(reference);
+      }
+    }
+
+    if (/\.css$/i.test(file.path)) {
+      for (const reference of collectCssReferences(file.content)) {
+        references.add(reference);
+      }
+    }
+
+    for (const reference of references) {
+      const resolved = resolveBundleReference(reference, file.path);
+      if (!resolved) {
+        continue;
+      }
+
+      const exists =
+        resolved.targetType === "route"
+          ? routeKeys.has(resolved.target)
+          : filePaths.has(resolved.target);
+
+      if (exists) {
+        continue;
+      }
+
+      const issueKey = `${file.path}::${reference}::${resolved.targetType}::${resolved.target}`;
+      missingReferences.set(issueKey, {
+        fromFilePath: file.path,
+        rawReference: reference,
+        resolvedTarget: resolved.target,
+        targetType: resolved.targetType,
+      });
+    }
+  }
+
+  return Array.from(missingReferences.values());
 }
 
 function normalizeInternalRoutePath(rawHref: string, currentFilePath: string): string | null {
@@ -429,6 +1160,7 @@ function rewriteSinglePageLinks(
   }
 
   const hrefToAnchor = new Map<string, string>();
+  const aliasTargets: Array<RouteAliasTarget<string>> = [];
 
   for (const page of sourceSiteSnapshot.pages) {
     const anchorId = toAnchorIdFromLocalPath(page.localPath);
@@ -437,6 +1169,8 @@ function rewriteSinglePageLinks(
       page.localPath === "index.html"
         ? "/"
         : `/${page.localPath.replace(/\/index\.html$/i, "")}/`;
+
+    aliasTargets.push(buildRouteAliasTarget(pathValue, anchorHref));
 
     hrefToAnchor.set(pathValue, anchorHref);
     hrefToAnchor.set(pathValue.slice(0, -1), anchorHref);
@@ -461,7 +1195,9 @@ function rewriteSinglePageLinks(
         return fullMatch;
       }
 
-      const replacementHref = hrefToAnchor.get(normalizedHref);
+      const replacementHref =
+        hrefToAnchor.get(normalizedHref) ??
+        findBestRouteAliasTarget(normalizedHref, aliasTargets)?.value;
       if (!replacementHref) {
         return fullMatch;
       }
@@ -483,6 +1219,9 @@ function rewriteBundleLinks(
   const htmlFiles = files.filter((file) => isHtmlFile(file.path));
   const isSinglePage = htmlFiles.length <= 1;
   const routeToFilePath = new Map<string, string>();
+  const aliasTargets = htmlFiles.map((file) =>
+    buildRouteAliasTarget(routePathFromFilePath(file.path), file.path)
+  );
 
   for (const file of files) {
     for (const routeKey of routeKeysForGeneratedFile(file.path)) {
@@ -526,7 +1265,9 @@ function rewriteBundleLinks(
           return fullMatch;
         }
 
-        const targetFilePath = routeToFilePath.get(normalizedRoute);
+        const targetFilePath =
+          routeToFilePath.get(normalizedRoute) ??
+          findBestRouteAliasTarget(normalizedRoute, aliasTargets)?.value;
         if (!targetFilePath) {
           return fullMatch;
         }
@@ -1140,7 +1881,11 @@ export async function generateSiteForBusiness(
         stage: "crawl_complete",
         businessId,
         businessName: name,
-        message: `Captured ${sourceSiteSnapshot.pageCount} source pages for ${name}`,
+        message: `Captured ${sourceSiteSnapshot.pageCount} source pages for ${name} (estimated site size: ${
+          sourceSiteSnapshot.estimatedPageCountIsLowerBound
+            ? `at least ${sourceSiteSnapshot.estimatedPageCount}`
+            : sourceSiteSnapshot.estimatedPageCount
+        } pages)`,
       });
     }
 
@@ -1233,6 +1978,16 @@ export async function generateSiteForBusiness(
       rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
       businessData
     );
+    const generatedHtmlPageCount = countHtmlPages(normalizedFiles);
+    normalizedFiles = synthesizeMissingRouteAliasPages(
+      normalizedFiles,
+      sourceSiteSnapshot
+    );
+    const availableStaticAssetPaths = walkDirectoryFiles(siteDir)
+      .map((fullPath) =>
+        path.relative(siteDir, fullPath).split(path.sep).join("/")
+      )
+      .filter((relativePath) => relativePath !== "__source_snapshot.json");
 
     const correctionPrompts: string[] = [];
     if (
@@ -1247,9 +2002,31 @@ export async function generateSiteForBusiness(
       );
     }
 
-    if (requiresMultiPageBundle && countHtmlPages(normalizedFiles) < 2) {
+    if (requiresMultiPageBundle && generatedHtmlPageCount < 2) {
       correctionPrompts.push(
         buildMultiPageCorrectionPrompt(architectureRecommendation)
+      );
+    }
+
+    if (
+      generatedHtmlPageCount < architectureRecommendation.minimumHtmlPageCount
+    ) {
+      correctionPrompts.push(
+        buildPageComplexityCorrectionPrompt(
+          architectureRecommendation,
+          generatedHtmlPageCount
+        )
+      );
+    }
+
+    const missingBundleReferences =
+      findMissingLocalBundleReferences(
+        normalizedFiles,
+        availableStaticAssetPaths
+      );
+    if (missingBundleReferences.length > 0) {
+      correctionPrompts.push(
+        buildBundleIntegrityCorrectionPrompt(missingBundleReferences)
       );
     }
 
@@ -1279,6 +2056,11 @@ export async function generateSiteForBusiness(
         rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
         businessData
       );
+      const revisedHtmlPageCount = countHtmlPages(normalizedFiles);
+      normalizedFiles = synthesizeMissingRouteAliasPages(
+        normalizedFiles,
+        sourceSiteSnapshot
+      );
 
       if (
         sourceBrandAssets.logo &&
@@ -1292,9 +2074,34 @@ export async function generateSiteForBusiness(
         );
       }
 
-      if (requiresMultiPageBundle && countHtmlPages(normalizedFiles) < 2) {
+      if (requiresMultiPageBundle && revisedHtmlPageCount < 2) {
         throw new Error(
           "Generated site returned only one HTML page even though a multi-page bundle was required."
+        );
+      }
+
+      if (
+        revisedHtmlPageCount < architectureRecommendation.minimumHtmlPageCount
+      ) {
+        throw new Error(
+          `Generated site returned ${revisedHtmlPageCount} substantive HTML pages, but at least ${architectureRecommendation.minimumHtmlPageCount} are required to match source-site complexity.`
+        );
+      }
+
+      const remainingMissingBundleReferences =
+        findMissingLocalBundleReferences(
+          normalizedFiles,
+          availableStaticAssetPaths
+        );
+      if (remainingMissingBundleReferences.length > 0) {
+        throw new Error(
+          `Generated site still contains broken local bundle references: ${remainingMissingBundleReferences
+            .slice(0, 6)
+            .map(
+              (issue) =>
+                `${issue.fromFilePath} -> ${issue.rawReference} (${issue.resolvedTarget})`
+            )
+            .join("; ")}`
         );
       }
     }

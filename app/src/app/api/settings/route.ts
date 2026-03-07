@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAnthropicOAuthStatus } from "@/lib/anthropic-oauth";
 import { getOpenAIOAuthStatus } from "@/lib/openai-oauth";
+import { AI_PROVIDER_LABELS } from "@/lib/ai-provider";
 import { initializeDatabase } from "@/lib/schema";
 import {
   getConfig,
@@ -10,6 +11,7 @@ import {
   type Config,
   type OpenAIAuthMode,
 } from "@/lib/config";
+import { listProviderModelsFromApi } from "@/lib/provider-models";
 
 interface SettingsPayload {
   credentials: {
@@ -240,6 +242,49 @@ function validateSettingsUpdate(
   }
 }
 
+function getProviderModel(config: Config, provider: AiProvider): string {
+  switch (provider) {
+    case "openai":
+      return config.openaiModel;
+    case "google":
+      return config.googleModel;
+    case "openrouter":
+      return config.openrouterModel;
+    case "anthropic":
+    default:
+      return config.anthropicModel;
+  }
+}
+
+async function validateSelectedProviderModel(
+  updates: Partial<Config>,
+  currentConfig: Config
+): Promise<void> {
+  const nextConfig = {
+    ...currentConfig,
+    ...updates,
+  };
+  const provider = nextConfig.aiProvider;
+  const providerLabel = AI_PROVIDER_LABELS[provider];
+  const selectedModel = getProviderModel(nextConfig, provider).trim();
+
+  if (!selectedModel) {
+    throw new Error(`Select a ${providerLabel} model.`);
+  }
+
+  const result = await listProviderModelsFromApi(provider, {
+    config: nextConfig,
+  });
+
+  if (result.models.length === 0) {
+    throw new Error(`${providerLabel} returned an empty model list.`);
+  }
+
+  if (!result.models.includes(selectedModel)) {
+    throw new Error(`Select a ${providerLabel} model from the provider list.`);
+  }
+}
+
 export async function GET() {
   try {
     initializeDatabase();
@@ -276,6 +321,10 @@ export async function PUT(request: NextRequest) {
     }
 
     validateSettingsUpdate(updates, currentConfig);
+
+    if (!body?.section || body.section === "credentials") {
+      await validateSelectedProviderModel(updates, currentConfig);
+    }
 
     const saved = updateConfig(updates);
     return NextResponse.json(toSettingsPayload(saved));

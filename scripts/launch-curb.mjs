@@ -17,6 +17,7 @@ const INSTALL_STAMP_PATH = path.join(APP_DIR, "node_modules", ".curb-lock-hash")
 const NEXT_BUILD_DIR = path.join(APP_DIR, ".next");
 const DEFAULT_PORT = 3000;
 const MAX_PORT = 3010;
+const LOOPBACK_HOST = "127.0.0.1";
 const SERVER_START_TIMEOUT_MS = 90_000;
 const SERVER_MODE = "webpack-dev";
 const IS_WINDOWS = process.platform === "win32";
@@ -308,7 +309,7 @@ async function isPortAvailable(port) {
     const server = net.createServer();
 
     server.once("error", () => resolve(false));
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(port, LOOPBACK_HOST, () => {
       server.close(() => resolve(true));
     });
   });
@@ -325,7 +326,7 @@ async function fetchJson(url, init) {
 }
 
 async function isHealthy(port) {
-  const data = await fetchJson(`http://127.0.0.1:${port}/api/health`);
+  const data = await fetchJson(`http://${LOOPBACK_HOST}:${port}/api/health`);
   return Boolean(data && data.app === "curb" && data.ok);
 }
 
@@ -459,7 +460,7 @@ function startServer(port) {
 
   const child = spawn(
     getNpmCommand(),
-    ["run", "dev", "--", "--port", String(port), "--hostname", "127.0.0.1"],
+    ["run", "dev", "--", "--port", String(port), "--hostname", LOOPBACK_HOST],
     {
       cwd: APP_DIR,
       env: {
@@ -504,10 +505,10 @@ function isLocalPreviewUrl(url) {
 }
 
 async function syncLocalPreviewBaseUrl(port) {
-  const settings = await fetchJson(`http://127.0.0.1:${port}/api/settings`);
+  const settings = await fetchJson(`http://${LOOPBACK_HOST}:${port}/api/settings`);
   if (!settings?.defaults) return;
 
-  const expectedUrl = `http://localhost:${port}/sites`;
+  const expectedUrl = `http://${LOOPBACK_HOST}:${port}/sites`;
   const currentUrl = String(settings.defaults.siteBaseUrl ?? "").trim();
 
   if (currentUrl && !isLocalPreviewUrl(currentUrl)) {
@@ -518,7 +519,7 @@ async function syncLocalPreviewBaseUrl(port) {
     return;
   }
 
-  await fetch(`http://127.0.0.1:${port}/api/settings`, {
+  await fetch(`http://${LOOPBACK_HOST}:${port}/api/settings`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -540,7 +541,7 @@ async function main() {
   await ensureDependencies();
 
   const { port, running, supervisedElsewhere } = await choosePort();
-  const appUrl = `http://localhost:${port}`;
+  const appUrl = `http://${LOOPBACK_HOST}:${port}`;
 
   if (!running) {
     log(`Starting Curb on port ${port}...`);

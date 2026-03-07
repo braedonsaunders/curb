@@ -109,6 +109,11 @@ export interface SiteArchitectureRecommendation {
   required: boolean;
   confidence: "medium" | "high";
   reasons: string[];
+  sourcePageEstimate: number;
+  sourcePageEstimateIsLowerBound: boolean;
+  minimumHtmlPageCount: number;
+  targetHtmlPageCountMin: number;
+  targetHtmlPageCountMax: number;
 }
 
 const STRONG_MULTI_PAGE_FEATURES = new Set([
@@ -669,6 +674,12 @@ function buildSourceSiteSummary(
     `Requested URL: ${snapshot.requestedUrl}`,
     `Final URL: ${snapshot.finalUrl}`,
     `Captured pages: ${snapshot.pageCount}`,
+    `Estimated total site pages: ${
+      snapshot.estimatedPageCountIsLowerBound
+        ? `at least ${snapshot.estimatedPageCount}`
+        : snapshot.estimatedPageCount
+    }`,
+    `Capture limit reached: ${snapshot.captureLimitReached ? "yes" : "no"}`,
     "Source page inventory (content can be reorganized into a stronger information architecture):",
     ...pageInventory,
     `Brand colors: ${
@@ -744,6 +755,7 @@ function buildExistingSiteSummary(
     return "No current generated site bundle was provided.";
   }
 
+  const htmlPageCount = files.filter((file) => isHtmlSiteFile(file.path)).length;
   const maxChars = 45000;
   const maxCharsPerFile = 12000;
   let usedChars = 0;
@@ -774,6 +786,7 @@ function buildExistingSiteSummary(
   return [
     "Current Generated Site Bundle:",
     "Use this bundle as the working draft when applying requested site changes.",
+    `Current generated HTML pages: ${htmlPageCount}`,
     ...sections,
   ].join("\n\n");
 }
@@ -854,17 +867,96 @@ function pageSlugHasDedicatedPageHint(pageSlug: string): boolean {
     .some((segment) => DEDICATED_PAGE_SLUG_HINTS.has(segment));
 }
 
+function derivePageComplexityBudget(
+  sourcePageEstimate: number,
+  sourcePageEstimateIsLowerBound: boolean
+): {
+  minimumHtmlPageCount: number;
+  targetHtmlPageCountMin: number;
+  targetHtmlPageCountMax: number;
+} {
+  if (sourcePageEstimate <= 1) {
+    return {
+      minimumHtmlPageCount: 1,
+      targetHtmlPageCountMin: 1,
+      targetHtmlPageCountMax: 1,
+    };
+  }
+
+  let targetHtmlPageCountMin: number;
+  let targetHtmlPageCountMax: number;
+
+  if (sourcePageEstimate <= 2) {
+    targetHtmlPageCountMin = 2;
+    targetHtmlPageCountMax = 2;
+  } else if (sourcePageEstimate <= 5) {
+    targetHtmlPageCountMin = 3;
+    targetHtmlPageCountMax = 5;
+  } else if (sourcePageEstimate <= 9) {
+    targetHtmlPageCountMin = 5;
+    targetHtmlPageCountMax = 7;
+  } else if (sourcePageEstimate <= 14) {
+    targetHtmlPageCountMin = 7;
+    targetHtmlPageCountMax = 10;
+  } else if (sourcePageEstimate <= 24) {
+    targetHtmlPageCountMin = 9;
+    targetHtmlPageCountMax = 14;
+  } else {
+    targetHtmlPageCountMin = 12;
+    targetHtmlPageCountMax = 18;
+  }
+
+  if (!sourcePageEstimateIsLowerBound) {
+    targetHtmlPageCountMax = Math.min(
+      targetHtmlPageCountMax,
+      sourcePageEstimate
+    );
+  }
+
+  return {
+    minimumHtmlPageCount: targetHtmlPageCountMin,
+    targetHtmlPageCountMin,
+    targetHtmlPageCountMax: Math.max(
+      targetHtmlPageCountMin,
+      targetHtmlPageCountMax
+    ),
+  };
+}
+
 export function recommendSiteArchitecture(
   options: GenerateSiteOptions = {}
 ): SiteArchitectureRecommendation {
   const reasons: string[] = [];
   let score = 0;
+  const sourcePages = options.sourceSiteSnapshot?.pages ?? [];
 
   const existingHtmlFiles = (options.existingSiteFiles ?? []).filter((file) =>
     isHtmlSiteFile(file.path)
   );
   const existingSecondaryPages = existingHtmlFiles.filter(
     (file) => file.path !== "index.html"
+  );
+  const sourcePageEstimate = Math.max(
+    options.sourceSiteSnapshot?.estimatedPageCount ??
+      options.sourceSiteSnapshot?.pageCount ??
+      0,
+    sourcePages.length
+  );
+  const sourcePageEstimateIsLowerBound =
+    sourcePageEstimate ===
+      (options.sourceSiteSnapshot?.estimatedPageCount ??
+        options.sourceSiteSnapshot?.pageCount ??
+        0) && !!options.sourceSiteSnapshot?.estimatedPageCountIsLowerBound;
+  const referencePageEstimate = Math.max(
+    existingHtmlFiles.length,
+    sourcePageEstimate
+  );
+  const referencePageEstimateIsLowerBound =
+    referencePageEstimate === sourcePageEstimate &&
+    sourcePageEstimateIsLowerBound;
+  const pageComplexityBudget = derivePageComplexityBudget(
+    referencePageEstimate,
+    referencePageEstimateIsLowerBound
   );
 
   if (existingSecondaryPages.length > 0) {
@@ -874,7 +966,6 @@ export function recommendSiteArchitecture(
     );
   }
 
-  const sourcePages = options.sourceSiteSnapshot?.pages ?? [];
   const nonHomeSourcePages = sourcePages.filter(
     (page) => page.localPath !== "index.html"
   );
@@ -948,12 +1039,42 @@ export function recommendSiteArchitecture(
     );
   }
 
+  if (referencePageEstimate >= 10) {
+    score += 4;
+    reasons.push(
+      `Source/site complexity suggests ${
+        referencePageEstimateIsLowerBound
+          ? `at least ${referencePageEstimate}`
+          : referencePageEstimate
+      } meaningful pages, so the redesign must preserve comparable page-level complexity.`
+    );
+  } else if (referencePageEstimate >= 6) {
+    score += 3;
+    reasons.push(
+      `Source/site complexity is closer to a ${
+        referencePageEstimateIsLowerBound
+          ? `${referencePageEstimate}+`
+          : referencePageEstimate
+      }-page site than a simple brochure page.`
+    );
+  } else if (referencePageEstimate >= 3) {
+    score += 2;
+    reasons.push(
+      `The site already spans multiple distinct pages and should not be collapsed into a single long page.`
+    );
+  }
+
   if (score >= 4) {
     return {
       mode: "multi-page",
       required: true,
       confidence: "high",
       reasons,
+      sourcePageEstimate: referencePageEstimate,
+      sourcePageEstimateIsLowerBound: referencePageEstimateIsLowerBound,
+      minimumHtmlPageCount: pageComplexityBudget.minimumHtmlPageCount,
+      targetHtmlPageCountMin: pageComplexityBudget.targetHtmlPageCountMin,
+      targetHtmlPageCountMax: pageComplexityBudget.targetHtmlPageCountMax,
     };
   }
 
@@ -963,6 +1084,11 @@ export function recommendSiteArchitecture(
       required: false,
       confidence: "medium",
       reasons,
+      sourcePageEstimate: referencePageEstimate,
+      sourcePageEstimateIsLowerBound: referencePageEstimateIsLowerBound,
+      minimumHtmlPageCount: pageComplexityBudget.minimumHtmlPageCount,
+      targetHtmlPageCountMin: pageComplexityBudget.targetHtmlPageCountMin,
+      targetHtmlPageCountMax: pageComplexityBudget.targetHtmlPageCountMax,
     };
   }
 
@@ -970,6 +1096,11 @@ export function recommendSiteArchitecture(
     mode: "single-page",
     required: false,
     confidence: "medium",
+    sourcePageEstimate: referencePageEstimate,
+    sourcePageEstimateIsLowerBound: referencePageEstimateIsLowerBound,
+    minimumHtmlPageCount: 1,
+    targetHtmlPageCountMin: 1,
+    targetHtmlPageCountMax: Math.max(1, pageComplexityBudget.targetHtmlPageCountMax),
     reasons:
       reasons.length > 0
         ? reasons
@@ -983,6 +1114,13 @@ function buildArchitectureRecommendationSummary(
   options: GenerateSiteOptions = {}
 ): string {
   const recommendation = recommendSiteArchitecture(options);
+  const sourcePageEstimateLabel = recommendation.sourcePageEstimateIsLowerBound
+    ? `at least ${recommendation.sourcePageEstimate}`
+    : `${recommendation.sourcePageEstimate}`;
+  const targetPageRangeLabel =
+    recommendation.targetHtmlPageCountMin === recommendation.targetHtmlPageCountMax
+      ? `${recommendation.targetHtmlPageCountMin}`
+      : `${recommendation.targetHtmlPageCountMin}-${recommendation.targetHtmlPageCountMax}`;
 
   return [
     "Architecture Recommendation:",
@@ -991,11 +1129,14 @@ function buildArchitectureRecommendationSummary(
       recommendation.required ? "required" : "preferred"
     }`,
     `Confidence: ${recommendation.confidence}`,
+    `Estimated source/site page complexity: ${sourcePageEstimateLabel} pages`,
+    `Target substantive HTML page range: ${targetPageRangeLabel}`,
+    `Minimum substantive HTML pages required: ${recommendation.minimumHtmlPageCount}`,
     ...recommendation.reasons.map((reason) => `- ${reason}`),
     recommendation.mode === "multi-page"
       ? recommendation.required
-        ? "- Return a multi-page static site bundle with at least two HTML pages."
-        : "- Prefer a multi-page bundle unless there is a very strong reason to consolidate everything into one page."
+        ? `- Return a multi-page static site bundle with at least ${recommendation.minimumHtmlPageCount} substantive HTML pages and keep page-level complexity roughly aligned with the source site.`
+        : `- Prefer a multi-page bundle in roughly the ${targetPageRangeLabel}-page range unless there is a very strong reason to consolidate.`
       : "- A single-page site is acceptable only if the content can be consolidated cleanly without losing clarity or utility.",
   ].join("\n");
 }
@@ -1049,10 +1190,14 @@ export async function generateSite(
     "- Extract the brand DNA from the source material, then reinterpret it into a world-class modern website with a distinct creative direction.",
     "- The visual quality bar is AAA-level: premium, current, custom-designed, and strong enough to sell as a serious paid upgrade.",
     "- Create a polished, conversion-focused, modern business website that feels materially better than the original and obviously more valuable at first glance.",
+    "- Before writing code, establish an internal design brief for this business: audience, conversion goal, practical constraints, a clear aesthetic direction, and one memorable differentiator.",
     "- Start from a blank canvas for layout and composition. Preserve brand identity and business truth, not the source site's visual structure.",
     "- Do not mirror the source hero composition, navigation arrangement, card grids, footer structure, typography scale, or repetitive section rhythm unless the business truly needs the same pattern.",
     "- If the source site feels visually weak, replace its composition entirely instead of lightly modernizing the same layout.",
     "- Choose a clear art direction and execute it consistently with stronger typography, richer backgrounds or surfaces, deliberate contrast, varied section composition, and premium spacing.",
+    "- Typography must feel chosen, not defaulted. Avoid generic font stacks unless the brand truly calls for restraint.",
+    "- Use a cohesive visual system with deliberate color hierarchy, CSS variables or shared tokens, purposeful motion, atmospheric backgrounds or surfaces, and compositions that do not feel like safe templates.",
+    "- Match implementation complexity to the concept: restrained directions should be precise and elegant, while bolder directions should have enough layering, motion, and detail to feel fully resolved.",
     "- Preserve and improve all customer-facing content and features from the source material.",
     "- Rewrite and elevate weak copy when helpful, but do not lose important business information.",
     "- Reorganize layout, page structure, and section order whenever needed to produce a stronger modern experience.",
@@ -1060,7 +1205,9 @@ export async function generateSite(
     "- When an exact source logo file path is provided, every visible logo treatment must use that exact asset path. Do not recreate, redraw, typeset, simplify, or approximate the logo.",
     "- If no exact source logo asset is provided, do not invent or fabricate a new logo mark.",
     "- Choose the site architecture that best fits the business: single-page only for simple brochure sites, multi-page when there are clearly distinct pages, galleries, FAQs, specialties, resources, locations, or utility flows.",
-    "- When the Architecture Recommendation section says multi-page is required, you must return a multi-page bundle with at least two HTML pages.",
+    "- Match the source site's page-level complexity. Do not collapse a many-page website into a one-page brochure or a tiny handful of pages.",
+    "- When the Architecture Recommendation section provides a substantive HTML page target or minimum, follow it. Those counts refer to real content pages, not redirects, placeholders, or duplicate shells.",
+    "- When the Architecture Recommendation section says multi-page is required, you must return a multi-page bundle with at least the stated minimum number of substantive HTML pages.",
     "- Multi-page is required when there are multiple substantive source pages, large navigation, or complex flows such as store, booking, or portal behavior.",
     "- If single-page, consolidate content into anchored sections and use working in-page navigation like #about-us or #specials.",
     "- If multi-page, return a static site bundle with one file per page and keep all internal navigation relative to the site bundle.",

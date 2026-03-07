@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,13 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -36,6 +43,7 @@ import {
   Unplug,
   DollarSign,
   Loader2,
+  RefreshCw,
   Save,
   Eye,
   EyeOff,
@@ -85,6 +93,33 @@ interface SettingsData {
     text: string;
   };
 }
+
+interface ProviderModelsResponse {
+  models?: string[];
+  selectedModel?: string | null;
+  error?: string;
+}
+
+interface ProviderModelState {
+  status: "idle" | "loading" | "ready" | "error";
+  models: string[];
+  error: string | null;
+}
+
+type ProviderCredentialDraft = Pick<
+  SettingsData["credentials"],
+  | "provider"
+  | "anthropicApiKey"
+  | "anthropicAuthMode"
+  | "anthropicModel"
+  | "openaiApiKey"
+  | "openaiAuthMode"
+  | "openaiModel"
+  | "googleApiKey"
+  | "googleModel"
+  | "openrouterApiKey"
+  | "openrouterModel"
+>;
 
 type SettingsResponse = Partial<
   Omit<
@@ -143,6 +178,80 @@ const DEFAULT_SETTINGS: SettingsData = {
   pricing: { text: "" },
 };
 
+const PROVIDER_MODEL_FIELDS = {
+  anthropic: "anthropicModel",
+  openai: "openaiModel",
+  google: "googleModel",
+  openrouter: "openrouterModel",
+} as const satisfies Record<AiProvider, keyof SettingsData["credentials"]>;
+
+function createProviderModelStateMap(): Record<AiProvider, ProviderModelState> {
+  return {
+    anthropic: { status: "idle", models: [], error: null },
+    openai: { status: "idle", models: [], error: null },
+    google: { status: "idle", models: [], error: null },
+    openrouter: { status: "idle", models: [], error: null },
+  };
+}
+
+function getProviderModelReadiness(
+  settings: {
+    credentials: ProviderCredentialDraft;
+    anthropicOAuthConnected: boolean;
+    openaiOAuthConnected: boolean;
+  },
+  provider: AiProvider
+): { canLoad: boolean; reason: string } {
+  switch (provider) {
+    case "anthropic":
+      if (settings.credentials.anthropicAuthMode === "oauth") {
+        return settings.anthropicOAuthConnected
+          ? { canLoad: true, reason: "" }
+          : {
+              canLoad: false,
+              reason: "Connect Anthropic OAuth to load Anthropic models.",
+            };
+      }
+
+      return settings.credentials.anthropicApiKey.trim()
+        ? { canLoad: true, reason: "" }
+        : {
+            canLoad: false,
+            reason: "Enter an Anthropic API key to load Anthropic models.",
+          };
+    case "openai":
+      if (settings.credentials.openaiAuthMode === "oauth") {
+        return settings.openaiOAuthConnected
+          ? { canLoad: true, reason: "" }
+          : {
+              canLoad: false,
+              reason: "Connect OpenAI OAuth to load OpenAI models.",
+            };
+      }
+
+      return settings.credentials.openaiApiKey.trim()
+        ? { canLoad: true, reason: "" }
+        : {
+            canLoad: false,
+            reason: "Enter an OpenAI API key to load OpenAI models.",
+          };
+    case "google":
+      return settings.credentials.googleApiKey.trim()
+        ? { canLoad: true, reason: "" }
+        : {
+            canLoad: false,
+            reason: "Enter a Google AI API key to load Gemini models.",
+          };
+    case "openrouter":
+      return settings.credentials.openrouterApiKey.trim()
+        ? { canLoad: true, reason: "" }
+        : {
+            canLoad: false,
+            reason: "Enter an OpenRouter API key to load OpenRouter models.",
+          };
+  }
+}
+
 function normalizeSettingsData(data: SettingsResponse): SettingsData {
   return {
     ...DEFAULT_SETTINGS,
@@ -167,6 +276,9 @@ function normalizeSettingsData(data: SettingsResponse): SettingsData {
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<SettingsData>(DEFAULT_SETTINGS);
+  const [providerModels, setProviderModels] = useState<
+    Record<AiProvider, ProviderModelState>
+  >(createProviderModelStateMap);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({
@@ -193,6 +305,52 @@ export default function SettingsPage() {
   const [openAIOauthAuthorizeUrl, setOpenAIOauthAuthorizeUrl] = useState<
     string | null
   >(null);
+  const latestModelRequestRef = useRef<Record<AiProvider, number>>({
+    anthropic: 0,
+    openai: 0,
+    google: 0,
+    openrouter: 0,
+  });
+  const modelRequestCredentials = useMemo<ProviderCredentialDraft>(
+    () => ({
+      provider: settings.credentials.provider,
+      anthropicApiKey: settings.credentials.anthropicApiKey,
+      anthropicAuthMode: settings.credentials.anthropicAuthMode,
+      anthropicModel: settings.credentials.anthropicModel,
+      openaiApiKey: settings.credentials.openaiApiKey,
+      openaiAuthMode: settings.credentials.openaiAuthMode,
+      openaiModel: settings.credentials.openaiModel,
+      googleApiKey: settings.credentials.googleApiKey,
+      googleModel: settings.credentials.googleModel,
+      openrouterApiKey: settings.credentials.openrouterApiKey,
+      openrouterModel: settings.credentials.openrouterModel,
+    }),
+    [
+      settings.credentials.provider,
+      settings.credentials.anthropicApiKey,
+      settings.credentials.anthropicAuthMode,
+      settings.credentials.anthropicModel,
+      settings.credentials.openaiApiKey,
+      settings.credentials.openaiAuthMode,
+      settings.credentials.openaiModel,
+      settings.credentials.googleApiKey,
+      settings.credentials.googleModel,
+      settings.credentials.openrouterApiKey,
+      settings.credentials.openrouterModel,
+    ]
+  );
+  const modelReadinessState = useMemo(
+    () => ({
+      credentials: modelRequestCredentials,
+      anthropicOAuthConnected: settings.anthropicOAuth.connected,
+      openaiOAuthConnected: settings.openaiOAuth.connected,
+    }),
+    [
+      modelRequestCredentials,
+      settings.anthropicOAuth.connected,
+      settings.openaiOAuth.connected,
+    ]
+  );
 
   useEffect(() => {
     void fetchSettings();
@@ -368,6 +526,140 @@ export default function SettingsPage() {
   function toggleKeyVisibility(key: string) {
     setShowKeys((prev) => ({ ...prev, [key]: !prev[key] }));
   }
+
+  const loadProviderModels = useCallback(async (
+    provider: AiProvider,
+    options?: { forceRefresh?: boolean }
+  ) => {
+    const readiness = getProviderModelReadiness(modelReadinessState, provider);
+
+    if (!readiness.canLoad) {
+      setProviderModels((prev) => ({
+        ...prev,
+        [provider]: {
+          status: "idle",
+          models: [],
+          error: null,
+        },
+      }));
+      return;
+    }
+
+    const requestId = latestModelRequestRef.current[provider] + 1;
+    latestModelRequestRef.current[provider] = requestId;
+
+    setProviderModels((prev) => ({
+      ...prev,
+      [provider]: {
+        ...prev[provider],
+        status: "loading",
+        error: null,
+      },
+    }));
+
+    try {
+      const res = await fetch("/api/settings/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          credentials: modelRequestCredentials,
+          forceRefresh: options?.forceRefresh === true,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | ProviderModelsResponse
+        | null;
+
+      if (!res.ok) {
+        throw new Error(
+          data?.error ?? `Failed to load ${AI_PROVIDER_LABELS[provider]} models`
+        );
+      }
+
+      if (latestModelRequestRef.current[provider] !== requestId) {
+        return;
+      }
+
+      const models = Array.isArray(data?.models)
+        ? data.models.filter(
+            (model): model is string =>
+              typeof model === "string" && model.trim().length > 0
+          )
+        : [];
+      const selectedModel =
+        typeof data?.selectedModel === "string" && data.selectedModel.trim()
+          ? data.selectedModel
+          : (models[0] ?? null);
+
+      setProviderModels((prev) => ({
+        ...prev,
+        [provider]: {
+          status: "ready",
+          models,
+          error: null,
+        },
+      }));
+
+      if (!selectedModel) {
+        return;
+      }
+
+      const modelField = PROVIDER_MODEL_FIELDS[provider];
+      setSettings((prev) => {
+        const currentModel = String(prev.credentials[modelField] ?? "").trim();
+
+        if (currentModel && models.includes(currentModel)) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          credentials: {
+            ...prev.credentials,
+            [modelField]: selectedModel,
+          },
+        };
+      });
+    } catch (error) {
+      if (latestModelRequestRef.current[provider] !== requestId) {
+        return;
+      }
+
+      setProviderModels((prev) => ({
+        ...prev,
+        [provider]: {
+          status: "error",
+          models: [],
+          error:
+            error instanceof Error
+              ? error.message
+              : `Failed to load ${AI_PROVIDER_LABELS[provider]} models`,
+        },
+      }));
+    }
+  }, [
+    modelReadinessState,
+    modelRequestCredentials,
+  ]);
+
+  useEffect(() => {
+    if (loading) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void loadProviderModels(settings.credentials.provider);
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    loading,
+    loadProviderModels,
+    settings.credentials.provider,
+  ]);
 
   async function startAnthropicOAuth() {
     setOauthPhase("waiting");
@@ -578,6 +870,87 @@ export default function SettingsPage() {
       setOpenAIOauthError(message);
       toast.error(message);
     }
+  }
+
+  function renderProviderModelField(
+    provider: AiProvider,
+    label: string,
+    description: string
+  ) {
+    const modelField = PROVIDER_MODEL_FIELDS[provider];
+    const modelState = providerModels[provider];
+    const readiness = getProviderModelReadiness(modelReadinessState, provider);
+    const selectedModel = String(settings.credentials[modelField] ?? "").trim();
+    const helperText =
+      modelState.status === "error"
+        ? modelState.error
+        : modelState.status === "loading"
+          ? `Loading ${AI_PROVIDER_LABELS[provider]} models...`
+          : readiness.canLoad
+            ? description
+            : readiness.reason;
+
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor={`${provider}Model`}>{label}</Label>
+          <Button
+            variant="outline"
+            size="icon"
+            title={`Refresh ${AI_PROVIDER_LABELS[provider]} models`}
+            onClick={() => void loadProviderModels(provider, { forceRefresh: true })}
+            disabled={!readiness.canLoad || modelState.status === "loading"}
+          >
+            <RefreshCw
+              className={
+                modelState.status === "loading" ? "size-4 animate-spin" : "size-4"
+              }
+            />
+          </Button>
+        </div>
+
+        <Select
+          value={selectedModel || null}
+          onValueChange={(value: string | null) => {
+            if (value) {
+              updateCredential(modelField, value);
+            }
+          }}
+          disabled={
+            modelState.status === "loading" || modelState.models.length === 0
+          }
+        >
+          <SelectTrigger id={`${provider}Model`} className="w-full">
+            <SelectValue
+              placeholder={
+                modelState.status === "loading"
+                  ? "Loading models..."
+                  : readiness.canLoad
+                    ? "Select a model"
+                    : "Connect credentials to load models"
+              }
+            />
+          </SelectTrigger>
+          <SelectContent>
+            {modelState.models.map((model) => (
+              <SelectItem key={model} value={model}>
+                {model}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <p
+          className={
+            modelState.status === "error"
+              ? "text-xs text-destructive"
+              : "text-xs text-muted-foreground"
+          }
+        >
+          {helperText}
+        </p>
+      </div>
+    );
   }
 
   if (loading) {
@@ -882,20 +1255,11 @@ export default function SettingsPage() {
                   </TabsContent>
                 </Tabs>
 
-                <div className="space-y-2">
-                  <Label htmlFor="anthropicModel">Anthropic Model</Label>
-                  <Input
-                    id="anthropicModel"
-                    value={settings.credentials.anthropicModel}
-                    onChange={(e) =>
-                      updateCredential("anthropicModel", e.target.value)
-                    }
-                    placeholder={DEFAULT_AI_MODELS.anthropic}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Use a vision-capable model for screenshot audits.
-                  </p>
-                </div>
+                {renderProviderModelField(
+                  "anthropic",
+                  "Anthropic Model",
+                  "Use a vision-capable model for screenshot audits."
+                )}
               </TabsContent>
 
               <TabsContent value="openai" className="space-y-4 pt-2">
@@ -1056,22 +1420,11 @@ export default function SettingsPage() {
                   </TabsContent>
                 </Tabs>
 
-                <div className="space-y-2">
-                  <Label htmlFor="openaiModel">OpenAI Model</Label>
-                  <Input
-                    id="openaiModel"
-                    value={settings.credentials.openaiModel}
-                    onChange={(e) =>
-                      updateCredential("openaiModel", e.target.value)
-                    }
-                    placeholder={DEFAULT_AI_MODELS.openai}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    If OpenAI OAuth falls back to ChatGPT/Codex backend mode,
-                    Curb will automatically use a codex-compatible model when
-                    needed.
-                  </p>
-                </div>
+                {renderProviderModelField(
+                  "openai",
+                  "OpenAI Model",
+                  "If OpenAI OAuth falls back to ChatGPT/Codex backend mode, the list is still fetched from the connected OpenAI account."
+                )}
               </TabsContent>
 
               <TabsContent value="google" className="space-y-4 pt-2">
@@ -1103,17 +1456,11 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="googleModel">Gemini Model</Label>
-                  <Input
-                    id="googleModel"
-                    value={settings.credentials.googleModel}
-                    onChange={(e) =>
-                      updateCredential("googleModel", e.target.value)
-                    }
-                    placeholder={DEFAULT_AI_MODELS.google}
-                  />
-                </div>
+                {renderProviderModelField(
+                  "google",
+                  "Gemini Model",
+                  "Only Gemini models that support content generation are shown."
+                )}
               </TabsContent>
 
               <TabsContent value="openrouter" className="space-y-4 pt-2">
@@ -1145,21 +1492,11 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="openrouterModel">OpenRouter Model</Label>
-                  <Input
-                    id="openrouterModel"
-                    value={settings.credentials.openrouterModel}
-                    onChange={(e) =>
-                      updateCredential("openrouterModel", e.target.value)
-                    }
-                    placeholder={DEFAULT_AI_MODELS.openrouter}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Use the full routed model ID, for example
-                    `openai/gpt-4.1`.
-                  </p>
-                </div>
+                {renderProviderModelField(
+                  "openrouter",
+                  "OpenRouter Model",
+                  "Models are fetched directly from OpenRouter for the connected account."
+                )}
               </TabsContent>
             </Tabs>
           </div>
