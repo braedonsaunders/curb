@@ -1,0 +1,375 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { toast } from "sonner";
+import {
+  Mail,
+  Loader2,
+  Check,
+  Send,
+  ChevronDown,
+  ChevronUp,
+  Edit,
+  CheckSquare,
+} from "lucide-react";
+
+interface EmailEntry {
+  id: string;
+  businessId: string;
+  businessName: string;
+  subject: string;
+  body: string;
+  status: string;
+  createdAt: string;
+}
+
+const STATUS_FILTER_OPTIONS = ["all", "draft", "approved", "sent", "bounced"];
+
+export default function OutreachPage() {
+  const [emails, setEmails] = useState<EmailEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [editOpen, setEditOpen] = useState(false);
+  const [editingEmail, setEditingEmail] = useState<EmailEntry | null>(null);
+  const [editSubject, setEditSubject] = useState("");
+  const [editBody, setEditBody] = useState("");
+
+  useEffect(() => {
+    fetchEmails();
+  }, [statusFilter]);
+
+  async function fetchEmails() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (statusFilter !== "all") params.set("status", statusFilter);
+      const res = await fetch(`/api/emails?${params}`);
+      if (!res.ok) throw new Error("Failed");
+      const data = await res.json();
+      setEmails(data.emails ?? []);
+    } catch {
+      toast.error("Failed to load emails");
+      setEmails([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleExpand(id: string) {
+    setExpandedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === emails.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(emails.map((e) => e.id)));
+    }
+  }
+
+  async function updateEmail(emailId: string, updates: Record<string, string>) {
+    try {
+      const res = await fetch(`/api/emails/${emailId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+      });
+      if (!res.ok) throw new Error("Failed");
+      toast.success("Email updated");
+      fetchEmails();
+    } catch {
+      toast.error("Failed to update email");
+    }
+  }
+
+  async function bulkApprove() {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) {
+      toast.error("No emails selected");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/emails/bulk-approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      toast.success(`${ids.length} email(s) approved`);
+      setSelectedIds(new Set());
+      fetchEmails();
+    } catch {
+      toast.error("Bulk approve failed");
+    }
+  }
+
+  const statusBadgeColor = (status: string) => {
+    switch (status) {
+      case "sent":
+        return "bg-green-100 text-green-700 border-green-200";
+      case "approved":
+        return "bg-blue-100 text-blue-700 border-blue-200";
+      case "bounced":
+        return "bg-red-100 text-red-700 border-red-200";
+      default:
+        return "bg-gray-100 text-gray-700 border-gray-200";
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Outreach</h1>
+        <p className="text-muted-foreground">
+          Manage email drafts and outreach campaigns
+        </p>
+      </div>
+
+      {/* Filters + Bulk Actions */}
+      <Card>
+        <CardContent className="flex flex-wrap items-center gap-3">
+          <Select value={statusFilter} onValueChange={(val: string | null) => setStatusFilter(val ?? "all")}>
+            <SelectTrigger className="w-36">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_FILTER_OPTIONS.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s === "all" ? "All statuses" : s.charAt(0).toUpperCase() + s.slice(1)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <div className="ml-auto flex items-center gap-2">
+            {selectedIds.size > 0 && (
+              <span className="text-sm text-muted-foreground">
+                {selectedIds.size} selected
+              </span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={bulkApprove}
+              disabled={selectedIds.size === 0}
+            >
+              <CheckSquare className="size-4" />
+              Bulk Approve
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Email Table */}
+      <Card>
+        <CardContent className="p-0">
+          {loading ? (
+            <div className="flex h-64 items-center justify-center">
+              <Loader2 className="size-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : emails.length === 0 ? (
+            <div className="flex h-64 flex-col items-center justify-center gap-2 text-muted-foreground">
+              <Mail className="size-8" />
+              <p>No email drafts found</p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.size === emails.length && emails.length > 0}
+                      onChange={toggleSelectAll}
+                      className="size-4 rounded border-gray-300 accent-primary"
+                    />
+                  </TableHead>
+                  <TableHead className="w-8" />
+                  <TableHead>Business</TableHead>
+                  <TableHead>Subject</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="w-40">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {emails.map((email) => {
+                  const isExpanded = expandedRows.has(email.id);
+                  return (
+                    <TableRow key={email.id} className="group">
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(email.id)}
+                          onChange={() => toggleSelect(email.id)}
+                          className="size-4 rounded border-gray-300 accent-primary"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <button
+                          type="button"
+                          onClick={() => toggleExpand(email.id)}
+                          className="text-muted-foreground hover:text-foreground"
+                        >
+                          {isExpanded ? (
+                            <ChevronUp className="size-4" />
+                          ) : (
+                            <ChevronDown className="size-4" />
+                          )}
+                        </button>
+                      </TableCell>
+                      <TableCell className="font-medium">{email.businessName}</TableCell>
+                      <TableCell>
+                        <div>
+                          <p className="truncate max-w-xs">{email.subject}</p>
+                          {isExpanded && (
+                            <div className="mt-3 rounded-lg bg-muted/50 p-4 text-sm whitespace-pre-wrap">
+                              {email.body}
+                            </div>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span
+                          className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${statusBadgeColor(
+                            email.status
+                          )}`}
+                        >
+                          {email.status}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {new Date(email.createdAt).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => {
+                              setEditingEmail(email);
+                              setEditSubject(email.subject);
+                              setEditBody(email.body);
+                              setEditOpen(true);
+                            }}
+                          >
+                            <Edit className="size-3.5" />
+                          </Button>
+                          {email.status === "draft" && (
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => updateEmail(email.id, { status: "approved" })}
+                            >
+                              <Check className="size-3.5 text-blue-600" />
+                            </Button>
+                          )}
+                          {(email.status === "draft" || email.status === "approved") && (
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              onClick={() => updateEmail(email.id, { status: "sent" })}
+                            >
+                              <Send className="size-3.5 text-green-600" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Edit Dialog */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Email</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Subject</Label>
+              <Input
+                value={editSubject}
+                onChange={(e) => setEditSubject(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Body</Label>
+              <Textarea
+                value={editBody}
+                onChange={(e) => setEditBody(e.target.value)}
+                rows={12}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={async () => {
+                if (editingEmail) {
+                  await updateEmail(editingEmail.id, {
+                    subject: editSubject,
+                    body: editBody,
+                  });
+                  setEditOpen(false);
+                }
+              }}
+            >
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
