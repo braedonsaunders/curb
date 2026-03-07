@@ -1,17 +1,39 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
+import {
+  AI_PROVIDER_LABELS,
+  AI_PROVIDER_ORDER,
+  DEFAULT_AI_MODELS,
+} from "@/lib/ai-provider";
+import type {
+  AiProvider,
+  AnthropicAuthMode,
+  OpenAIAuthMode,
+} from "@/lib/config";
+import { formatStoredDateTime } from "@/lib/datetime";
 import { toast } from "sonner";
 import {
+  CheckCircle2,
+  ExternalLink,
   Key,
+  Link2,
   MapPin,
   User,
+  Unplug,
   DollarSign,
   Loader2,
   Save,
@@ -20,15 +42,38 @@ import {
 } from "lucide-react";
 
 interface SettingsData {
-  apiKeys: {
+  credentials: {
     googlePlaces: string;
-    pageSpeed: string;
-    anthropic: string;
+    provider: AiProvider;
+    anthropicApiKey: string;
+    anthropicAuthMode: AnthropicAuthMode;
+    anthropicModel: string;
+    openaiApiKey: string;
+    openaiAuthMode: OpenAIAuthMode;
+    openaiModel: string;
+    googleApiKey: string;
+    googleModel: string;
+    openrouterApiKey: string;
+    openrouterModel: string;
+  };
+  anthropicOAuth: {
+    connected: boolean;
+    expiresAtMs: number | null;
+    hasRefreshToken: boolean;
+  };
+  openaiOAuth: {
+    connected: boolean;
+    expiresAtMs: number | null;
+    hasRefreshToken: boolean;
+    hasPlatformApiKey: boolean;
+    hasAccountId: boolean;
+    mode: "platformApiKey" | "chatgptBackend" | null;
   };
   defaults: {
     location: string;
     radius: number;
     categories: string[];
+    siteBaseUrl: string;
   };
   outreach: {
     yourName: string;
@@ -41,12 +86,84 @@ interface SettingsData {
   };
 }
 
+type SettingsResponse = Partial<
+  Omit<
+    SettingsData,
+    | "credentials"
+    | "anthropicOAuth"
+    | "openaiOAuth"
+    | "defaults"
+    | "outreach"
+    | "pricing"
+  >
+> & {
+  credentials?: Partial<SettingsData["credentials"]>;
+  anthropicOAuth?: Partial<SettingsData["anthropicOAuth"]>;
+  openaiOAuth?: Partial<SettingsData["openaiOAuth"]>;
+  defaults?: Partial<SettingsData["defaults"]>;
+  outreach?: Partial<SettingsData["outreach"]>;
+  pricing?: Partial<SettingsData["pricing"]>;
+};
+
 const DEFAULT_SETTINGS: SettingsData = {
-  apiKeys: { googlePlaces: "", pageSpeed: "", anthropic: "" },
-  defaults: { location: "Hamilton, ON", radius: 15, categories: [] },
+  credentials: {
+    googlePlaces: "",
+    provider: "anthropic",
+    anthropicApiKey: "",
+    anthropicAuthMode: "apiKey",
+    anthropicModel: DEFAULT_AI_MODELS.anthropic,
+    openaiApiKey: "",
+    openaiAuthMode: "apiKey",
+    openaiModel: DEFAULT_AI_MODELS.openai,
+    googleApiKey: "",
+    googleModel: DEFAULT_AI_MODELS.google,
+    openrouterApiKey: "",
+    openrouterModel: DEFAULT_AI_MODELS.openrouter,
+  },
+  anthropicOAuth: {
+    connected: false,
+    expiresAtMs: null,
+    hasRefreshToken: false,
+  },
+  openaiOAuth: {
+    connected: false,
+    expiresAtMs: null,
+    hasRefreshToken: false,
+    hasPlatformApiKey: false,
+    hasAccountId: false,
+    mode: null,
+  },
+  defaults: {
+    location: "Hamilton, ON",
+    radius: 15,
+    categories: [],
+    siteBaseUrl: "http://localhost:3000/sites",
+  },
   outreach: { yourName: "", businessName: "", address: "", email: "" },
   pricing: { text: "" },
 };
+
+function normalizeSettingsData(data: SettingsResponse): SettingsData {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...data,
+    credentials: {
+      ...DEFAULT_SETTINGS.credentials,
+      ...(data.credentials ?? {}),
+    },
+    anthropicOAuth: {
+      ...DEFAULT_SETTINGS.anthropicOAuth,
+      ...(data.anthropicOAuth ?? {}),
+    },
+    openaiOAuth: {
+      ...DEFAULT_SETTINGS.openaiOAuth,
+      ...(data.openaiOAuth ?? {}),
+    },
+    defaults: { ...DEFAULT_SETTINGS.defaults, ...(data.defaults ?? {}) },
+    outreach: { ...DEFAULT_SETTINGS.outreach, ...(data.outreach ?? {}) },
+    pricing: { ...DEFAULT_SETTINGS.pricing, ...(data.pricing ?? {}) },
+  };
+}
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<SettingsData>(DEFAULT_SETTINGS);
@@ -54,20 +171,127 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({
     googlePlaces: false,
-    pageSpeed: false,
-    anthropic: false,
+    anthropicApiKey: false,
+    openaiApiKey: false,
+    googleApiKey: false,
+    openrouterApiKey: false,
   });
+  const [oauthPhase, setOauthPhase] = useState<
+    "idle" | "waiting" | "exchanging" | "disconnecting"
+  >("idle");
+  const [oauthCode, setOauthCode] = useState("");
+  const [oauthError, setOauthError] = useState<string | null>(null);
+  const [oauthAuthorizeUrl, setOauthAuthorizeUrl] = useState<string | null>(
+    null
+  );
+  const [openAIOauthPhase, setOpenAIOauthPhase] = useState<
+    "idle" | "waiting" | "disconnecting"
+  >("idle");
+  const [openAIOauthError, setOpenAIOauthError] = useState<string | null>(
+    null
+  );
+  const [openAIOauthAuthorizeUrl, setOpenAIOauthAuthorizeUrl] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
-    fetchSettings();
+    void fetchSettings();
   }, []);
+
+  useEffect(() => {
+    if (openAIOauthPhase !== "waiting") {
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollStatus = async () => {
+      try {
+        const res = await fetch("/api/settings/openai-oauth");
+        const data = (await res.json().catch(() => null)) as
+          | {
+              error?: string;
+              status?: Partial<SettingsData["openaiOAuth"]>;
+              flow?: {
+                status?: "idle" | "pending" | "complete" | "error";
+                error?: string;
+                authorizeUrl?: string;
+              };
+            }
+          | null;
+
+        if (cancelled) {
+          return;
+        }
+
+        if (!res.ok) {
+          throw new Error(data?.error ?? "Failed to load OpenAI OAuth status");
+        }
+
+        if (data?.status) {
+          setSettings((prev) =>
+            normalizeSettingsData({
+              ...prev,
+              credentials: {
+                ...prev.credentials,
+                openaiAuthMode: data.status?.connected ? "oauth" : prev.credentials.openaiAuthMode,
+              },
+              openaiOAuth: data.status,
+            })
+          );
+        }
+
+        if (data?.flow?.authorizeUrl) {
+          setOpenAIOauthAuthorizeUrl(data.flow.authorizeUrl);
+        }
+
+        if (data?.flow?.status === "error") {
+          const message = data.flow.error ?? "OpenAI OAuth failed";
+          setOpenAIOauthPhase("idle");
+          setOpenAIOauthError(message);
+          toast.error(message);
+          return;
+        }
+
+        if (data?.status?.connected || data?.flow?.status === "complete") {
+          setOpenAIOauthPhase("idle");
+          setOpenAIOauthError(null);
+          setOpenAIOauthAuthorizeUrl(null);
+          await fetchSettings();
+          toast.success("OpenAI OAuth connected");
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Failed to load OpenAI OAuth status";
+        setOpenAIOauthPhase("idle");
+        setOpenAIOauthError(message);
+        toast.error(message);
+      }
+    };
+
+    void pollStatus();
+    const intervalId = window.setInterval(() => {
+      void pollStatus();
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [openAIOauthPhase]);
 
   async function fetchSettings() {
     try {
       const res = await fetch("/api/settings");
       if (!res.ok) throw new Error("Failed");
-      const data = await res.json();
-      setSettings({ ...DEFAULT_SETTINGS, ...data });
+      const data = (await res.json()) as SettingsResponse;
+      setSettings(normalizeSettingsData(data));
     } catch {
       toast.error("Failed to load settings");
     } finally {
@@ -81,21 +305,49 @@ export default function SettingsPage() {
       const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ section, data: (settings as unknown as Record<string, unknown>)[section] }),
+        body: JSON.stringify({
+          section,
+          data: (settings as unknown as Record<string, unknown>)[section],
+        }),
       });
-      if (!res.ok) throw new Error("Failed");
+      const data = (await res.json().catch(() => null)) as
+        | (SettingsResponse & { error?: string })
+        | null;
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Failed to save settings");
+      }
+      setSettings(normalizeSettingsData(data ?? {}));
       toast.success("Settings saved");
-    } catch {
-      toast.error("Failed to save settings");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to save settings"
+      );
     } finally {
       setSaving(null);
     }
   }
 
-  function updateApiKey(key: keyof SettingsData["apiKeys"], value: string) {
+  function updateCredential<K extends keyof SettingsData["credentials"]>(
+    key: K,
+    value: SettingsData["credentials"][K]
+  ) {
     setSettings((prev) => ({
       ...prev,
-      apiKeys: { ...prev.apiKeys, [key]: value },
+      credentials: { ...prev.credentials, [key]: value },
+    }));
+  }
+
+  function updateAnthropicAuthMode(value: AnthropicAuthMode) {
+    setSettings((prev) => ({
+      ...prev,
+      credentials: { ...prev.credentials, anthropicAuthMode: value },
+    }));
+  }
+
+  function updateOpenAIAuthMode(value: OpenAIAuthMode) {
+    setSettings((prev) => ({
+      ...prev,
+      credentials: { ...prev.credentials, openaiAuthMode: value },
     }));
   }
 
@@ -117,10 +369,215 @@ export default function SettingsPage() {
     setShowKeys((prev) => ({ ...prev, [key]: !prev[key] }));
   }
 
-  function maskValue(value: string, visible: boolean) {
-    if (visible || !value) return value;
-    if (value.length <= 8) return "*".repeat(value.length);
-    return value.slice(0, 4) + "*".repeat(value.length - 8) + value.slice(-4);
+  async function startAnthropicOAuth() {
+    setOauthPhase("waiting");
+    setOauthError(null);
+
+    try {
+      const res = await fetch("/api/settings/anthropic-oauth/start", {
+        method: "POST",
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { url?: string; error?: string }
+        | null;
+
+      if (!res.ok || !data?.url) {
+        throw new Error(data?.error ?? "Failed to start Anthropic OAuth");
+      }
+
+      setOauthAuthorizeUrl(data.url);
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to start OAuth flow";
+      setOauthPhase("idle");
+      setOauthError(message);
+      toast.error(message);
+    }
+  }
+
+  async function exchangeAnthropicOAuth() {
+    if (!oauthCode.trim()) {
+      setOauthError("Paste the full code#state value from Anthropic.");
+      return;
+    }
+
+    setOauthPhase("exchanging");
+    setOauthError(null);
+
+    try {
+      const res = await fetch("/api/settings/anthropic-oauth/exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: oauthCode.trim() }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            error?: string;
+            status?: SettingsData["anthropicOAuth"];
+          }
+        | null;
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error ?? "Failed to connect Anthropic OAuth");
+      }
+
+      setSettings((prev) =>
+        normalizeSettingsData({
+          ...prev,
+          credentials: {
+            ...prev.credentials,
+            provider: "anthropic",
+            anthropicAuthMode: "oauth",
+          },
+          anthropicOAuth:
+            data.status ?? {
+              connected: true,
+              expiresAtMs: null,
+              hasRefreshToken: false,
+            },
+        })
+      );
+      setOauthCode("");
+      setOauthPhase("idle");
+      setOauthAuthorizeUrl(null);
+      toast.success("Anthropic OAuth connected");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to connect OAuth";
+      setOauthPhase("waiting");
+      setOauthError(message);
+      toast.error(message);
+    }
+  }
+
+  async function disconnectAnthropicOAuth() {
+    setOauthPhase("disconnecting");
+    setOauthError(null);
+
+    try {
+      const res = await fetch("/api/settings/anthropic-oauth", {
+        method: "DELETE",
+      });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            error?: string;
+            status?: SettingsData["anthropicOAuth"];
+          }
+        | null;
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error ?? "Failed to disconnect Anthropic OAuth");
+      }
+
+      setSettings((prev) =>
+        normalizeSettingsData({
+          ...prev,
+          credentials: {
+            ...prev.credentials,
+            anthropicAuthMode: "apiKey",
+          },
+          anthropicOAuth:
+            data.status ?? {
+              connected: false,
+              expiresAtMs: null,
+              hasRefreshToken: false,
+            },
+        })
+      );
+      setOauthCode("");
+      setOauthPhase("idle");
+      setOauthAuthorizeUrl(null);
+      toast.success("Anthropic OAuth disconnected");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to disconnect OAuth";
+      setOauthPhase("idle");
+      setOauthError(message);
+      toast.error(message);
+    }
+  }
+
+  async function startOpenAIOAuth() {
+    setOpenAIOauthPhase("waiting");
+    setOpenAIOauthError(null);
+
+    try {
+      const res = await fetch("/api/settings/openai-oauth/start", {
+        method: "POST",
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { url?: string; error?: string }
+        | null;
+
+      if (!res.ok || !data?.url) {
+        throw new Error(data?.error ?? "Failed to start OpenAI OAuth");
+      }
+
+      setOpenAIOauthAuthorizeUrl(data.url);
+      window.open(data.url, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to start OpenAI OAuth";
+      setOpenAIOauthPhase("idle");
+      setOpenAIOauthError(message);
+      toast.error(message);
+    }
+  }
+
+  async function disconnectOpenAIOAuth() {
+    setOpenAIOauthPhase("disconnecting");
+    setOpenAIOauthError(null);
+
+    try {
+      const res = await fetch("/api/settings/openai-oauth", {
+        method: "DELETE",
+      });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            error?: string;
+            status?: SettingsData["openaiOAuth"];
+          }
+        | null;
+
+      if (!res.ok || !data?.ok) {
+        throw new Error(data?.error ?? "Failed to disconnect OpenAI OAuth");
+      }
+
+      setSettings((prev) =>
+        normalizeSettingsData({
+          ...prev,
+          credentials: {
+            ...prev.credentials,
+            openaiAuthMode: "apiKey",
+          },
+          openaiOAuth:
+            data.status ?? {
+              connected: false,
+              expiresAtMs: null,
+              hasRefreshToken: false,
+              hasPlatformApiKey: false,
+              hasAccountId: false,
+              mode: null,
+            },
+        })
+      );
+      setOpenAIOauthPhase("idle");
+      setOpenAIOauthError(null);
+      setOpenAIOauthAuthorizeUrl(null);
+      toast.success("OpenAI OAuth disconnected");
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to disconnect OpenAI OAuth";
+      setOpenAIOauthPhase("idle");
+      setOpenAIOauthError(message);
+      toast.error(message);
+    }
   }
 
   if (loading) {
@@ -131,71 +588,593 @@ export default function SettingsPage() {
     );
   }
 
+  const oauthViewState =
+    oauthPhase === "disconnecting" ||
+    oauthPhase === "exchanging" ||
+    oauthPhase === "waiting"
+      ? oauthPhase
+      : settings.anthropicOAuth.connected
+        ? "complete"
+        : "idle";
+  const oauthExpiryLabel = settings.anthropicOAuth.expiresAtMs
+    ? formatStoredDateTime(settings.anthropicOAuth.expiresAtMs)
+    : null;
+  const openAIOauthViewState =
+    openAIOauthPhase === "disconnecting" || openAIOauthPhase === "waiting"
+      ? openAIOauthPhase
+      : settings.openaiOAuth.connected
+        ? "complete"
+        : "idle";
+  const openAIOauthExpiryLabel = settings.openaiOAuth.expiresAtMs
+    ? formatStoredDateTime(settings.openaiOAuth.expiresAtMs)
+    : null;
+  const activeProvider = settings.credentials.provider;
+  const activeProviderLabel = AI_PROVIDER_LABELS[activeProvider];
+
   return (
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground">
-          Configure your API keys, defaults, and outreach information
+          Configure discovery, visual audits, and outreach details
         </p>
       </div>
 
-      {/* API Keys */}
+      {/* Credentials */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Key className="size-4" />
-            API Keys
+            Credentials
           </CardTitle>
           <CardDescription>
-            API keys are stored locally and never shared
+            Google Places powers discovery. Choose the AI provider Curb should
+            use for audits, site generation, and outreach.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {(
-            [
-              { key: "googlePlaces" as const, label: "Google Places API Key" },
-              { key: "pageSpeed" as const, label: "PageSpeed Insights API Key" },
-              { key: "anthropic" as const, label: "Anthropic API Key" },
-            ] as const
-          ).map(({ key, label }) => (
-            <div key={key} className="space-y-2">
-              <Label htmlFor={key}>{label}</Label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
+        <CardContent className="space-y-5">
+          <div className="space-y-2">
+            <Label htmlFor="googlePlaces">Google Places API Key</Label>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Input
+                  id="googlePlaces"
+                  type={showKeys.googlePlaces ? "text" : "password"}
+                  value={settings.credentials.googlePlaces}
+                  onChange={(e) =>
+                    updateCredential("googlePlaces", e.target.value)
+                  }
+                  placeholder="Enter your Google Places API key"
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => toggleKeyVisibility("googlePlaces")}
+              >
+                {showKeys.googlePlaces ? (
+                  <EyeOff className="size-4" />
+                ) : (
+                  <Eye className="size-4" />
+                )}
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="space-y-1">
+                <Label>AI Provider</Label>
+                <p className="text-xs text-muted-foreground">
+                  Each provider keeps its own API key and model ID. Anthropic
+                  also supports the existing OAuth flow.
+                </p>
+              </div>
+              <Badge variant="outline">{activeProviderLabel}</Badge>
+            </div>
+
+            <Tabs
+              value={settings.credentials.provider}
+              onValueChange={(value) => {
+                if (
+                  value === "anthropic" ||
+                  value === "openai" ||
+                  value === "google" ||
+                  value === "openrouter"
+                ) {
+                  updateCredential("provider", value);
+                }
+              }}
+            >
+              <TabsList className="h-auto flex-wrap">
+                {AI_PROVIDER_ORDER.map((provider) => (
+                  <TabsTrigger key={provider} value={provider}>
+                    {AI_PROVIDER_LABELS[provider]}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+
+              <TabsContent value="anthropic" className="space-y-4 pt-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <Label>Anthropic Authentication</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Use a standard API key or Anthropic&apos;s Claude-account
+                      OAuth flow.
+                    </p>
+                  </div>
+                  <Badge variant="outline">
+                    {settings.credentials.anthropicAuthMode === "oauth"
+                      ? "Using OAuth"
+                      : "Using API key"}
+                  </Badge>
+                </div>
+
+                <Tabs
+                  value={settings.credentials.anthropicAuthMode}
+                  onValueChange={(value) => {
+                    if (value === "apiKey" || value === "oauth") {
+                      updateAnthropicAuthMode(value);
+                    }
+                  }}
+                >
+                  <TabsList>
+                    <TabsTrigger value="apiKey">API Key</TabsTrigger>
+                    <TabsTrigger value="oauth">Anthropic OAuth</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="apiKey" className="space-y-3 pt-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="anthropicApiKey">Anthropic API Key</Label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Input
+                            id="anthropicApiKey"
+                            type={
+                              showKeys.anthropicApiKey ? "text" : "password"
+                            }
+                            value={settings.credentials.anthropicApiKey}
+                            onChange={(e) =>
+                              updateCredential(
+                                "anthropicApiKey",
+                                e.target.value
+                              )
+                            }
+                            placeholder="Enter your Anthropic API key"
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => toggleKeyVisibility("anthropicApiKey")}
+                        >
+                          {showKeys.anthropicApiKey ? (
+                            <EyeOff className="size-4" />
+                          ) : (
+                            <Eye className="size-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="oauth" className="space-y-3 pt-2">
+                    <div className="rounded-lg border bg-muted/30 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">
+                            Anthropic OAuth
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Authorize in the browser, then paste the full
+                            `code#state` value back here.
+                          </p>
+                        </div>
+                        {settings.anthropicOAuth.connected ? (
+                          <Badge variant="secondary">
+                            <CheckCircle2 className="size-3" />
+                            Connected
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">Not connected</Badge>
+                        )}
+                      </div>
+
+                      <div className="mt-3 space-y-2 text-xs text-muted-foreground">
+                        {oauthExpiryLabel ? (
+                          <p>Current token expires: {oauthExpiryLabel}</p>
+                        ) : null}
+                        {settings.anthropicOAuth.hasRefreshToken ? (
+                          <p>
+                            Refresh token is available for automatic renewal.
+                          </p>
+                        ) : null}
+                      </div>
+
+                      {oauthError ? (
+                        <p className="mt-3 text-xs text-destructive">
+                          {oauthError}
+                        </p>
+                      ) : null}
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {oauthViewState === "disconnecting" ? (
+                          <Button variant="outline" disabled>
+                            <Loader2 className="size-4 animate-spin" />
+                            Disconnecting
+                          </Button>
+                        ) : settings.anthropicOAuth.connected ? (
+                          <Button
+                            variant="outline"
+                            onClick={() => void disconnectAnthropicOAuth()}
+                          >
+                            <Unplug className="size-4" />
+                            Disconnect OAuth
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            onClick={() => void startAnthropicOAuth()}
+                            disabled={
+                              oauthViewState === "waiting" ||
+                              oauthViewState === "exchanging"
+                            }
+                          >
+                            {oauthViewState === "waiting" ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <ExternalLink className="size-4" />
+                            )}
+                            Connect Anthropic
+                          </Button>
+                        )}
+
+                        {oauthAuthorizeUrl ? (
+                          <a
+                            href={oauthAuthorizeUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-8 items-center rounded-lg border border-border px-2.5 text-sm font-medium hover:bg-muted"
+                          >
+                            <ExternalLink className="mr-1.5 size-4" />
+                            Open auth page
+                          </a>
+                        ) : null}
+                      </div>
+
+                      {(oauthViewState === "waiting" ||
+                        oauthViewState === "exchanging") && (
+                        <div className="mt-4 space-y-3 rounded-lg border border-dashed bg-background p-3">
+                          <div className="space-y-1">
+                            <Label htmlFor="anthropic-oauth-code">
+                              Paste the Anthropic authorization code
+                            </Label>
+                            <p className="text-xs text-muted-foreground">
+                              Anthropic returns a single value in the format
+                              `code#state`. Paste it exactly as shown.
+                            </p>
+                          </div>
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <Input
+                              id="anthropic-oauth-code"
+                              value={oauthCode}
+                              onChange={(e) => setOauthCode(e.target.value)}
+                              placeholder="code#state"
+                            />
+                            <Button
+                              onClick={() => void exchangeAnthropicOAuth()}
+                              disabled={
+                                !oauthCode.trim() ||
+                                oauthViewState === "exchanging"
+                              }
+                            >
+                              {oauthViewState === "exchanging" ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <Link2 className="size-4" />
+                              )}
+                              Connect
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </TabsContent>
+                </Tabs>
+
+                <div className="space-y-2">
+                  <Label htmlFor="anthropicModel">Anthropic Model</Label>
                   <Input
-                    id={key}
-                    type={showKeys[key] ? "text" : "password"}
-                    value={settings.apiKeys[key]}
-                    onChange={(e) => updateApiKey(key, e.target.value)}
-                    placeholder={`Enter your ${label.toLowerCase()}`}
+                    id="anthropicModel"
+                    value={settings.credentials.anthropicModel}
+                    onChange={(e) =>
+                      updateCredential("anthropicModel", e.target.value)
+                    }
+                    placeholder={DEFAULT_AI_MODELS.anthropic}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Use a vision-capable model for screenshot audits.
+                  </p>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="openai" className="space-y-4 pt-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <Label>OpenAI Authentication</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Use a standard Platform API key or connect the same
+                      OpenAI OAuth flow used in your other local tools.
+                    </p>
+                  </div>
+                  <Badge variant="outline">
+                    {settings.credentials.openaiAuthMode === "oauth"
+                      ? "Using OAuth"
+                      : "Using API key"}
+                  </Badge>
+                </div>
+
+                <Tabs
+                  value={settings.credentials.openaiAuthMode}
+                  onValueChange={(value) => {
+                    if (value === "apiKey" || value === "oauth") {
+                      updateOpenAIAuthMode(value);
+                    }
+                  }}
+                >
+                  <TabsList>
+                    <TabsTrigger value="apiKey">API Key</TabsTrigger>
+                    <TabsTrigger value="oauth">OpenAI OAuth</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="apiKey" className="space-y-3 pt-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="openaiApiKey">OpenAI API Key</Label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Input
+                            id="openaiApiKey"
+                            type={showKeys.openaiApiKey ? "text" : "password"}
+                            value={settings.credentials.openaiApiKey}
+                            onChange={(e) =>
+                              updateCredential("openaiApiKey", e.target.value)
+                            }
+                            placeholder="Enter your OpenAI API key"
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => toggleKeyVisibility("openaiApiKey")}
+                        >
+                          {showKeys.openaiApiKey ? (
+                            <EyeOff className="size-4" />
+                          ) : (
+                            <Eye className="size-4" />
+                          )}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Standard OpenAI Platform access for models like `gpt-4.1`.
+                      </p>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="oauth" className="space-y-3 pt-2">
+                    <div className="rounded-lg border bg-muted/30 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">OpenAI OAuth</p>
+                          <p className="text-xs text-muted-foreground">
+                            This opens the OpenAI browser flow and completes the
+                            callback on `localhost:1455`.
+                          </p>
+                        </div>
+                        {settings.openaiOAuth.connected ? (
+                          <Badge variant="secondary">
+                            <CheckCircle2 className="size-3" />
+                            Connected
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">Not connected</Badge>
+                        )}
+                      </div>
+
+                      <div className="mt-3 space-y-2 text-xs text-muted-foreground">
+                        {settings.openaiOAuth.mode === "platformApiKey" ? (
+                          <p>
+                            OAuth produced a Platform API key, so OpenAI runs on
+                            the standard API path.
+                          </p>
+                        ) : settings.openaiOAuth.mode === "chatgptBackend" ? (
+                          <p>
+                            OAuth is connected in ChatGPT/Codex backend mode.
+                            Use a codex-compatible model for best results.
+                          </p>
+                        ) : null}
+                        {openAIOauthExpiryLabel ? (
+                          <p>Current token expires: {openAIOauthExpiryLabel}</p>
+                        ) : null}
+                        {settings.openaiOAuth.hasRefreshToken ? (
+                          <p>
+                            Refresh token is available for automatic renewal.
+                          </p>
+                        ) : null}
+                        {settings.openaiOAuth.hasAccountId ? (
+                          <p>ChatGPT account metadata is available.</p>
+                        ) : null}
+                      </div>
+
+                      {openAIOauthError ? (
+                        <p className="mt-3 text-xs text-destructive">
+                          {openAIOauthError}
+                        </p>
+                      ) : null}
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {openAIOauthViewState === "disconnecting" ? (
+                          <Button variant="outline" disabled>
+                            <Loader2 className="size-4 animate-spin" />
+                            Disconnecting
+                          </Button>
+                        ) : settings.openaiOAuth.connected ? (
+                          <Button
+                            variant="outline"
+                            onClick={() => void disconnectOpenAIOAuth()}
+                          >
+                            <Unplug className="size-4" />
+                            Disconnect OAuth
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            onClick={() => void startOpenAIOAuth()}
+                            disabled={openAIOauthViewState === "waiting"}
+                          >
+                            {openAIOauthViewState === "waiting" ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <ExternalLink className="size-4" />
+                            )}
+                            Connect OpenAI
+                          </Button>
+                        )}
+
+                        {openAIOauthAuthorizeUrl ? (
+                          <a
+                            href={openAIOauthAuthorizeUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-8 items-center rounded-lg border border-border px-2.5 text-sm font-medium hover:bg-muted"
+                          >
+                            <ExternalLink className="mr-1.5 size-4" />
+                            Open auth page
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                  </TabsContent>
+                </Tabs>
+
+                <div className="space-y-2">
+                  <Label htmlFor="openaiModel">OpenAI Model</Label>
+                  <Input
+                    id="openaiModel"
+                    value={settings.credentials.openaiModel}
+                    onChange={(e) =>
+                      updateCredential("openaiModel", e.target.value)
+                    }
+                    placeholder={DEFAULT_AI_MODELS.openai}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    If OpenAI OAuth falls back to ChatGPT/Codex backend mode,
+                    Curb will automatically use a codex-compatible model when
+                    needed.
+                  </p>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="google" className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="googleApiKey">Google AI API Key</Label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Input
+                        id="googleApiKey"
+                        type={showKeys.googleApiKey ? "text" : "password"}
+                        value={settings.credentials.googleApiKey}
+                        onChange={(e) =>
+                          updateCredential("googleApiKey", e.target.value)
+                        }
+                        placeholder="Enter your Google AI API key"
+                      />
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => toggleKeyVisibility("googleApiKey")}
+                    >
+                      {showKeys.googleApiKey ? (
+                        <EyeOff className="size-4" />
+                      ) : (
+                        <Eye className="size-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="googleModel">Gemini Model</Label>
+                  <Input
+                    id="googleModel"
+                    value={settings.credentials.googleModel}
+                    onChange={(e) =>
+                      updateCredential("googleModel", e.target.value)
+                    }
+                    placeholder={DEFAULT_AI_MODELS.google}
                   />
                 </div>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => toggleKeyVisibility(key)}
-                >
-                  {showKeys[key] ? (
-                    <EyeOff className="size-4" />
-                  ) : (
-                    <Eye className="size-4" />
-                  )}
-                </Button>
-              </div>
-            </div>
-          ))}
+              </TabsContent>
+
+              <TabsContent value="openrouter" className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="openrouterApiKey">OpenRouter API Key</Label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Input
+                        id="openrouterApiKey"
+                        type={showKeys.openrouterApiKey ? "text" : "password"}
+                        value={settings.credentials.openrouterApiKey}
+                        onChange={(e) =>
+                          updateCredential("openrouterApiKey", e.target.value)
+                        }
+                        placeholder="Enter your OpenRouter API key"
+                      />
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => toggleKeyVisibility("openrouterApiKey")}
+                    >
+                      {showKeys.openrouterApiKey ? (
+                        <EyeOff className="size-4" />
+                      ) : (
+                        <Eye className="size-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="openrouterModel">OpenRouter Model</Label>
+                  <Input
+                    id="openrouterModel"
+                    value={settings.credentials.openrouterModel}
+                    onChange={(e) =>
+                      updateCredential("openrouterModel", e.target.value)
+                    }
+                    placeholder={DEFAULT_AI_MODELS.openrouter}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Use the full routed model ID, for example
+                    `openai/gpt-4.1`.
+                  </p>
+                </div>
+              </TabsContent>
+            </Tabs>
+          </div>
+
           <div className="flex justify-end pt-2">
             <Button
-              onClick={() => saveSection("apiKeys")}
-              disabled={saving === "apiKeys"}
+              onClick={() => saveSection("credentials")}
+              disabled={saving === "credentials"}
             >
-              {saving === "apiKeys" ? (
+              {saving === "credentials" ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (
                 <Save className="size-4" />
               )}
-              Save API Keys
+              Save Credentials
             </Button>
           </div>
         </CardContent>
@@ -238,7 +1217,7 @@ export default function SettingsPage() {
           <div className="space-y-2">
             <Label htmlFor="defaultCategories">Default Categories</Label>
             <p className="text-xs text-muted-foreground">
-              Comma-separated list of default category IDs
+              Comma-separated list of category IDs from the Discover page
             </p>
             <Input
               id="defaultCategories"
@@ -253,6 +1232,18 @@ export default function SettingsPage() {
                 )
               }
               placeholder="restaurants, trades, salons"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="siteBaseUrl">Preview Base URL</Label>
+            <p className="text-xs text-muted-foreground">
+              Used when building preview links in outreach emails
+            </p>
+            <Input
+              id="siteBaseUrl"
+              value={settings.defaults.siteBaseUrl}
+              onChange={(e) => updateDefaults("siteBaseUrl", e.target.value)}
+              placeholder="http://localhost:3000/sites"
             />
           </div>
           <div className="flex justify-end pt-2">

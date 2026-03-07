@@ -55,7 +55,7 @@ export async function generateOutreachEmail(
   // Build preview URL
   const previewUrl = `${config.siteBaseUrl}/${slug}`;
 
-  // Generate email via Claude
+  // Generate email via the configured AI provider
   const businessData = businessRowToData(business);
   const emailContent = await generateEmail(
     businessData,

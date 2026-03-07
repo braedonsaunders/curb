@@ -1,8 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  ensureEnrichmentWorkerRunning,
+  runPendingEnrichmentPass,
+} from '@/lib/core/enrichment';
 import { initializeDatabase } from '@/lib/schema';
 import { getDb } from '@/lib/db';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+function parseJsonArray(value: unknown): string[] {
+  if (typeof value !== "string") {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((entry) => String(entry).trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
 
 export async function GET(
   request: NextRequest,
@@ -10,6 +33,7 @@ export async function GET(
 ) {
   try {
     initializeDatabase();
+    ensureEnrichmentWorkerRunning();
     const db = getDb();
     const { id } = await context.params;
     const businessId = parseInt(id, 10);
@@ -30,7 +54,7 @@ export async function GET(
     }
 
     const audits = db.prepare(
-      'SELECT * FROM audits WHERE business_id = ? ORDER BY created_at DESC'
+      'SELECT * FROM audits WHERE business_id = ? AND audit_version = 2 ORDER BY created_at DESC'
     ).all(businessId);
 
     const generatedSites = db.prepare(
@@ -44,13 +68,20 @@ export async function GET(
     // Add camelCase aliases for audits
     const normalizedAudits = (audits as Record<string, unknown>[]).map((audit) => ({
       ...audit,
-      performance: audit.performance_score,
-      accessibility: audit.accessibility_score,
-      seo: audit.seo_score,
-      mobile: audit.is_mobile_friendly,
-      ssl: audit.is_ssl,
       grade: audit.overall_grade,
       hasWebsite: audit.has_website,
+      urlReachable: audit.url_reachable,
+      ownerSentiment: audit.owner_sentiment,
+      summary: audit.notes,
+      screenshotUrl: typeof audit.screenshot_path === "string" && audit.screenshot_path
+        ? `/${audit.screenshot_path.replace(/^\/+/, "")}`
+        : null,
+      websiteComplexity: audit.website_complexity,
+      replacementDifficulty: audit.replacement_difficulty,
+      advancedFeatures: parseJsonArray(audit.advanced_features_json),
+      strengths: parseJsonArray(audit.strengths_json),
+      issues: parseJsonArray(audit.issues_json),
+      createdAt: audit.created_at,
     }));
 
     // Add camelCase aliases for generated_sites
@@ -87,6 +118,7 @@ export async function PATCH(
 ) {
   try {
     initializeDatabase();
+    ensureEnrichmentWorkerRunning();
     const db = getDb();
     const { id } = await context.params;
     const businessId = parseInt(id, 10);
@@ -111,13 +143,28 @@ export async function PATCH(
       'status', 'notes', 'email', 'name', 'address', 'city', 'province',
       'postal_code', 'phone', 'website_url', 'category', 'google_maps_url',
     ];
+    const enrichmentSensitiveFields = new Set([
+      'name',
+      'address',
+      'city',
+      'province',
+      'postal_code',
+      'phone',
+      'website_url',
+      'category',
+      'google_maps_url',
+    ]);
     const updates: string[] = [];
     const values: unknown[] = [];
+    let shouldResetEnrichment = false;
 
     for (const field of allowedFields) {
       if (body[field] !== undefined) {
         updates.push(`${field} = ?`);
         values.push(body[field]);
+        if (enrichmentSensitiveFields.has(field)) {
+          shouldResetEnrichment = true;
+        }
       }
     }
 
@@ -128,6 +175,12 @@ export async function PATCH(
       );
     }
 
+    if (shouldResetEnrichment) {
+      updates.push("enrichment_status = 'pending'");
+      updates.push("enrichment_completed_at = NULL");
+      updates.push("enrichment_error = NULL");
+    }
+
     updates.push("updated_at = datetime('now')");
     values.push(businessId);
 
@@ -136,6 +189,9 @@ export async function PATCH(
     ).run(...values);
 
     const updated = db.prepare('SELECT * FROM businesses WHERE id = ?').get(businessId);
+    if (shouldResetEnrichment) {
+      void runPendingEnrichmentPass();
+    }
 
     return NextResponse.json({ success: true, business: updated });
   } catch (err) {
@@ -154,6 +210,7 @@ export async function DELETE(
 ) {
   try {
     initializeDatabase();
+    ensureEnrichmentWorkerRunning();
     const db = getDb();
     const { id } = await context.params;
     const businessId = parseInt(id, 10);

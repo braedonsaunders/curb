@@ -1,119 +1,193 @@
+import fs from "fs";
+import { logActivity } from "../activity-log";
+import { auditWebsite, isAiAuthenticationError } from "../claude";
 import { getDb } from "../db";
 import { initializeDatabase } from "../schema";
-import { getConfig } from "../config";
+import {
+  captureWebsiteScreenshot,
+  resolveReachableUrl,
+  type WebsitePageSignals,
+  type WebsiteScreenshot,
+} from "../website-screenshot";
+
+const VISUAL_AUDIT_VERSION = 2;
+
+type OwnerSentiment = "proud" | "mixed" | "embarrassed" | null;
+type WebsiteComplexity =
+  | "none"
+  | "simple"
+  | "moderate"
+  | "advanced"
+  | "unknown";
+type ReplacementDifficulty = "easy" | "medium" | "hard" | "unknown";
 
 export interface AuditResult {
   businessId: number;
   businessName: string;
   hasWebsite: boolean;
-  grade: string;
-  performanceScore: number | null;
-  accessibilityScore: number | null;
-  seoScore: number | null;
-  isMobileFriendly: boolean | null;
-  isSsl: boolean | null;
-  loadTimeMs: number | null;
-  notes: string;
+  urlReachable: boolean | null;
+  grade: string | null;
+  ownerSentiment: OwnerSentiment;
+  summary: string;
+  screenshotUrl: string | null;
+  strengths: string[];
+  issues: string[];
+  websiteComplexity: WebsiteComplexity;
+  replacementDifficulty: ReplacementDifficulty;
+  advancedFeatures: string[];
 }
 
-interface PageSpeedCategory {
-  score: number;
+function toPublicScreenshotUrl(relativePath: string | null): string | null {
+  if (!relativePath) {
+    return null;
+  }
+
+  return `/${relativePath.replace(/^\/+/, "")}`;
 }
 
-interface PageSpeedResult {
-  lighthouseResult?: {
-    categories?: {
-      performance?: PageSpeedCategory;
-      accessibility?: PageSpeedCategory;
-      seo?: PageSpeedCategory;
+function normalizeGrade(grade: string): string {
+  const normalized = grade.trim().toUpperCase();
+  return ["A", "B", "C", "D", "F"].includes(normalized) ? normalized : "C";
+}
+
+function normalizeWebsiteComplexity(
+  complexity: string
+): Exclude<WebsiteComplexity, "none" | "unknown"> {
+  const normalized = complexity.trim().toLowerCase();
+  return normalized === "simple" ||
+    normalized === "moderate" ||
+    normalized === "advanced"
+    ? normalized
+    : "moderate";
+}
+
+function normalizeReplacementDifficulty(
+  difficulty: string
+): Exclude<ReplacementDifficulty, "unknown"> {
+  const normalized = difficulty.trim().toLowerCase();
+  return normalized === "easy" ||
+    normalized === "medium" ||
+    normalized === "hard"
+    ? normalized
+    : "medium";
+}
+
+function nextBusinessStatus(grade: string | null): string {
+  if (grade === "A") return "skipped";
+  if (grade === "D" || grade === "F") return "flagged";
+  if (grade) return "audited";
+  return "discovered";
+}
+
+function shouldUseHeuristicFallback(error: unknown): boolean {
+  return isAiAuthenticationError(error);
+}
+
+function inferComplexityFromSignals(
+  pageSignals: WebsitePageSignals
+): {
+  websiteComplexity: Exclude<WebsiteComplexity, "none" | "unknown">;
+  replacementDifficulty: Exclude<ReplacementDifficulty, "unknown">;
+  advancedFeatures: string[];
+} {
+  const advancedFeatures = Array.from(new Set(pageSignals.detectedFeatures));
+  const hasAdvancedFeature = advancedFeatures.some((feature) =>
+    ["online store", "customer portal", "advanced lead capture"].includes(
+      feature
+    )
+  );
+  const hasModerateFeature = advancedFeatures.some((feature) =>
+    ["appointment booking", "video or rich media", "large multi-page navigation"].includes(
+      feature
+    )
+  );
+
+  if (
+    hasAdvancedFeature ||
+    pageSignals.internalLinkCount >= 20 ||
+    pageSignals.formCount > 1
+  ) {
+    return {
+      websiteComplexity: "advanced",
+      replacementDifficulty: "hard",
+      advancedFeatures,
     };
-    audits?: {
-      interactive?: { numericValue: number };
-      "is-on-https"?: { score: number };
-      viewport?: { score: number };
+  }
+
+  if (
+    hasModerateFeature ||
+    pageSignals.navLinkCount >= 6 ||
+    pageSignals.internalLinkCount >= 10
+  ) {
+    return {
+      websiteComplexity: "moderate",
+      replacementDifficulty: "medium",
+      advancedFeatures,
     };
+  }
+
+  return {
+    websiteComplexity: "simple",
+    replacementDifficulty: "easy",
+    advancedFeatures,
   };
 }
 
-function computeGrade(score: number): string {
-  if (score >= 90) return "A";
-  if (score >= 70) return "B";
-  if (score >= 50) return "C";
-  if (score >= 30) return "D";
-  return "F";
-}
+function buildFallbackReview(
+  businessName: string,
+  pageSignals: WebsitePageSignals,
+  providerError: unknown
+): {
+  grade: string;
+  ownerSentiment: NonNullable<OwnerSentiment>;
+  summary: string;
+  strengths: string[];
+  issues: string[];
+  websiteComplexity: Exclude<WebsiteComplexity, "none" | "unknown">;
+  replacementDifficulty: Exclude<ReplacementDifficulty, "unknown">;
+  advancedFeatures: string[];
+} {
+  const inferred = inferComplexityFromSignals(pageSignals);
+  const reason =
+    providerError instanceof Error ? providerError.message : String(providerError);
 
-async function checkUrlReachable(
-  url: string
-): Promise<{ reachable: boolean; isSsl: boolean }> {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-    const response = await fetch(url, {
-      method: "HEAD",
-      redirect: "follow",
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    const finalUrl = response.url || url;
-    return {
-      reachable: response.ok || response.status < 500,
-      isSsl: finalUrl.startsWith("https://"),
-    };
-  } catch {
-    return { reachable: false, isSsl: false };
-  }
-}
-
-async function runPageSpeedAudit(
-  url: string,
-  apiKey: string
-): Promise<{
-  performance: number;
-  accessibility: number;
-  seo: number;
-  isMobileFriendly: boolean;
-  isSsl: boolean;
-  loadTimeMs: number;
-  raw: string;
-}> {
-  const endpoint =
-    "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
-  const apiUrl = `${endpoint}?url=${encodeURIComponent(url)}&key=${apiKey}&strategy=mobile&category=performance&category=accessibility&category=seo`;
-
-  const response = await fetch(apiUrl);
-  if (!response.ok) {
-    throw new Error(
-      `PageSpeed API returned status ${response.status}: ${await response.text()}`
+  const strengths = ["Live website was reached successfully."];
+  if (pageSignals.detectedFeatures.length > 0) {
+    strengths.push(
+      `Detected current functionality: ${pageSignals.detectedFeatures.join(", ")}.`
     );
   }
 
-  const data: PageSpeedResult = await response.json();
-  const categories = data.lighthouseResult?.categories;
-  const audits = data.lighthouseResult?.audits;
-
-  const performance = Math.round(
-    (categories?.performance?.score ?? 0) * 100
-  );
-  const accessibility = Math.round(
-    (categories?.accessibility?.score ?? 0) * 100
-  );
-  const seo = Math.round((categories?.seo?.score ?? 0) * 100);
-  const loadTimeMs = Math.round(
-    audits?.interactive?.numericValue ?? 0
-  );
-  const isSsl = (audits?.["is-on-https"]?.score ?? 0) === 1;
-  const isMobileFriendly = (audits?.viewport?.score ?? 0) === 1;
+  const issues = [
+    "Visual AI review could not run, so this assessment used live page heuristics only.",
+    "Fix the configured AI provider credentials to restore screenshot-based grading.",
+  ];
 
   return {
-    performance,
-    accessibility,
-    seo,
-    isMobileFriendly,
-    isSsl,
-    loadTimeMs,
-    raw: JSON.stringify(data),
+    grade: "C",
+    ownerSentiment: "mixed",
+    summary:
+      `Captured the current website, but AI review was unavailable. ` +
+      `Replacement complexity was inferred from the live page structure and detected features. ` +
+      `Provider error: ${reason}`,
+    strengths,
+    issues,
+    websiteComplexity: inferred.websiteComplexity,
+    replacementDifficulty: inferred.replacementDifficulty,
+    advancedFeatures: inferred.advancedFeatures,
   };
+}
+
+function deleteScreenshotIfPresent(screenshot: WebsiteScreenshot | null): void {
+  if (!screenshot) {
+    return;
+  }
+
+  try {
+    fs.rmSync(screenshot.absolutePath, { force: true });
+  } catch {
+    // Best-effort cleanup when a capture succeeds but the review fails.
+  }
 }
 
 export async function auditBusiness(
@@ -121,7 +195,6 @@ export async function auditBusiness(
 ): Promise<AuditResult> {
   initializeDatabase();
   const db = getDb();
-  const config = getConfig();
 
   const business = db
     .prepare("SELECT * FROM businesses WHERE id = ?")
@@ -132,174 +205,293 @@ export async function auditBusiness(
   }
 
   const businessName = business.name as string;
+  const slug = business.slug as string;
   const websiteUrl = business.website_url as string | null;
+  const detailsEnrichedAt = business.details_enriched_at as string | null;
 
   const insertAudit = db.prepare(`
     INSERT INTO audits (
-      business_id, has_website, url_reachable, is_ssl, is_mobile_friendly,
-      performance_score, accessibility_score, seo_score, load_time_ms,
-      overall_grade, notes, raw_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      business_id,
+      has_website,
+      url_reachable,
+      overall_grade,
+      owner_sentiment,
+      notes,
+      screenshot_path,
+      strengths_json,
+      issues_json,
+      website_complexity,
+      replacement_difficulty,
+      advanced_features_json,
+      review_json,
+      audit_version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // No website case
   if (!websiteUrl) {
-    const notes =
-      "No website found. Business is a strong candidate for a new site.";
+    const summary =
+      "No website found. This business is a strong candidate for a new site.";
+
+    logActivity({
+      kind: "enrichment",
+      stage: "audit",
+      businessId,
+      businessName,
+      message: `No website found for ${businessName}`,
+    });
 
     insertAudit.run(
       businessId,
       0,
       null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
       "F",
-      notes,
-      null
+      null,
+      summary,
+      null,
+      JSON.stringify([]),
+      JSON.stringify([
+        "No live website was found for this business during the audit.",
+      ]),
+      "none",
+      "easy",
+      JSON.stringify([]),
+      JSON.stringify({ reason: "missing_website" }),
+      VISUAL_AUDIT_VERSION
     );
 
     db.prepare(
-      "UPDATE businesses SET status = 'flagged', updated_at = datetime('now') WHERE id = ?"
+      `UPDATE businesses
+      SET
+        status = 'flagged',
+        enrichment_status = CASE
+          WHEN details_enriched_at IS NOT NULL THEN 'completed'
+          ELSE 'pending'
+        END,
+        enrichment_completed_at = CASE
+          WHEN details_enriched_at IS NOT NULL THEN datetime('now')
+          ELSE enrichment_completed_at
+        END,
+        enrichment_error = NULL,
+        updated_at = datetime('now')
+      WHERE id = ?`
     ).run(businessId);
 
     return {
       businessId,
       businessName,
       hasWebsite: false,
+      urlReachable: null,
       grade: "F",
-      performanceScore: null,
-      accessibilityScore: null,
-      seoScore: null,
-      isMobileFriendly: null,
-      isSsl: null,
-      loadTimeMs: null,
-      notes,
+      ownerSentiment: null,
+      summary,
+      screenshotUrl: null,
+      strengths: [],
+      issues: ["No website was found for this business."],
+      websiteComplexity: "none",
+      replacementDifficulty: "easy",
+      advancedFeatures: [],
     };
   }
 
-  // Has website - check reachability first
-  const { reachable, isSsl: reachSsl } =
-    await checkUrlReachable(websiteUrl);
+  const reachability = await resolveReachableUrl(websiteUrl);
+  if (!reachability.reachable || !reachability.finalUrl) {
+    const summary =
+      "Website exists but could not be reached. It may be down, expired, or misconfigured.";
 
-  if (!reachable) {
-    const notes =
-      "Website exists but is not reachable. May be down or misconfigured.";
+    logActivity({
+      kind: "enrichment",
+      stage: "audit",
+      businessId,
+      businessName,
+      message: `Website could not be reached for ${businessName}`,
+    });
 
     insertAudit.run(
       businessId,
       1,
       0,
-      0,
-      null,
-      null,
-      null,
-      null,
-      null,
       "F",
-      notes,
-      null
+      null,
+      summary,
+      null,
+      JSON.stringify([]),
+      JSON.stringify([
+        "The website could not be loaded during the audit.",
+      ]),
+      "unknown",
+      "unknown",
+      JSON.stringify([]),
+      JSON.stringify({ reason: "unreachable_website", requestedUrl: websiteUrl }),
+      VISUAL_AUDIT_VERSION
     );
 
     db.prepare(
-      "UPDATE businesses SET status = 'flagged', updated_at = datetime('now') WHERE id = ?"
+      `UPDATE businesses
+      SET
+        status = 'flagged',
+        enrichment_status = CASE
+          WHEN details_enriched_at IS NOT NULL THEN 'completed'
+          ELSE 'pending'
+        END,
+        enrichment_completed_at = CASE
+          WHEN details_enriched_at IS NOT NULL THEN datetime('now')
+          ELSE enrichment_completed_at
+        END,
+        enrichment_error = NULL,
+        updated_at = datetime('now')
+      WHERE id = ?`
     ).run(businessId);
 
     return {
       businessId,
       businessName,
       hasWebsite: true,
+      urlReachable: false,
       grade: "F",
-      performanceScore: null,
-      accessibilityScore: null,
-      seoScore: null,
-      isMobileFriendly: null,
-      isSsl: null,
-      loadTimeMs: null,
-      notes,
+      ownerSentiment: null,
+      summary,
+      screenshotUrl: null,
+      strengths: [],
+      issues: ["The website could not be loaded during the audit."],
+      websiteComplexity: "unknown",
+      replacementDifficulty: "unknown",
+      advancedFeatures: [],
     };
   }
 
-  // Run PageSpeed Insights
-  let performance = 0;
-  let accessibility = 0;
-  let seo = 0;
-  let isMobileFriendly = false;
-  let isSsl = reachSsl;
-  let loadTimeMs = 0;
-  let rawJson: string | null = null;
-  let notes = "";
+  let screenshot: WebsiteScreenshot | null = null;
 
-  if (config.googlePageSpeedApiKey) {
+  try {
+    logActivity({
+      kind: "enrichment",
+      stage: "screenshot",
+      businessId,
+      businessName,
+      message: `Capturing website screenshot for ${businessName}`,
+    });
+    screenshot = await captureWebsiteScreenshot(reachability.finalUrl, slug);
+    let review;
     try {
-      const psResult = await runPageSpeedAudit(
-        websiteUrl,
-        config.googlePageSpeedApiKey
-      );
-      performance = psResult.performance;
-      accessibility = psResult.accessibility;
-      seo = psResult.seo;
-      isMobileFriendly = psResult.isMobileFriendly;
-      isSsl = psResult.isSsl;
-      loadTimeMs = psResult.loadTimeMs;
-      rawJson = psResult.raw;
-    } catch (err) {
-      notes = `PageSpeed API error: ${err instanceof Error ? err.message : String(err)}. `;
+      logActivity({
+        kind: "enrichment",
+        stage: "review",
+        businessId,
+        businessName,
+        message: `Running website review for ${businessName}`,
+      });
+      review = await auditWebsite({
+        businessName,
+        category: (business.category as string) ?? null,
+        city: (business.city as string) ?? null,
+        requestedUrl: websiteUrl,
+        finalUrl: screenshot.finalUrl,
+        pageTitle: screenshot.pageTitle,
+        screenshotBase64: screenshot.base64,
+        screenshotMediaType: screenshot.mediaType,
+        pageSignals: screenshot.pageSignals,
+      });
+    } catch (error) {
+      if (!shouldUseHeuristicFallback(error)) {
+        throw error;
+      }
+
+      logActivity({
+        kind: "enrichment",
+        stage: "review",
+        businessId,
+        businessName,
+        message: `AI review unavailable for ${businessName}; using heuristic fallback`,
+      });
+      review = buildFallbackReview(businessName, screenshot.pageSignals, error);
     }
-  } else {
-    notes =
-      "No PageSpeed API key configured. Using basic reachability check only. ";
+
+    const grade = normalizeGrade(review.grade);
+    const summary = review.summary;
+    const strengths = review.strengths;
+    const issues = review.issues;
+    const websiteComplexity = normalizeWebsiteComplexity(
+      review.websiteComplexity
+    );
+    const replacementDifficulty = normalizeReplacementDifficulty(
+      review.replacementDifficulty
+    );
+    const advancedFeatures = review.advancedFeatures;
+    const screenshotUrl = toPublicScreenshotUrl(screenshot.relativePath);
+    const status = nextBusinessStatus(grade);
+
+    insertAudit.run(
+      businessId,
+      1,
+      1,
+      grade,
+      review.ownerSentiment,
+      summary,
+      screenshot.relativePath,
+      JSON.stringify(strengths),
+      JSON.stringify(issues),
+      websiteComplexity,
+      replacementDifficulty,
+      JSON.stringify(advancedFeatures),
+      JSON.stringify({
+        requestedUrl: websiteUrl,
+        finalUrl: screenshot.finalUrl,
+        pageTitle: screenshot.pageTitle,
+        pageSignals: screenshot.pageSignals,
+        grade,
+        ownerSentiment: review.ownerSentiment,
+        summary,
+        strengths,
+        issues,
+        websiteComplexity,
+        replacementDifficulty,
+        advancedFeatures,
+      }),
+      VISUAL_AUDIT_VERSION
+    );
+
+    db.prepare(
+      `UPDATE businesses
+      SET
+        status = ?,
+        enrichment_status = CASE
+          WHEN ? IS NOT NULL THEN 'completed'
+          ELSE 'pending'
+        END,
+        enrichment_completed_at = CASE
+          WHEN ? IS NOT NULL THEN datetime('now')
+          ELSE enrichment_completed_at
+        END,
+        enrichment_error = NULL,
+        updated_at = datetime('now')
+      WHERE id = ?`
+    ).run(status, detailsEnrichedAt, detailsEnrichedAt, businessId);
+
+    return {
+      businessId,
+      businessName,
+      hasWebsite: true,
+      urlReachable: true,
+      grade,
+      ownerSentiment: review.ownerSentiment,
+      summary,
+      screenshotUrl,
+      strengths,
+      issues,
+      websiteComplexity,
+      replacementDifficulty,
+      advancedFeatures,
+    };
+  } catch (err) {
+    logActivity({
+      kind: "enrichment",
+      stage: "failed",
+      businessId,
+      businessName,
+      message: `Audit failed for ${businessName}`,
+    });
+    deleteScreenshotIfPresent(screenshot);
+    throw err;
   }
-
-  // Compute overall score: (performance * 0.4) + (seo * 0.3) + (accessibility * 0.3)
-  let overallScore =
-    performance * 0.4 + seo * 0.3 + accessibility * 0.3;
-  if (!isMobileFriendly) overallScore -= 20;
-  if (!isSsl) overallScore -= 10;
-  overallScore = Math.max(0, Math.min(100, Math.round(overallScore)));
-
-  const grade = computeGrade(overallScore);
-
-  if (grade === "D" || grade === "F") {
-    notes += `Grade ${grade}: Strong candidate for website improvement.`;
-  }
-
-  insertAudit.run(
-    businessId,
-    1,
-    1,
-    isSsl ? 1 : 0,
-    isMobileFriendly ? 1 : 0,
-    performance,
-    accessibility,
-    seo,
-    loadTimeMs,
-    grade,
-    notes.trim(),
-    rawJson
-  );
-
-  const newStatus = grade === 'A' ? 'skipped' : (grade === 'D' || grade === 'F') ? 'flagged' : 'audited';
-  db.prepare(
-    "UPDATE businesses SET status = ?, updated_at = datetime('now') WHERE id = ?"
-  ).run(newStatus, businessId);
-
-  return {
-    businessId,
-    businessName,
-    hasWebsite: true,
-    grade,
-    performanceScore: performance,
-    accessibilityScore: accessibility,
-    seoScore: seo,
-    isMobileFriendly,
-    isSsl,
-    loadTimeMs,
-    notes: notes.trim(),
-  };
 }
 
 export async function batchAudit(): Promise<AuditResult[]> {
@@ -307,9 +499,7 @@ export async function batchAudit(): Promise<AuditResult[]> {
   const db = getDb();
 
   const businesses = db
-    .prepare(
-      "SELECT id FROM businesses WHERE status = 'discovered'"
-    )
+    .prepare("SELECT id FROM businesses WHERE status = 'discovered'")
     .all() as Array<{ id: number }>;
 
   const results: AuditResult[] = [];

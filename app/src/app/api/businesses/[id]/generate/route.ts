@@ -20,7 +20,11 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { promptOverride } = body;
+    const { promptOverride, modificationPrompt } = body;
+    const effectivePrompt =
+      typeof modificationPrompt === 'string' && modificationPrompt.trim()
+        ? modificationPrompt
+        : promptOverride;
 
     if (promptOverride !== undefined && typeof promptOverride !== 'string') {
       return NextResponse.json(
@@ -29,7 +33,14 @@ export async function POST(
       );
     }
 
-    const site = await generateSiteForBusiness(businessId, promptOverride);
+    if (modificationPrompt !== undefined && typeof modificationPrompt !== 'string') {
+      return NextResponse.json(
+        { error: 'modificationPrompt must be a string' },
+        { status: 400 }
+      );
+    }
+
+    const site = await generateSiteForBusiness(businessId, effectivePrompt);
 
     return NextResponse.json({
       success: true,

@@ -73,7 +73,7 @@ function getApiKey(): string {
   const key = getConfig().googlePlacesApiKey;
   if (!key) {
     throw new Error(
-      "GOOGLE_PLACES_API_KEY is not set. Please configure it in your .env file."
+      "Google Places API key is not set. Please configure it in Settings."
     );
   }
   return key;

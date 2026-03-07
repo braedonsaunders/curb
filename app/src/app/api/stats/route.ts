@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
+import { ensureEnrichmentWorkerRunning } from '@/lib/core/enrichment';
 import { initializeDatabase } from '@/lib/schema';
 import { getDb } from '@/lib/db';
 
 export async function GET() {
   try {
     initializeDatabase();
+    ensureEnrichmentWorkerRunning();
     const db = getDb();
 
     // Count businesses by status
@@ -45,7 +47,11 @@ export async function GET() {
       SELECT overall_grade as grade, COUNT(*) as count
       FROM audits a
       WHERE a.id = (
-        SELECT a2.id FROM audits a2 WHERE a2.business_id = a.business_id ORDER BY a2.created_at DESC LIMIT 1
+        SELECT a2.id
+        FROM audits a2
+        WHERE a2.business_id = a.business_id AND a2.audit_version = 2
+        ORDER BY a2.created_at DESC
+        LIMIT 1
       )
       GROUP BY overall_grade
       ORDER BY overall_grade

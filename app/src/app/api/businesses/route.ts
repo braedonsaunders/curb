@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  ensureEnrichmentWorkerRunning,
+  runPendingEnrichmentPass,
+} from '@/lib/core/enrichment';
 import { initializeDatabase } from '@/lib/schema';
 import { getDb } from '@/lib/db';
 import slugify from 'slugify';
@@ -6,6 +10,7 @@ import slugify from 'slugify';
 export async function GET(request: NextRequest) {
   try {
     initializeDatabase();
+    ensureEnrichmentWorkerRunning();
     const db = getDb();
 
     const searchParams = request.nextUrl.searchParams;
@@ -13,9 +18,13 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get('category');
     const grade = searchParams.get('grade');
     const search = searchParams.get('search');
-    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
-    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || searchParams.get('pageSize') || '20', 10)));
-    const offset = (page - 1) * limit;
+    const ids = (searchParams.get('ids') || '')
+      .split(',')
+      .map((value) => parseInt(value, 10))
+      .filter((value) => Number.isInteger(value) && value > 0);
+    let page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    let limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || searchParams.get('pageSize') || '20', 10)));
+    let offset = (page - 1) * limit;
 
     // Sorting
     const allowedSortColumns: Record<string, string> = {
@@ -55,19 +64,34 @@ export async function GET(request: NextRequest) {
       params.push(searchTerm, searchTerm, searchTerm, searchTerm);
     }
 
+    if (ids.length > 0) {
+      conditions.push(`b.id IN (${ids.map(() => '?').join(', ')})`);
+      params.push(...ids);
+      page = 1;
+      limit = ids.length;
+      offset = 0;
+    }
+
     // Exclude archived by default unless explicitly requested
     if (status !== 'archived') {
       conditions.push("b.status != 'archived'");
     }
 
     const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const orderClause = ids.length > 0
+      ? `ORDER BY CASE b.id ${ids.map((id, index) => `WHEN ${id} THEN ${index}`).join(' ')} ELSE ${ids.length} END`
+      : `ORDER BY ${sortColumn} ${sortDirection}`;
 
     // Count query
     const countSql = `
       SELECT COUNT(DISTINCT b.id) as total
       FROM businesses b
       LEFT JOIN audits latest_audit ON latest_audit.id = (
-        SELECT a2.id FROM audits a2 WHERE a2.business_id = b.id ORDER BY a2.created_at DESC LIMIT 1
+        SELECT a2.id
+        FROM audits a2
+        WHERE a2.business_id = b.id AND a2.audit_version = 2
+        ORDER BY a2.created_at DESC
+        LIMIT 1
       )
       ${whereClause}
     `;
@@ -79,8 +103,10 @@ export async function GET(request: NextRequest) {
       SELECT
         b.*,
         latest_audit.overall_grade,
-        latest_audit.performance_score,
         latest_audit.has_website as audit_has_website,
+        latest_audit.website_complexity,
+        latest_audit.replacement_difficulty,
+        latest_audit.advanced_features_json,
         latest_audit.created_at as audit_date,
         latest_site.id as site_id,
         latest_site.slug as site_slug,
@@ -88,13 +114,17 @@ export async function GET(request: NextRequest) {
         latest_site.created_at as site_created_at
       FROM businesses b
       LEFT JOIN audits latest_audit ON latest_audit.id = (
-        SELECT a2.id FROM audits a2 WHERE a2.business_id = b.id ORDER BY a2.created_at DESC LIMIT 1
+        SELECT a2.id
+        FROM audits a2
+        WHERE a2.business_id = b.id AND a2.audit_version = 2
+        ORDER BY a2.created_at DESC
+        LIMIT 1
       )
       LEFT JOIN generated_sites latest_site ON latest_site.id = (
         SELECT gs.id FROM generated_sites gs WHERE gs.business_id = b.id ORDER BY gs.version DESC LIMIT 1
       )
       ${whereClause}
-      ORDER BY ${sortColumn} ${sortDirection}
+      ${orderClause}
       LIMIT ? OFFSET ?
     `;
 
@@ -104,6 +134,7 @@ export async function GET(request: NextRequest) {
       businesses,
       total,
       page,
+      pageSize: limit,
       totalPages: Math.ceil(total / limit),
     });
   } catch (err) {
@@ -120,6 +151,7 @@ export async function POST(request: NextRequest) {
   try {
     initializeDatabase();
     const db = getDb();
+    ensureEnrichmentWorkerRunning();
 
     const body = await request.json();
     const { name, place_id, address, city, province, postal_code, phone, email, website_url, category, latitude, longitude, notes } = body;
@@ -160,6 +192,7 @@ export async function POST(request: NextRequest) {
     );
 
     const business = db.prepare('SELECT * FROM businesses WHERE id = ?').get(result.lastInsertRowid);
+    void runPendingEnrichmentPass();
 
     return NextResponse.json(
       { success: true, business },

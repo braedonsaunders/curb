@@ -9,9 +9,15 @@ out/
 *.db
 *.db-journal
 *.db-wal
+*.db-shm
+
+# Launcher runtime
+.curb-runtime/
 
 # Generated sites
 sites/
+!app/src/app/api/sites/
+!app/src/app/api/sites/**
 
 # Environment
 .env

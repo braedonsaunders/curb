@@ -1,10 +1,38 @@
-import Anthropic from "@anthropic-ai/sdk";
-import { getConfig, type Config } from "./config";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { createOpenAI } from "@ai-sdk/openai";
+import { generateText, type LanguageModel, type ModelMessage } from "ai";
 import fs from "fs";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import path from "path";
+import { randomUUID } from "node:crypto";
+import {
+  buildAnthropicOAuthConfigUpdates,
+  refreshAnthropicToken,
+} from "./anthropic-oauth";
+import {
+  DEFAULT_AI_MODELS,
+  getConfiguredAiModel,
+  getConfiguredAiProviderLabel,
+} from "./ai-provider";
+import { getConfig, updateConfig, type Config } from "./config";
+import {
+  buildOpenAIOAuthConfigUpdates,
+  DEFAULT_OPENAI_OAUTH_MODEL,
+  extractChatGPTAccountId,
+  OPENAI_CODEX_API_ENDPOINT,
+  OPENAI_OAUTH_CODEX_MODELS,
+  refreshOpenAIToken,
+} from "./openai-oauth";
+import type { WebsiteSourceSnapshot } from "./website-source";
+import type { WebsitePageSignals } from "./website-screenshot";
 
-const MODEL = "claude-sonnet-4-20250514";
 const PROMPTS_DIR = path.resolve(process.cwd(), "..", "prompts");
+const ANTHROPIC_OAUTH_BETAS = [
+  "oauth-2025-04-20",
+  "interleaved-thinking-2025-05-14",
+];
+const ANTHROPIC_OAUTH_USER_AGENT = "claude-cli/2.1.2 (external, cli)";
 
 export interface BusinessData {
   name: string;
@@ -23,14 +51,486 @@ export interface BusinessData {
   longitude: number | null;
 }
 
-function getClient(): Anthropic {
-  const config = getConfig();
-  if (!config.anthropicApiKey) {
+export interface VisualAuditInput {
+  businessName: string;
+  category: string | null;
+  city: string | null;
+  requestedUrl: string;
+  finalUrl: string;
+  pageTitle: string | null;
+  screenshotBase64: string;
+  screenshotMediaType: "image/jpeg";
+  pageSignals: WebsitePageSignals;
+}
+
+export interface VisualAuditResult {
+  grade: string;
+  ownerSentiment: "proud" | "mixed" | "embarrassed";
+  summary: string;
+  strengths: string[];
+  issues: string[];
+  websiteComplexity: "simple" | "moderate" | "advanced";
+  replacementDifficulty: "easy" | "medium" | "hard";
+  advancedFeatures: string[];
+}
+
+export interface ExistingSiteFile {
+  path: string;
+  content: string;
+}
+
+export interface SourceBrandAsset {
+  relativePath: string;
+  sourceUrl: string;
+  mimeType: string | null;
+}
+
+export interface GenerateSiteOptions {
+  promptOverride?: string;
+  modificationPrompt?: string;
+  existingSiteFiles?: ExistingSiteFile[];
+  sourceSiteSnapshot?: WebsiteSourceSnapshot | null;
+  sourceBrandAssets?: {
+    logo?: SourceBrandAsset | null;
+  };
+  sourceSiteVisuals?: Array<{
+    finalUrl: string;
+    pageTitle: string | null;
+    screenshotBase64: string;
+    screenshotMediaType: "image/jpeg";
+    pageSignals: WebsitePageSignals;
+  }>;
+}
+
+export type SiteArchitectureMode = "single-page" | "multi-page";
+
+export interface SiteArchitectureRecommendation {
+  mode: SiteArchitectureMode;
+  required: boolean;
+  confidence: "medium" | "high";
+  reasons: string[];
+}
+
+const STRONG_MULTI_PAGE_FEATURES = new Set([
+  "online store",
+  "appointment booking",
+  "customer portal",
+  "large multi-page navigation",
+]);
+
+const DEDICATED_PAGE_SLUG_HINTS = new Set([
+  "services",
+  "service",
+  "portfolio",
+  "gallery",
+  "faq",
+  "faqs",
+  "team",
+  "staff",
+  "locations",
+  "location",
+  "pricing",
+  "plans",
+  "menu",
+  "shop",
+  "products",
+  "product",
+  "booking",
+  "book",
+  "appointments",
+  "appointment",
+  "contact",
+  "about",
+  "resources",
+  "resource",
+  "blog",
+  "news",
+  "specialties",
+  "specialty",
+]);
+
+async function buildAnthropicOauthProvider(config: Config) {
+  if (!config.anthropicOAuthAccessToken) {
     throw new Error(
-      "ANTHROPIC_API_KEY is not set. Please configure it in your .env file."
+      "Anthropic OAuth is selected, but no Anthropic OAuth token is connected."
     );
   }
-  return new Anthropic({ apiKey: config.anthropicApiKey });
+
+  let accessToken = config.anthropicOAuthAccessToken;
+  let refreshToken = config.anthropicOAuthRefreshToken;
+  let expiresAtMs = config.anthropicOAuthExpiresAtMs;
+
+  const refreshIfNeeded = async () => {
+    if (
+      !refreshToken ||
+      !accessToken ||
+      (expiresAtMs > 0 && Date.now() < expiresAtMs)
+    ) {
+      return;
+    }
+
+    try {
+      const tokens = await refreshAnthropicToken(refreshToken);
+      const nextConfig = updateConfig(
+        buildAnthropicOAuthConfigUpdates(tokens, {
+          refreshToken,
+          expiresAtMs,
+          authMode: config.anthropicAuthMode,
+        })
+      );
+
+      accessToken = nextConfig.anthropicOAuthAccessToken;
+      refreshToken = nextConfig.anthropicOAuthRefreshToken;
+      expiresAtMs = nextConfig.anthropicOAuthExpiresAtMs;
+    } catch {
+      // Fall back to the existing token and let Anthropic surface an auth error.
+    }
+  };
+
+  await refreshIfNeeded();
+
+  const oauthFetch: typeof fetch = async (requestInput, init) => {
+    await refreshIfNeeded();
+
+    const requestHeaders = new Headers();
+
+    if (requestInput instanceof Request) {
+      requestInput.headers.forEach((value, key) => {
+        requestHeaders.set(key, value);
+      });
+    }
+
+    if (init?.headers) {
+      if (init.headers instanceof Headers) {
+        init.headers.forEach((value, key) => {
+          requestHeaders.set(key, value);
+        });
+      } else if (Array.isArray(init.headers)) {
+        for (const [key, value] of init.headers) {
+          requestHeaders.set(key, String(value));
+        }
+      } else {
+        for (const [key, value] of Object.entries(init.headers)) {
+          if (value !== undefined) {
+            requestHeaders.set(key, String(value));
+          }
+        }
+      }
+    }
+
+    const incomingBeta = requestHeaders.get("anthropic-beta") ?? "";
+    const mergedBetas = [
+      ...new Set(
+        [...ANTHROPIC_OAUTH_BETAS, ...incomingBeta.split(",")]
+          .map((value) => value.trim())
+          .filter(Boolean)
+      ),
+    ].join(",");
+
+    requestHeaders.set("authorization", `Bearer ${accessToken}`);
+    requestHeaders.set("anthropic-beta", mergedBetas);
+    requestHeaders.set("user-agent", ANTHROPIC_OAUTH_USER_AGENT);
+    requestHeaders.delete("x-api-key");
+
+    let finalInput: RequestInfo | URL = requestInput;
+
+    try {
+      const requestUrl =
+        typeof requestInput === "string" || requestInput instanceof URL
+          ? new URL(requestInput.toString())
+          : new URL(requestInput.url);
+
+      if (
+        requestUrl.pathname === "/v1/messages" &&
+        !requestUrl.searchParams.has("beta")
+      ) {
+        requestUrl.searchParams.set("beta", "true");
+        finalInput =
+          requestInput instanceof Request
+            ? new Request(requestUrl.toString(), requestInput)
+            : requestUrl;
+      }
+    } catch {
+      // Keep the original request input if the URL cannot be parsed.
+    }
+
+    return fetch(finalInput, {
+      ...init,
+      headers: requestHeaders,
+    });
+  };
+
+  return createAnthropic({
+    authToken: accessToken,
+    headers: {
+      "anthropic-beta": ANTHROPIC_OAUTH_BETAS.join(","),
+    },
+    fetch: oauthFetch,
+  });
+}
+
+async function buildOpenAIOauthProvider(config: Config) {
+  if (config.openaiOAuthApiKey) {
+    return {
+      model: createOpenAI({ apiKey: config.openaiOAuthApiKey }),
+      modelId: getConfiguredAiModel(config).trim() || DEFAULT_AI_MODELS.openai,
+    };
+  }
+
+  if (!config.openaiOAuthAccessToken) {
+    throw new Error(
+      "OpenAI OAuth is selected, but no OpenAI OAuth token is connected."
+    );
+  }
+
+  let accessToken = config.openaiOAuthAccessToken;
+  const refreshToken = config.openaiOAuthRefreshToken;
+  let expiresAtMs = config.openaiOAuthExpiresAtMs;
+  let accountId = config.openaiOAuthAccountId || extractChatGPTAccountId(accessToken);
+
+  const refreshIfNeeded = async () => {
+    if (!refreshToken || !accessToken || (expiresAtMs > 0 && Date.now() < expiresAtMs)) {
+      return;
+    }
+
+    try {
+      const tokens = await refreshOpenAIToken(refreshToken);
+      const nextConfig = updateConfig(
+        buildOpenAIOAuthConfigUpdates(tokens, {
+          refreshToken,
+          expiresAtMs,
+          authMode: config.openaiAuthMode,
+          existingPlatformApiKey: config.openaiOAuthApiKey,
+          existingAccountId: accountId,
+        })
+      );
+
+      accessToken = nextConfig.openaiOAuthAccessToken;
+      expiresAtMs = nextConfig.openaiOAuthExpiresAtMs;
+      accountId =
+        nextConfig.openaiOAuthAccountId || extractChatGPTAccountId(accessToken);
+    } catch {
+      // Fall back to the existing token and let OpenAI surface an auth error.
+    }
+  };
+
+  await refreshIfNeeded();
+
+  const resolvedModel = OPENAI_OAUTH_CODEX_MODELS.has(config.openaiModel)
+    ? config.openaiModel
+    : DEFAULT_OPENAI_OAUTH_MODEL;
+
+  const openaiOauthFetch: typeof fetch = async (requestInput, init) => {
+    await refreshIfNeeded();
+
+    const headers = new Headers();
+
+    if (requestInput instanceof Request) {
+      requestInput.headers.forEach((value, key) => {
+        headers.set(key, value);
+      });
+    }
+
+    if (init?.headers) {
+      if (init.headers instanceof Headers) {
+        init.headers.forEach((value, key) => {
+          headers.set(key, value);
+        });
+      } else if (Array.isArray(init.headers)) {
+        for (const [key, value] of init.headers) {
+          if (value !== undefined) {
+            headers.set(key, String(value));
+          }
+        }
+      } else {
+        for (const [key, value] of Object.entries(init.headers)) {
+          if (value !== undefined) {
+            headers.set(key, String(value));
+          }
+        }
+      }
+    }
+
+    headers.delete("authorization");
+    headers.delete("Authorization");
+    headers.set("authorization", `Bearer ${accessToken}`);
+    headers.set("originator", "curb");
+    headers.set("user-agent", "curb/0.1.0");
+
+    if (!headers.get("session_id")) {
+      headers.set("session_id", randomUUID());
+    }
+
+    if (accountId) {
+      headers.set("ChatGPT-Account-Id", accountId);
+    }
+
+    const parsedUrl =
+      requestInput instanceof URL
+        ? requestInput
+        : new URL(
+            typeof requestInput === "string" ? requestInput : requestInput.url
+          );
+
+    const targetUrl =
+      parsedUrl.pathname.includes("/v1/responses") ||
+      parsedUrl.pathname.includes("/chat/completions")
+        ? new URL(OPENAI_CODEX_API_ENDPOINT)
+        : parsedUrl;
+
+    return fetch(targetUrl, {
+      ...init,
+      headers,
+    });
+  };
+
+  return {
+    model: createOpenAI({
+      apiKey: "openai-oauth-dummy-key",
+      fetch: openaiOauthFetch,
+    }),
+    modelId: resolvedModel,
+  };
+}
+
+async function getLanguageModelRuntime(): Promise<{
+  config: Config;
+  model: LanguageModel;
+  providerLabel: string;
+}> {
+  const config = getConfig();
+  const providerLabel = getConfiguredAiProviderLabel(config);
+  const modelId =
+    getConfiguredAiModel(config).trim() || DEFAULT_AI_MODELS[config.aiProvider];
+
+  if (config.aiProvider === "anthropic") {
+    if (config.anthropicAuthMode === "oauth") {
+      if (config.anthropicOAuthAccessToken) {
+        const provider = await buildAnthropicOauthProvider(config);
+        return { config, model: provider(modelId), providerLabel };
+      }
+
+      if (!config.anthropicApiKey) {
+        throw new Error(
+          "Anthropic OAuth is selected, but no OAuth token is connected. Connect Anthropic OAuth in Settings or switch Anthropic back to API key mode."
+        );
+      }
+    }
+
+    if (config.anthropicApiKey) {
+      const provider = createAnthropic({ apiKey: config.anthropicApiKey });
+      return { config, model: provider(modelId), providerLabel };
+    }
+
+    if (config.anthropicOAuthAccessToken) {
+      const provider = await buildAnthropicOauthProvider(config);
+      return { config, model: provider(modelId), providerLabel };
+    }
+
+    throw new Error(
+      "Anthropic credentials are not set. Configure an Anthropic API key or connect Anthropic OAuth in Settings."
+    );
+  }
+
+  if (config.aiProvider === "openai") {
+    if (config.openaiAuthMode === "oauth") {
+      if (config.openaiOAuthApiKey || config.openaiOAuthAccessToken) {
+        const provider = await buildOpenAIOauthProvider(config);
+        return {
+          config,
+          model: provider.model(provider.modelId),
+          providerLabel,
+        };
+      }
+
+      if (!config.openaiApiKey) {
+        throw new Error(
+          "OpenAI OAuth is selected, but no OAuth token is connected. Connect OpenAI OAuth in Settings or switch OpenAI back to API key mode."
+        );
+      }
+    }
+
+    if (config.openaiApiKey) {
+      const provider = createOpenAI({ apiKey: config.openaiApiKey });
+      return { config, model: provider(modelId), providerLabel };
+    }
+
+    if (config.openaiOAuthApiKey || config.openaiOAuthAccessToken) {
+      const provider = await buildOpenAIOauthProvider(config);
+      return {
+        config,
+        model: provider.model(provider.modelId),
+        providerLabel,
+      };
+    }
+
+    throw new Error(
+      "OpenAI credentials are not set. Configure an OpenAI API key or connect OpenAI OAuth in Settings."
+    );
+  }
+
+  if (config.aiProvider === "google") {
+    if (!config.googleApiKey) {
+      throw new Error(
+        "Google Gemini credentials are not set. Configure a Google AI API key in Settings."
+      );
+    }
+
+    const provider = createGoogleGenerativeAI({ apiKey: config.googleApiKey });
+    return { config, model: provider(modelId), providerLabel };
+  }
+
+  if (!config.openrouterApiKey) {
+    throw new Error(
+      "OpenRouter credentials are not set. Configure an OpenRouter API key in Settings."
+    );
+  }
+
+  const provider = createOpenRouter({
+    apiKey: config.openrouterApiKey,
+    compatibility: "strict",
+  });
+
+  return { config, model: provider.chat(modelId), providerLabel };
+}
+
+async function generateModelText(options: {
+  messages: ModelMessage[];
+  maxOutputTokens: number;
+}): Promise<{ text: string; providerLabel: string; config: Config }> {
+  const runtime = await getLanguageModelRuntime();
+  const result = await generateText({
+    model: runtime.model,
+    messages: options.messages,
+    maxOutputTokens: options.maxOutputTokens,
+  });
+  const text = result.text.trim();
+
+  if (!text) {
+    throw new Error(`${runtime.providerLabel} returned no text content.`);
+  }
+
+  return {
+    text,
+    providerLabel: runtime.providerLabel,
+    config: runtime.config,
+  };
+}
+
+export function isAiAuthenticationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return [
+    "credentials are not set",
+    "api key",
+    "authentication_error",
+    "unauthorized",
+    "forbidden",
+    "invalid x-api-key",
+    "invalid api key",
+    "invalid_api_key",
+    "access token",
+  ].some((snippet) => message.toLowerCase().includes(snippet));
 }
 
 function loadPromptTemplate(filename: string): string {
@@ -42,38 +542,39 @@ function loadPromptTemplate(filename: string): string {
   }
 }
 
-function injectBusinessData(template: string, data: BusinessData): string {
+function injectPlaceholders(
+  template: string,
+  values: Record<string, string | number | null | undefined>
+): string {
   let result = template;
-  result = result.replace(/\{\{name\}\}/g, data.name ?? "");
-  result = result.replace(/\{\{category\}\}/g, data.category ?? "");
-  result = result.replace(/\{\{address\}\}/g, data.address ?? "");
-  result = result.replace(/\{\{city\}\}/g, data.city ?? "");
-  result = result.replace(/\{\{phone\}\}/g, data.phone ?? "");
-  result = result.replace(/\{\{email\}\}/g, data.email ?? "");
-  result = result.replace(/\{\{website_url\}\}/g, data.website_url ?? "");
-  result = result.replace(
-    /\{\{rating\}\}/g,
-    data.rating?.toString() ?? ""
-  );
-  result = result.replace(
-    /\{\{review_count\}\}/g,
-    data.review_count?.toString() ?? ""
-  );
-  result = result.replace(/\{\{hours_json\}\}/g, data.hours_json ?? "");
-  result = result.replace(/\{\{photos_json\}\}/g, data.photos_json ?? "");
-  result = result.replace(
-    /\{\{google_maps_url\}\}/g,
-    data.google_maps_url ?? ""
-  );
-  result = result.replace(
-    /\{\{latitude\}\}/g,
-    data.latitude?.toString() ?? ""
-  );
-  result = result.replace(
-    /\{\{longitude\}\}/g,
-    data.longitude?.toString() ?? ""
-  );
+
+  for (const [key, value] of Object.entries(values)) {
+    result = result.replace(
+      new RegExp(`\\{\\{${key}\\}\\}`, "g"),
+      value == null ? "" : String(value)
+    );
+  }
+
   return result;
+}
+
+function injectBusinessData(template: string, data: BusinessData): string {
+  return injectPlaceholders(template, {
+    name: data.name,
+    category: data.category,
+    address: data.address,
+    city: data.city,
+    phone: data.phone,
+    email: data.email,
+    website_url: data.website_url,
+    rating: data.rating?.toString() ?? "",
+    review_count: data.review_count?.toString() ?? "",
+    hours_json: data.hours_json,
+    photos_json: data.photos_json,
+    google_maps_url: data.google_maps_url,
+    latitude: data.latitude?.toString() ?? "",
+    longitude: data.longitude?.toString() ?? "",
+  });
 }
 
 function buildBusinessContext(data: BusinessData): string {
@@ -101,6 +602,182 @@ function buildBusinessContext(data: BusinessData): string {
   return lines.join("\n");
 }
 
+function buildSourceSiteSummary(
+  snapshot: WebsiteSourceSnapshot | null | undefined
+): string {
+  if (!snapshot) {
+    return "No live source website snapshot was captured.";
+  }
+
+  const pageInventory = snapshot.pages.map(
+    (page, index) =>
+      `Page ${index + 1}: ${page.url} (local path: ${page.localPath})`
+  );
+
+  const pageSections = snapshot.pages.map((page, index) =>
+    [
+      `Page ${index + 1}: ${page.url}`,
+      `Local path: ${page.localPath}`,
+      `Title: ${page.title ?? "N/A"}`,
+      `Description: ${page.description ?? "N/A"}`,
+      `Headings: ${page.headings.length ? page.headings.join(" | ") : "N/A"}`,
+      `Navigation: ${
+        page.navLinks.length
+          ? page.navLinks
+              .map((entry) =>
+                entry.text ? `${entry.text} -> ${entry.href}` : entry.href
+              )
+              .join(" | ")
+          : "N/A"
+      }`,
+      `Calls to action: ${
+        page.callToActions.length ? page.callToActions.join(" | ") : "N/A"
+      }`,
+      `Forms: ${
+        page.forms.length
+          ? page.forms
+              .map(
+                (form) =>
+                  `method=${form.method ?? "N/A"}, action=${
+                    form.action ?? "N/A"
+                  }, fields=[${form.fields.join(", ")}]`
+              )
+              .join(" | ")
+          : "N/A"
+      }`,
+      `Detected features: ${
+        page.detectedFeatures.length
+          ? page.detectedFeatures.join(", ")
+          : "none detected"
+      }`,
+      `Images: ${
+        page.images.length
+          ? page.images
+              .map((image) =>
+                image.alt ? `${image.alt} -> ${image.src}` : image.src
+              )
+              .join(" | ")
+          : "N/A"
+      }`,
+      `Extracted page text:\n${page.textContent || "N/A"}`,
+    ].join("\n")
+  );
+
+  return [
+    "Source Website Snapshot:",
+    "Treat this as brand and content inventory plus evidence of what to improve, not as a layout blueprint to preserve.",
+    `Requested URL: ${snapshot.requestedUrl}`,
+    `Final URL: ${snapshot.finalUrl}`,
+    `Captured pages: ${snapshot.pageCount}`,
+    "Source page inventory (content can be reorganized into a stronger information architecture):",
+    ...pageInventory,
+    `Brand colors: ${
+      snapshot.brand.colorPalette.length
+        ? snapshot.brand.colorPalette.join(", ")
+        : "N/A"
+    }`,
+    `Brand backgrounds: ${
+      snapshot.brand.backgroundPalette.length
+        ? snapshot.brand.backgroundPalette.join(", ")
+        : "N/A"
+    }`,
+    `Brand fonts: ${
+      snapshot.brand.fontFamilies.length
+        ? snapshot.brand.fontFamilies.join(", ")
+        : "N/A"
+    }`,
+    `Logo candidates: ${
+      snapshot.brand.logoCandidates.length
+        ? snapshot.brand.logoCandidates.join(" | ")
+        : "N/A"
+    }`,
+    "Detailed source-page content below is canonical for facts and feature coverage, but not for layout, page order, or section sequencing.",
+    ...pageSections,
+  ].join("\n\n");
+}
+
+function buildSourceSiteVisualSummary(
+  visuals: GenerateSiteOptions["sourceSiteVisuals"]
+): string {
+  if (!visuals || visuals.length === 0) {
+    return "No source-site screenshots were captured.";
+  }
+
+  return [
+    "Source Website Visuals:",
+    "Treat screenshots as brand/style evidence and a baseline to outperform. Do not preserve their spacing, hierarchy, or section composition unless explicitly required.",
+    ...visuals.map((visual, index) =>
+      [
+        `Screenshot ${index + 1}: ${visual.finalUrl}`,
+        `Page title: ${visual.pageTitle ?? "Unknown"}`,
+        buildPageSignalsSummary(visual.pageSignals),
+      ].join("\n")
+    ),
+  ].join("\n\n");
+}
+
+function buildSourceBrandAssetSummary(
+  sourceBrandAssets: GenerateSiteOptions["sourceBrandAssets"]
+): string {
+  const logo = sourceBrandAssets?.logo;
+  if (!logo) {
+    return [
+      "Source Brand Assets:",
+      "No exact source logo asset was captured.",
+      "Do not invent, redraw, or fabricate a replacement logo mark.",
+    ].join("\n");
+  }
+
+  return [
+    "Source Brand Assets:",
+    `Exact source logo bundle path for reuse: ${logo.relativePath}`,
+    `Original logo URL: ${logo.sourceUrl}`,
+    `Logo MIME type: ${logo.mimeType ?? "Unknown"}`,
+    "If you display a logo anywhere in the site, you must reference this exact asset using the correct relative path from each file and must not redraw or approximate it.",
+  ].join("\n");
+}
+
+function buildExistingSiteSummary(
+  files: ExistingSiteFile[] | undefined
+): string {
+  if (!files || files.length === 0) {
+    return "No current generated site bundle was provided.";
+  }
+
+  const maxChars = 45000;
+  const maxCharsPerFile = 12000;
+  let usedChars = 0;
+  const sections: string[] = [];
+
+  for (const file of files) {
+    if (usedChars >= maxChars) {
+      break;
+    }
+
+    const remainingChars = maxChars - usedChars;
+    const snippet = file.content.slice(
+      0,
+      Math.min(maxCharsPerFile, remainingChars)
+    );
+    usedChars += snippet.length;
+
+    sections.push(
+      [
+        `File: ${file.path}`,
+        snippet.length < file.content.length
+          ? `${snippet}\n...[truncated]`
+          : snippet,
+      ].join("\n")
+    );
+  }
+
+  return [
+    "Current Generated Site Bundle:",
+    "Use this bundle as the working draft when applying requested site changes.",
+    ...sections,
+  ].join("\n\n");
+}
+
 function stripCodeFences(text: string): string {
   let result = text.trim();
   if (result.startsWith("```html")) {
@@ -116,39 +793,323 @@ function stripCodeFences(text: string): string {
   return result.trim();
 }
 
+function ensureGeneratedSitePayload(text: string): string {
+  const cleaned = stripCodeFences(text);
+  if (/<<<FILE:[^>]+>>>/i.test(cleaned)) {
+    return cleaned;
+  }
+
+  if (
+    !/^<!DOCTYPE html/i.test(cleaned) &&
+    !/<html[\s>]/i.test(cleaned) &&
+    !/^<[\w!]/.test(cleaned)
+  ) {
+    throw new Error(
+      "Site generation returned non-HTML content instead of a website document."
+    );
+  }
+
+  return cleaned;
+}
+
+function buildPageSignalsSummary(pageSignals: WebsitePageSignals): string {
+  const features = pageSignals.detectedFeatures.length
+    ? pageSignals.detectedFeatures.join(", ")
+    : "none detected";
+  const headings = pageSignals.headingSamples.length
+    ? pageSignals.headingSamples.join(" | ")
+    : "none captured";
+
+  return [
+    `Navigation links: ${pageSignals.navLinkCount}`,
+    `Internal links: ${pageSignals.internalLinkCount}`,
+    `External links: ${pageSignals.externalLinkCount}`,
+    `Forms: ${pageSignals.formCount}`,
+    `Buttons: ${pageSignals.buttonCount}`,
+    `Detected features: ${features}`,
+    `Heading samples: ${headings}`,
+  ].join("\n");
+}
+
+function isHtmlSiteFile(filePath: string): boolean {
+  return /\.html?$/i.test(filePath);
+}
+
+function localPathToPageSlug(localPath: string): string {
+  if (localPath === "index.html") {
+    return "";
+  }
+
+  return localPath
+    .replace(/\/index\.html$/i, "")
+    .replace(/\.html?$/i, "")
+    .replace(/^\/+/, "")
+    .toLowerCase();
+}
+
+function pageSlugHasDedicatedPageHint(pageSlug: string): boolean {
+  return pageSlug
+    .split("/")
+    .filter(Boolean)
+    .some((segment) => DEDICATED_PAGE_SLUG_HINTS.has(segment));
+}
+
+export function recommendSiteArchitecture(
+  options: GenerateSiteOptions = {}
+): SiteArchitectureRecommendation {
+  const reasons: string[] = [];
+  let score = 0;
+
+  const existingHtmlFiles = (options.existingSiteFiles ?? []).filter((file) =>
+    isHtmlSiteFile(file.path)
+  );
+  const existingSecondaryPages = existingHtmlFiles.filter(
+    (file) => file.path !== "index.html"
+  );
+
+  if (existingSecondaryPages.length > 0) {
+    score += 5;
+    reasons.push(
+      `Current generated bundle already includes ${existingHtmlFiles.length} HTML pages.`
+    );
+  }
+
+  const sourcePages = options.sourceSiteSnapshot?.pages ?? [];
+  const nonHomeSourcePages = sourcePages.filter(
+    (page) => page.localPath !== "index.html"
+  );
+  const sourcePageSlugs = Array.from(
+    new Set(
+      nonHomeSourcePages
+        .map((page) => localPathToPageSlug(page.localPath))
+        .filter(Boolean)
+    )
+  );
+  const dedicatedPageSlugCount = sourcePageSlugs.filter((pageSlug) =>
+    pageSlugHasDedicatedPageHint(pageSlug)
+  ).length;
+
+  if (sourcePages.length >= 3) {
+    score += 4;
+    reasons.push(`Source site has ${sourcePages.length} captured pages.`);
+  } else if (nonHomeSourcePages.length >= 2) {
+    score += 3;
+    reasons.push(
+      `Source site exposes ${nonHomeSourcePages.length} distinct non-home pages.`
+    );
+  }
+
+  if (dedicatedPageSlugCount >= 2) {
+    score += 3;
+    reasons.push(
+      "Source navigation appears to contain distinct supporting pages that should not be collapsed into one long page."
+    );
+  } else if (dedicatedPageSlugCount >= 1 && sourcePages.length >= 2) {
+    score += 2;
+    reasons.push(
+      "Source site includes at least one clear dedicated content page beyond the homepage."
+    );
+  }
+
+  const detectedFeatures = new Set<string>();
+  for (const page of sourcePages) {
+    for (const feature of page.detectedFeatures) {
+      detectedFeatures.add(feature);
+    }
+  }
+
+  for (const visual of options.sourceSiteVisuals ?? []) {
+    for (const feature of visual.pageSignals.detectedFeatures) {
+      detectedFeatures.add(feature);
+    }
+  }
+
+  const strongFeatureMatches = Array.from(detectedFeatures).filter((feature) =>
+    STRONG_MULTI_PAGE_FEATURES.has(feature)
+  );
+  if (strongFeatureMatches.length > 0) {
+    score += 4;
+    reasons.push(
+      `Detected complex site features: ${strongFeatureMatches.join(", ")}.`
+    );
+  }
+
+  const navCounts = [
+    ...sourcePages.map((page) => page.navLinks.length),
+    ...(options.sourceSiteVisuals ?? []).map(
+      (visual) => visual.pageSignals.navLinkCount
+    ),
+  ];
+  const maxNavLinkCount = navCounts.length > 0 ? Math.max(...navCounts) : 0;
+  if (maxNavLinkCount >= 8) {
+    score += 3;
+    reasons.push(
+      `Navigation depth is high (${maxNavLinkCount} links), which usually needs multiple pages.`
+    );
+  }
+
+  if (score >= 4) {
+    return {
+      mode: "multi-page",
+      required: true,
+      confidence: "high",
+      reasons,
+    };
+  }
+
+  if (score >= 2) {
+    return {
+      mode: "multi-page",
+      required: false,
+      confidence: "medium",
+      reasons,
+    };
+  }
+
+  return {
+    mode: "single-page",
+    required: false,
+    confidence: "medium",
+    reasons:
+      reasons.length > 0
+        ? reasons
+        : [
+            "No strong multi-page signals were detected from the current bundle, source pages, or navigation structure.",
+          ],
+  };
+}
+
+function buildArchitectureRecommendationSummary(
+  options: GenerateSiteOptions = {}
+): string {
+  const recommendation = recommendSiteArchitecture(options);
+
+  return [
+    "Architecture Recommendation:",
+    `Recommended architecture: ${recommendation.mode}`,
+    `Requirement level: ${
+      recommendation.required ? "required" : "preferred"
+    }`,
+    `Confidence: ${recommendation.confidence}`,
+    ...recommendation.reasons.map((reason) => `- ${reason}`),
+    recommendation.mode === "multi-page"
+      ? recommendation.required
+        ? "- Return a multi-page static site bundle with at least two HTML pages."
+        : "- Prefer a multi-page bundle unless there is a very strong reason to consolidate everything into one page."
+      : "- A single-page site is acceptable only if the content can be consolidated cleanly without losing clarity or utility.",
+  ].join("\n");
+}
+
 export async function generateSite(
-  businessData: BusinessData
+  businessData: BusinessData,
+  options: GenerateSiteOptions = {}
 ): Promise<string> {
-  const client = getClient();
   const promptTemplate = loadPromptTemplate("site-generation.md");
   const businessContext = buildBusinessContext(businessData);
+  const existingSiteSummary = buildExistingSiteSummary(options.existingSiteFiles);
+  const sourceSiteSummary = buildSourceSiteSummary(options.sourceSiteSnapshot);
+  const sourceBrandAssetSummary = buildSourceBrandAssetSummary(
+    options.sourceBrandAssets
+  );
+  const architectureRecommendationSummary =
+    buildArchitectureRecommendationSummary(options);
+  const sourceSiteVisualSummary = buildSourceSiteVisualSummary(
+    options.sourceSiteVisuals
+  );
+  const modificationPrompt =
+    options.modificationPrompt?.trim() ?? options.promptOverride?.trim() ?? "";
+  const promptSections = [
+    promptTemplate ||
+      "Rebuild the business website using the available business data and source-site snapshot.",
+    "Business Context:",
+    businessContext,
+    existingSiteSummary,
+    sourceSiteSummary,
+    sourceBrandAssetSummary,
+    architectureRecommendationSummary,
+    sourceSiteVisualSummary,
+  ];
 
-  let userPrompt: string;
-  if (promptTemplate) {
-    userPrompt = injectBusinessData(promptTemplate, businessData);
-  } else {
-    userPrompt = `Generate a complete, modern, mobile-responsive single-page HTML website for the following business.
-The HTML should be self-contained with inline CSS and include all sections a small business website needs
-(hero, about, services, hours, contact, map embed, footer). Use a professional color scheme appropriate for the business category.
-Make it look polished and production-ready.
-
-${businessContext}
-
-Return ONLY the complete HTML document, starting with <!DOCTYPE html> and ending with </html>. No markdown, no explanation.`;
+  if (modificationPrompt) {
+    promptSections.push(
+      options.existingSiteFiles?.length
+        ? "Requested modifications to apply to the current site bundle:"
+        : "Additional user instructions:",
+      modificationPrompt
+    );
   }
 
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8192,
-    messages: [{ role: "user", content: userPrompt }],
+  promptSections.push(
+    "Output rules:",
+    "- Do not ask the user for missing business details.",
+    "- When a current generated site bundle is provided, treat it as the working draft and apply the requested modifications to that draft.",
+    "- This is a redesign, not a literal clone. Preserve recognizable brand cues while clearly upgrading the site.",
+    "- Use the source site as truth for branding, business facts, service coverage, and feature inventory, not as a limit on design quality, layout, or composition.",
+    "- Treat source screenshots and page summaries as evidence of what the brand is and what must be improved, not as canonical references for spacing, hierarchy, or section order.",
+    "- Extract the brand DNA from the source material, then reinterpret it into a world-class modern website with a distinct creative direction.",
+    "- The visual quality bar is AAA-level: premium, current, custom-designed, and strong enough to sell as a serious paid upgrade.",
+    "- Create a polished, conversion-focused, modern business website that feels materially better than the original and obviously more valuable at first glance.",
+    "- Start from a blank canvas for layout and composition. Preserve brand identity and business truth, not the source site's visual structure.",
+    "- Do not mirror the source hero composition, navigation arrangement, card grids, footer structure, typography scale, or repetitive section rhythm unless the business truly needs the same pattern.",
+    "- If the source site feels visually weak, replace its composition entirely instead of lightly modernizing the same layout.",
+    "- Choose a clear art direction and execute it consistently with stronger typography, richer backgrounds or surfaces, deliberate contrast, varied section composition, and premium spacing.",
+    "- Preserve and improve all customer-facing content and features from the source material.",
+    "- Rewrite and elevate weak copy when helpful, but do not lose important business information.",
+    "- Reorganize layout, page structure, and section order whenever needed to produce a stronger modern experience.",
+    "- Avoid safe template output, dated layouts, weak typography, cramped spacing, flat white-box sections, generic hero-plus-card patterns, and low-effort visual design.",
+    "- When an exact source logo file path is provided, every visible logo treatment must use that exact asset path. Do not recreate, redraw, typeset, simplify, or approximate the logo.",
+    "- If no exact source logo asset is provided, do not invent or fabricate a new logo mark.",
+    "- Choose the site architecture that best fits the business: single-page only for simple brochure sites, multi-page when there are clearly distinct pages, galleries, FAQs, specialties, resources, locations, or utility flows.",
+    "- When the Architecture Recommendation section says multi-page is required, you must return a multi-page bundle with at least two HTML pages.",
+    "- Multi-page is required when there are multiple substantive source pages, large navigation, or complex flows such as store, booking, or portal behavior.",
+    "- If single-page, consolidate content into anchored sections and use working in-page navigation like #about-us or #specials.",
+    "- If multi-page, return a static site bundle with one file per page and keep all internal navigation relative to the site bundle.",
+    "- The output must be a static site bundle with no build step and no framework runtime requirement.",
+    "- Never emit broken root-relative internal links such as /about-us/ or /specials/.",
+    "- Contact, quote, and booking-request forms must use standard HTML form markup and remain compatible with static hosting. Prefer leaving action blank and adding data-curb-contact-form=\"true\" when you include a lead form.",
+    "- Remove obsolete admin, CMS, webmaster login, and old vendor-credit links unless the user explicitly needs them."
+  );
+
+  promptSections.push(
+    "Response format:",
+    "- Return the site as a static file bundle using these exact markers:",
+    "<<<FILE:index.html>>>",
+    "<!DOCTYPE html>...",
+    "<<<END FILE>>>",
+    "- Add more files the same way, for example <<<FILE:about-us/index.html>>> or <<<FILE:assets/site.css>>>.",
+    "- If the best solution is a single page, return only one file: index.html.",
+    "- Do not wrap the response in markdown fences."
+  );
+
+  const userPrompt = injectBusinessData(promptSections.join("\n\n"), businessData);
+
+  const content: Array<
+    | { type: "text"; text: string }
+    | {
+        type: "image";
+        image: string;
+        mediaType: "image/jpeg";
+      }
+  > = [{ type: "text", text: userPrompt }];
+
+  for (const [index, visual] of (options.sourceSiteVisuals ?? []).entries()) {
+    content.push({
+      type: "text",
+      text: `Attached source-site screenshot ${index + 1} for ${visual.finalUrl}.`,
+    });
+    content.push({
+      type: "image",
+      image: visual.screenshotBase64,
+      mediaType: visual.screenshotMediaType,
+    });
+  }
+
+  const response = await generateModelText({
+    maxOutputTokens: 20000,
+    messages: [{ role: "user", content }],
   });
 
-  const textBlock = response.content.find((block) => block.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("Claude returned no text content for site generation.");
-  }
-
-  return stripCodeFences(textBlock.text);
+  return ensureGeneratedSitePayload(response.text);
 }
 
 export async function generateEmail(
@@ -156,7 +1117,6 @@ export async function generateEmail(
   previewUrl: string,
   config: Config
 ): Promise<{ subject: string; body: string }> {
-  const client = getClient();
   const promptTemplate = loadPromptTemplate("email-outreach.md");
   const businessContext = buildBusinessContext(businessData);
 
@@ -166,7 +1126,9 @@ export async function generateEmail(
       .replace(/\{\{preview_url\}\}/g, previewUrl)
       .replace(/\{\{owner_name\}\}/g, config.ownerName)
       .replace(/\{\{business_name\}\}/g, config.businessName)
-      .replace(/\{\{business_email\}\}/g, config.businessEmail);
+      .replace(/\{\{business_email\}\}/g, config.businessEmail)
+      .replace(/\{\{business_address\}\}/g, config.businessAddress)
+      .replace(/\{\{pricing_text\}\}/g, config.pricingText);
   } else {
     userPrompt = `Write a professional cold outreach email to a local business owner. The goal is to show them
 a free sample website you've built for their business, and offer your web design services.
@@ -175,6 +1137,8 @@ Sender Info:
 - Name: ${config.ownerName || "Web Designer"}
 - Business: ${config.businessName || "Web Design Services"}
 - Email: ${config.businessEmail || ""}
+- Mailing address: ${config.businessAddress || ""}
+- Pricing context: ${config.pricingText || "Do not include pricing unless it helps the message feel specific."}
 
 Target Business:
 ${businessContext}
@@ -186,18 +1150,12 @@ Return your response as JSON with exactly two fields: "subject" and "body".
 The body should be plain text (not HTML). No markdown code fences.`;
   }
 
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
+  const response = await generateModelText({
+    maxOutputTokens: 2048,
     messages: [{ role: "user", content: userPrompt }],
   });
 
-  const textBlock = response.content.find((block) => block.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("Claude returned no text content for email generation.");
-  }
-
-  const text = stripCodeFences(textBlock.text);
+  const text = stripCodeFences(response.text);
 
   try {
     const parsed = JSON.parse(text);
@@ -207,63 +1165,131 @@ The body should be plain text (not HTML). No markdown code fences.`;
     return { subject: parsed.subject, body: parsed.body };
   } catch (e) {
     throw new Error(
-      `Failed to parse Claude email response as JSON: ${e instanceof Error ? e.message : String(e)}`
+      `Failed to parse ${response.providerLabel} email response as JSON: ${e instanceof Error ? e.message : String(e)}`
     );
   }
 }
 
 export async function auditWebsite(
-  url: string,
-  businessName: string
-): Promise<{ grade: string; summary: string }> {
-  const client = getClient();
+  input: VisualAuditInput
+): Promise<VisualAuditResult> {
   const promptTemplate = loadPromptTemplate("audit-scoring.md");
 
   let userPrompt: string;
   if (promptTemplate) {
-    userPrompt = promptTemplate
-      .replace(/\{\{url\}\}/g, url)
-      .replace(/\{\{business_name\}\}/g, businessName);
+    userPrompt = injectPlaceholders(promptTemplate, {
+      business_name: input.businessName,
+      category: input.category ?? "Unknown",
+      city: input.city ?? "Unknown",
+      requested_url: input.requestedUrl,
+      final_url: input.finalUrl,
+      page_title: input.pageTitle ?? "Unknown",
+      site_signals: buildPageSignalsSummary(input.pageSignals),
+    });
   } else {
-    userPrompt = `Analyze this website URL for a local business and provide a brief qualitative assessment.
+    userPrompt = `You are reviewing a local business website from a screenshot.
 
-Business: ${businessName}
-URL: ${url}
+Business: ${input.businessName}
+Category: ${input.category ?? "Unknown"}
+City: ${input.city ?? "Unknown"}
+Requested URL: ${input.requestedUrl}
+Final URL loaded: ${input.finalUrl}
+Page title: ${input.pageTitle ?? "Unknown"}
+Live page signals:
+${buildPageSignalsSummary(input.pageSignals)}
 
-Evaluate the website on these criteria:
-- Overall design quality and professionalism
-- Mobile responsiveness likelihood
-- Loading speed expectations
-- SEO basics (would it have good meta tags, headings, etc.)
-- Contact information visibility
+Judge the site the way a business owner would, not with technical speed or SEO metrics.
+Focus on visual polish, modern feel, clarity, trust, and whether the owner would likely feel proud or embarrassed to send customers there.
 
-Provide a letter grade (A, B, C, D, or F) and a 2-3 sentence summary.
-Return your response as JSON with exactly two fields: "grade" and "summary".
+Return JSON with exactly these fields:
+{
+  "grade": "D",
+  "ownerSentiment": "embarrassed",
+  "summary": "...",
+  "strengths": ["..."],
+  "issues": ["..."],
+  "websiteComplexity": "advanced",
+  "replacementDifficulty": "hard",
+  "advancedFeatures": ["online store"]
+}
+
+Use only proud, mixed, or embarrassed for ownerSentiment.
+Use only simple, moderate, or advanced for websiteComplexity.
+Use only easy, medium, or hard for replacementDifficulty.
 No markdown code fences.`;
   }
 
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 1024,
-    messages: [{ role: "user", content: userPrompt }],
+  const response = await generateModelText({
+    maxOutputTokens: 1200,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: userPrompt },
+          {
+            type: "image",
+            image: input.screenshotBase64,
+            mediaType: input.screenshotMediaType,
+          },
+        ],
+      },
+    ],
   });
 
-  const textBlock = response.content.find((block) => block.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("Claude returned no text content for website audit.");
-  }
-
-  const text = stripCodeFences(textBlock.text);
+  const text = stripCodeFences(response.text);
 
   try {
     const parsed = JSON.parse(text);
-    if (!parsed.grade || !parsed.summary) {
-      throw new Error("Response missing grade or summary fields.");
+    if (
+      !parsed.grade ||
+      !parsed.summary ||
+      !parsed.ownerSentiment ||
+      !Array.isArray(parsed.strengths) ||
+      !Array.isArray(parsed.issues) ||
+      !parsed.websiteComplexity ||
+      !parsed.replacementDifficulty ||
+      !Array.isArray(parsed.advancedFeatures)
+    ) {
+      throw new Error("Response missing required audit fields.");
     }
-    return { grade: parsed.grade, summary: parsed.summary };
+
+    return {
+      grade: String(parsed.grade).trim().toUpperCase(),
+      ownerSentiment:
+        parsed.ownerSentiment === "proud" ||
+        parsed.ownerSentiment === "mixed" ||
+        parsed.ownerSentiment === "embarrassed"
+          ? parsed.ownerSentiment
+          : "mixed",
+      summary: String(parsed.summary).trim(),
+      strengths: parsed.strengths
+        .map((item: unknown) => String(item).trim())
+        .filter(Boolean)
+        .slice(0, 4),
+      issues: parsed.issues
+        .map((item: unknown) => String(item).trim())
+        .filter(Boolean)
+        .slice(0, 4),
+      websiteComplexity:
+        parsed.websiteComplexity === "simple" ||
+        parsed.websiteComplexity === "moderate" ||
+        parsed.websiteComplexity === "advanced"
+          ? parsed.websiteComplexity
+          : "moderate",
+      replacementDifficulty:
+        parsed.replacementDifficulty === "easy" ||
+        parsed.replacementDifficulty === "medium" ||
+        parsed.replacementDifficulty === "hard"
+          ? parsed.replacementDifficulty
+          : "medium",
+      advancedFeatures: parsed.advancedFeatures
+        .map((item: unknown) => String(item).trim())
+        .filter(Boolean)
+        .slice(0, 6),
+    };
   } catch (e) {
     throw new Error(
-      `Failed to parse Claude audit response as JSON: ${e instanceof Error ? e.message : String(e)}`
+      `Failed to parse ${response.providerLabel} audit response as JSON: ${e instanceof Error ? e.message : String(e)}`
     );
   }
 }

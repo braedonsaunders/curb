@@ -1,7 +1,27 @@
+import { initializeSettingsStore } from "./config";
 import { getDb } from "./db";
+
+function ensureColumn(
+  table: string,
+  column: string,
+  definition: string
+): void {
+  const db = getDb();
+  const columns = db
+    .prepare(`PRAGMA table_info(${table})`)
+    .all() as Array<{ name: string }>;
+
+  if (columns.some((entry) => entry.name === column)) {
+    return;
+  }
+
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+}
 
 export function initializeDatabase(): void {
   const db = getDb();
+
+  initializeSettingsStore();
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS businesses (
@@ -25,6 +45,12 @@ export function initializeDatabase(): void {
       hours_json TEXT,
       photos_json TEXT,
       status TEXT DEFAULT 'discovered',
+      enrichment_status TEXT DEFAULT 'pending',
+      details_enriched_at TEXT,
+      enrichment_started_at TEXT,
+      enrichment_completed_at TEXT,
+      enrichment_error TEXT,
+      enrichment_attempts INTEGER DEFAULT 0,
       notes TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
@@ -35,15 +61,17 @@ export function initializeDatabase(): void {
       business_id INTEGER NOT NULL REFERENCES businesses(id),
       has_website BOOLEAN NOT NULL,
       url_reachable BOOLEAN,
-      is_ssl BOOLEAN,
-      is_mobile_friendly BOOLEAN,
-      performance_score INTEGER,
-      accessibility_score INTEGER,
-      seo_score INTEGER,
-      load_time_ms INTEGER,
       overall_grade TEXT,
+      owner_sentiment TEXT,
       notes TEXT,
-      raw_json TEXT,
+      screenshot_path TEXT,
+      strengths_json TEXT,
+      issues_json TEXT,
+      website_complexity TEXT,
+      replacement_difficulty TEXT,
+      advanced_features_json TEXT,
+      review_json TEXT,
+      audit_version INTEGER,
       created_at TEXT DEFAULT (datetime('now'))
     );
 
@@ -83,10 +111,88 @@ export function initializeDatabase(): void {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS activity_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      business_id INTEGER REFERENCES businesses(id),
+      business_name TEXT,
+      message TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_businesses_status ON businesses(status);
     CREATE INDEX IF NOT EXISTS idx_businesses_category ON businesses(category);
     CREATE INDEX IF NOT EXISTS idx_audits_business_id ON audits(business_id);
     CREATE INDEX IF NOT EXISTS idx_generated_sites_business_id ON generated_sites(business_id);
     CREATE INDEX IF NOT EXISTS idx_emails_business_id ON emails(business_id);
+    CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at ON activity_logs(created_at DESC);
   `);
+
+  ensureColumn("audits", "owner_sentiment", "owner_sentiment TEXT");
+  ensureColumn("audits", "screenshot_path", "screenshot_path TEXT");
+  ensureColumn("audits", "strengths_json", "strengths_json TEXT");
+  ensureColumn("audits", "issues_json", "issues_json TEXT");
+  ensureColumn("audits", "website_complexity", "website_complexity TEXT");
+  ensureColumn(
+    "audits",
+    "replacement_difficulty",
+    "replacement_difficulty TEXT"
+  );
+  ensureColumn(
+    "audits",
+    "advanced_features_json",
+    "advanced_features_json TEXT"
+  );
+  ensureColumn("audits", "review_json", "review_json TEXT");
+  ensureColumn("audits", "audit_version", "audit_version INTEGER");
+  ensureColumn(
+    "businesses",
+    "enrichment_status",
+    "enrichment_status TEXT DEFAULT 'pending'"
+  );
+  ensureColumn(
+    "businesses",
+    "details_enriched_at",
+    "details_enriched_at TEXT"
+  );
+  ensureColumn(
+    "businesses",
+    "enrichment_started_at",
+    "enrichment_started_at TEXT"
+  );
+  ensureColumn(
+    "businesses",
+    "enrichment_completed_at",
+    "enrichment_completed_at TEXT"
+  );
+  ensureColumn(
+    "businesses",
+    "enrichment_error",
+    "enrichment_error TEXT"
+  );
+  ensureColumn(
+    "businesses",
+    "enrichment_attempts",
+    "enrichment_attempts INTEGER DEFAULT 0"
+  );
+
+  db.prepare(
+    "UPDATE businesses SET enrichment_status = 'pending' WHERE enrichment_status IS NULL"
+  ).run();
+  db.prepare(
+    "UPDATE businesses SET enrichment_attempts = 0 WHERE enrichment_attempts IS NULL"
+  ).run();
+  db.prepare(`
+    UPDATE businesses
+    SET details_enriched_at = COALESCE(updated_at, created_at)
+    WHERE details_enriched_at IS NULL
+      AND (
+        website_url IS NOT NULL
+        OR google_maps_url IS NOT NULL
+        OR phone IS NOT NULL
+        OR city IS NOT NULL
+        OR hours_json IS NOT NULL
+      )
+  `).run();
 }

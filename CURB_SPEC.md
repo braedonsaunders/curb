@@ -114,7 +114,7 @@ curb/
 | Database      | SQLite via better-sqlite3         |
 | AI            | Claude API (Anthropic SDK)        |
 | Discovery     | Google Places API (New)           |
-| Audit         | Google PageSpeed Insights API     |
+| Audit         | Playwright screenshots + Claude visual review |
 | Maps          | Leaflet or Google Maps embed      |
 | Export        | Archiver (zip generation)         |
 
@@ -177,15 +177,14 @@ CREATE TABLE audits (
   business_id     INTEGER NOT NULL REFERENCES businesses(id),
   has_website     BOOLEAN NOT NULL,
   url_reachable   BOOLEAN,                    -- Does the URL actually load?
-  is_ssl          BOOLEAN,
-  is_mobile_friendly BOOLEAN,
-  performance_score INTEGER,                  -- Lighthouse 0-100
-  accessibility_score INTEGER,               -- Lighthouse 0-100
-  seo_score       INTEGER,                   -- Lighthouse 0-100
-  load_time_ms    INTEGER,
-  overall_grade   TEXT,                       -- A/B/C/D/F computed grade
+  overall_grade   TEXT,                       -- A/B/C/D/F from visual review
+  owner_sentiment TEXT,                       -- proud / mixed / embarrassed
   notes           TEXT,                       -- Claude's qualitative assessment
-  raw_json        TEXT,                       -- Full PageSpeed API response
+  screenshot_path TEXT,                       -- Stored screenshot path
+  strengths_json  TEXT,                       -- JSON array of visible strengths
+  issues_json     TEXT,                       -- JSON array of visible issues
+  review_json     TEXT,                       -- Full Claude review payload
+  audit_version   INTEGER,                    -- Current audit schema version
   created_at      TEXT DEFAULT (datetime('now'))
 );
 ```
@@ -279,13 +278,13 @@ These map to Google Places `type` values.
 1. If `website_url` is NULL → score as `has_website: false`, overall grade `F`, auto-flag.
 2. If `website_url` exists:
    a. Attempt to fetch the URL. If unreachable (timeout, DNS fail, 4xx/5xx) → flag and note.
-   b. If reachable, call Google PageSpeed Insights API with the URL.
-   c. Extract performance, accessibility, and SEO scores.
-   d. Check for SSL, mobile-friendliness, load time.
+   b. If reachable, open the site in Playwright and save a screenshot.
+   c. Send the screenshot to Claude for a visual review.
+   d. Record the visible strengths, visible issues, owner sentiment, and overall grade.
    e. Compute overall grade:
-      - **A (90-100):** Skip — they're fine.
-      - **B (70-89):** Borderline — low priority.
-      - **C (50-69):** Opportunity — their site is mediocre.
+      - **A:** Skip — owner likely already feels good about it.
+      - **B:** Borderline — decent but not urgent.
+      - **C:** Opportunity — visually average or dated.
       - **D (30-49):** Strong opportunity — site is bad.
       - **F (0-29 or no site):** Prime target.
    f. Optionally: send the URL to Claude with the `audit-scoring.md` prompt for a qualitative roast ("This site uses Flash, has no mobile layout, and the contact form is broken").
@@ -517,7 +516,7 @@ Overview dashboard showing:
 
 ### Settings (`/settings`)
 
-- API keys: Google Places, Google PageSpeed, Anthropic (stored in `.env.local`, displayed masked)
+- API keys: Google Places and Anthropic (stored in `.env.local`, displayed masked)
 - Defaults: home location, default radius, default categories
 - Outreach: your name, business name, physical address (for CASL footer)
 - Pricing: configurable pricing text to inject into emails (e.g., "$500 one-time" or "$50/mo hosting")
@@ -555,7 +554,6 @@ All routes are Next.js Route Handlers. Used by the dashboard UI.
 ```bash
 # Google
 GOOGLE_PLACES_API_KEY=
-GOOGLE_PAGESPEED_API_KEY=          # Can be same key
 
 # Anthropic
 ANTHROPIC_API_KEY=
@@ -634,8 +632,8 @@ Not in the MVP, but worth noting for later:
 - [ ] Build the discover page UI
 
 ### Phase 2: Audit Pipeline
-- [ ] Build the PageSpeed Insights API wrapper
-- [ ] Build the audit scoring logic and grading formula
+- [ ] Build the Playwright screenshot capture flow
+- [ ] Build the Claude visual-review grading flow
 - [ ] Build the business list/detail pages
 - [ ] Connect audit results to business detail UI
 

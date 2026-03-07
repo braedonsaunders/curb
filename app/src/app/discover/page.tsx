@@ -1,13 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useCallback, useEffect, useState } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import {
+  formatStoredDateTime,
+  formatStoredTime,
+} from "@/lib/datetime";
 import { toast } from "sonner";
+import { DISCOVERY_CATEGORIES } from "@/lib/discovery-categories";
 import {
   Search,
   MapPin,
@@ -17,28 +22,24 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  Pause,
+  Play,
 } from "lucide-react";
 
-const CATEGORIES = [
-  { id: "restaurants", label: "Restaurants & cafes" },
-  { id: "trades", label: "Trades & contractors" },
-  { id: "salons", label: "Salons & barbers" },
-  { id: "auto", label: "Auto repair & detailing" },
-  { id: "retail", label: "Retail & boutiques" },
-  { id: "professional", label: "Professional services" },
-  { id: "health", label: "Health & wellness" },
-  { id: "fitness", label: "Fitness & gyms" },
-  { id: "pets", label: "Pet services" },
-  { id: "cleaning", label: "Cleaning services" },
-];
-
 interface DiscoveredBusiness {
-  id: string;
+  id: number;
+  slug: string;
   name: string;
-  category: string;
-  address: string;
-  hasWebsite: boolean;
-  rating: number;
+  category: string | null;
+  address: string | null;
+  website_url: string | null;
+  rating: number | null;
+  status: string;
+  enrichment_status: string | null;
+  details_enriched_at: string | null;
+  overall_grade?: string | null;
+  website_complexity?: string | null;
+  replacement_difficulty?: string | null;
   isNew: boolean;
 }
 
@@ -51,15 +52,115 @@ interface DiscoveryRun {
   timestamp: string;
 }
 
+interface WorkerActivity {
+  enabled: boolean;
+  current: {
+    id: number;
+    name: string;
+    status: string;
+    startedAt: string | null;
+    stage: string | null;
+    message: string | null;
+  } | null;
+  queue: {
+    pending: number;
+    inProgress: number;
+    failed: number;
+    completed: number;
+  };
+  recent: Array<{
+    id: number;
+    stage: string;
+    businessId: number | null;
+    businessName: string | null;
+    message: string;
+    createdAt: string;
+  }>;
+}
+
 export default function DiscoverPage() {
   const [location, setLocation] = useState("Hamilton, ON");
   const [radius, setRadius] = useState(15);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<DiscoveredBusiness[] | null>(null);
+  const [resultIds, setResultIds] = useState<number[]>([]);
   const [newCount, setNewCount] = useState(0);
   const [pastRuns, setPastRuns] = useState<DiscoveryRun[]>([]);
   const [showPastRuns, setShowPastRuns] = useState(false);
+  const [workerActivity, setWorkerActivity] = useState<WorkerActivity | null>(null);
+  const [workerControlLoading, setWorkerControlLoading] = useState<
+    "pause" | "resume" | null
+  >(null);
+
+  useEffect(() => {
+    async function loadDefaults() {
+      try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) throw new Error("Failed to load settings");
+
+        const data = await res.json();
+        setLocation(data.defaults?.location ?? "Hamilton, ON");
+        setRadius(data.defaults?.radius ?? 15);
+        setSelectedCategories(data.defaults?.categories ?? []);
+      } catch {
+        // Keep local defaults if settings are unavailable.
+      }
+    }
+
+    loadDefaults();
+  }, []);
+
+  const loadWorkerActivity = useCallback(async () => {
+    try {
+      const res = await fetch("/api/activity?kind=enrichment&limit=12");
+      if (!res.ok) {
+        throw new Error("Failed to load worker activity");
+      }
+
+      const data = (await res.json()) as WorkerActivity;
+      setWorkerActivity(data);
+    } catch {
+      // Worker activity is informational only.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadWorkerActivity();
+    const intervalId = window.setInterval(() => {
+      void loadWorkerActivity();
+    }, 4000);
+
+    return () => window.clearInterval(intervalId);
+  }, [loadWorkerActivity]);
+
+  async function toggleWorker() {
+    const action = workerActivity?.enabled === false ? "resume" : "pause";
+    setWorkerControlLoading(action);
+    try {
+      const res = await fetch("/api/enrichment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = (await res.json()) as { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to update enrichment");
+      }
+      await loadWorkerActivity();
+      toast.success(
+        action === "pause"
+          ? "Automatic enrichment paused"
+          : "Automatic enrichment resumed"
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update enrichment"
+      );
+    } finally {
+      setWorkerControlLoading(null);
+    }
+  }
 
   function toggleCategory(id: string) {
     setSelectedCategories((prev) =>
@@ -68,12 +169,84 @@ export default function DiscoverPage() {
   }
 
   function selectAll() {
-    setSelectedCategories(CATEGORIES.map((c) => c.id));
+    setSelectedCategories(DISCOVERY_CATEGORIES.map((c) => c.id));
   }
 
   function clearAll() {
     setSelectedCategories([]);
   }
+
+  const refreshResults = useCallback(async (ids: number[]) => {
+    if (ids.length === 0) {
+      return;
+    }
+
+    const params = new URLSearchParams();
+    params.set("ids", ids.join(","));
+
+    const res = await fetch(`/api/businesses?${params.toString()}`);
+    if (!res.ok) {
+      throw new Error("Failed to refresh discovery results");
+    }
+
+    const data = await res.json();
+    const rows = Array.isArray(data.businesses) ? data.businesses : [];
+    const rowMap = new Map(
+      rows.map((row: Record<string, unknown>) => [
+        Number(row.id),
+        {
+          id: Number(row.id),
+          slug: String(row.slug ?? ""),
+          name: String(row.name ?? ""),
+          category: typeof row.category === "string" ? row.category : null,
+          address: typeof row.address === "string" ? row.address : null,
+          website_url:
+            typeof row.website_url === "string" ? row.website_url : null,
+          rating:
+            typeof row.rating === "number" ? row.rating : row.rating == null ? null : Number(row.rating),
+          status: String(row.status ?? "discovered"),
+          enrichment_status:
+            typeof row.enrichment_status === "string"
+              ? row.enrichment_status
+              : null,
+          details_enriched_at:
+            typeof row.details_enriched_at === "string"
+              ? row.details_enriched_at
+              : null,
+          overall_grade:
+            typeof row.overall_grade === "string" ? row.overall_grade : null,
+          website_complexity:
+            typeof row.website_complexity === "string"
+              ? row.website_complexity
+              : null,
+          replacement_difficulty:
+            typeof row.replacement_difficulty === "string"
+              ? row.replacement_difficulty
+              : null,
+        },
+      ])
+    );
+
+    setResults((current) => {
+      const previous = new Map(
+        (current ?? []).map((biz) => [biz.id, biz])
+      );
+
+      return ids
+        .map((id) => {
+          const next = rowMap.get(id);
+          if (!next) {
+            return previous.get(id) ?? null;
+          }
+
+          return {
+            ...next,
+            isNew: previous.get(id)?.isNew ?? false,
+          };
+        })
+        .filter((biz): biz is DiscoveredBusiness => biz !== null);
+    });
+  }, []);
 
   async function handleSearch() {
     if (!location.trim()) {
@@ -99,27 +272,79 @@ export default function DiscoverPage() {
         }),
       });
 
-      if (!res.ok) throw new Error("Discovery failed");
-
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? "Discovery failed");
+      }
+
       setResults(data.businesses ?? []);
-      setNewCount(data.newCount ?? 0);
+      setResultIds(
+        Array.isArray(data.businesses)
+          ? data.businesses
+              .map((biz: Record<string, unknown>) => Number(biz.id))
+              .filter((id: number) => Number.isInteger(id) && id > 0)
+          : []
+      );
+      setNewCount(data.newAdded ?? 0);
 
       if (data.run) {
         setPastRuns((prev) => [data.run, ...prev]);
       }
 
+      if (Array.isArray(data.businesses) && data.businesses.length > 0) {
+        void refreshResults(
+          data.businesses
+            .map((biz: Record<string, unknown>) => Number(biz.id))
+            .filter((id: number) => Number.isInteger(id) && id > 0)
+        ).catch(() => undefined);
+      }
+
       toast.success(
-        `Found ${data.businesses?.length ?? 0} businesses (${data.newCount ?? 0} new)`
+        `Found ${data.businesses?.length ?? 0} businesses (${data.newAdded ?? 0} new)`
       );
-    } catch {
-      toast.error("Discovery failed. Check your API keys in Settings.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Discovery failed");
     } finally {
       setSearching(false);
     }
   }
 
-  function renderStars(rating: number) {
+  useEffect(() => {
+    if (!results || resultIds.length === 0) {
+      return;
+    }
+
+    const hasPendingEnrichment = results.some((biz) => {
+      if (biz.enrichment_status === "failed") {
+        return false;
+      }
+
+      if (
+        biz.enrichment_status === "pending" ||
+        biz.enrichment_status === "in_progress"
+      ) {
+        return true;
+      }
+
+      return biz.details_enriched_at == null || biz.overall_grade == null;
+    });
+
+    if (!hasPendingEnrichment) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshResults(resultIds).catch(() => undefined);
+    }, 5000);
+
+    return () => window.clearInterval(intervalId);
+  }, [refreshResults, resultIds, results]);
+
+  function renderStars(rating: number | null) {
+    if (rating == null || rating <= 0) {
+      return <span className="text-xs text-muted-foreground">Rating pending</span>;
+    }
+
     const stars = [];
     for (let i = 1; i <= 5; i++) {
       stars.push(
@@ -136,6 +361,67 @@ export default function DiscoverPage() {
       );
     }
     return <div className="flex gap-0.5">{stars}</div>;
+  }
+
+  function websiteBadge(biz: DiscoveredBusiness) {
+    if (biz.website_url) {
+      return {
+        label: "Website found",
+        className: "gap-1 border-green-200 text-green-700",
+      };
+    }
+
+    if (biz.details_enriched_at) {
+      return {
+        label: "No website",
+        className: "gap-1 text-orange-600",
+      };
+    }
+
+    return {
+      label: "Checking website",
+      className: "gap-1 border-slate-200 text-slate-600",
+    };
+  }
+
+  function enrichmentBadge(biz: DiscoveredBusiness) {
+    if (biz.enrichment_status === "in_progress") {
+      return {
+        label: "Enriching",
+        className: "bg-blue-50 text-blue-700 border-blue-200",
+      };
+    }
+
+    if (biz.enrichment_status === "failed") {
+      return {
+        label: "Needs retry",
+        className: "bg-red-50 text-red-700 border-red-200",
+      };
+    }
+
+    if (
+      biz.enrichment_status === "completed" &&
+      biz.details_enriched_at &&
+      biz.overall_grade
+    ) {
+      return {
+        label: "Ready",
+        className: "bg-green-50 text-green-700 border-green-200",
+      };
+    }
+
+    return {
+      label: "Queued",
+      className: "bg-slate-50 text-slate-700 border-slate-200",
+    };
+  }
+
+  function complexityLabel(value: string | null | undefined) {
+    if (value === "advanced") return "Advanced site";
+    if (value === "moderate") return "Moderate site";
+    if (value === "simple") return "Simple site";
+    if (value === "none") return "No website";
+    return null;
   }
 
   return (
@@ -209,7 +495,7 @@ export default function DiscoverPage() {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  {CATEGORIES.map((cat) => {
+                  {DISCOVERY_CATEGORIES.map((cat) => {
                     const isSelected = selectedCategories.includes(cat.id);
                     return (
                       <button
@@ -276,6 +562,95 @@ export default function DiscoverPage() {
 
         {/* Past Runs Sidebar */}
         <div>
+          <Card className="mb-6">
+            <CardHeader>
+              <div className="flex items-center justify-between gap-3">
+                <CardTitle className="flex items-center gap-2">
+                  <Loader2 className={`size-4 ${workerActivity?.current ? "animate-spin" : ""}`} />
+                  Worker Activity
+                </CardTitle>
+                <Button
+                  variant={workerActivity?.enabled === false ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => void toggleWorker()}
+                  disabled={workerControlLoading !== null}
+                >
+                  {workerControlLoading ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : workerActivity?.enabled === false ? (
+                    <Play className="size-4" />
+                  ) : (
+                    <Pause className="size-4" />
+                  )}
+                  {workerActivity?.enabled === false ? "Resume" : "Stop"}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-muted-foreground">Pending</p>
+                  <p className="text-lg font-semibold">{workerActivity?.queue.pending ?? 0}</p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-muted-foreground">Running</p>
+                  <p className="text-lg font-semibold">{workerActivity?.queue.inProgress ?? 0}</p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-muted-foreground">Failed</p>
+                  <p className="text-lg font-semibold">{workerActivity?.queue.failed ?? 0}</p>
+                </div>
+                <div className="rounded-lg border border-border p-3">
+                  <p className="text-muted-foreground">Done</p>
+                  <p className="text-lg font-semibold">{workerActivity?.queue.completed ?? 0}</p>
+                </div>
+              </div>
+
+              {workerActivity?.enabled === false && !workerActivity?.current ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                  Automatic enrichment is paused.
+                </div>
+              ) : workerActivity?.current ? (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm">
+                  <p className="font-medium text-blue-900">
+                    Working on {workerActivity.current.name}
+                  </p>
+                  <p className="mt-1 text-blue-800">
+                    {workerActivity.current.message ?? "Enrichment in progress"}
+                  </p>
+                  <p className="mt-2 text-xs text-blue-700">
+                    {workerActivity.current.startedAt
+                      ? `Started ${formatStoredTime(workerActivity.current.startedAt)}`
+                      : "Running now"}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  No business is actively being evaluated right now.
+                </p>
+              )}
+
+              {workerActivity?.recent && workerActivity.recent.length > 0 && (
+                <div className="space-y-2">
+                  {workerActivity.recent.slice(0, 8).map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="rounded-lg border border-border p-3 text-sm"
+                    >
+                      <p className="font-medium">
+                        {entry.businessName ?? "Worker"}
+                      </p>
+                      <p className="text-muted-foreground">{entry.message}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {formatStoredTime(entry.createdAt)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <button
@@ -308,7 +683,7 @@ export default function DiscoverPage() {
                           {run.totalFound} found, {run.newFound} new
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {new Date(run.timestamp).toLocaleString()}
+                          {formatStoredDateTime(run.timestamp)}
                         </p>
                       </div>
                     ))}
@@ -349,7 +724,7 @@ export default function DiscoverPage() {
                             {biz.name}
                           </h3>
                           <Badge variant="secondary" className="mt-1">
-                            {biz.category}
+                            {biz.category ?? "Unknown category"}
                           </Badge>
                         </div>
                         {biz.isNew && (
@@ -359,18 +734,31 @@ export default function DiscoverPage() {
                         )}
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        {biz.address}
+                        {biz.address ?? "Address syncing from Google Places..."}
                       </p>
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center justify-between gap-3">
                         {renderStars(biz.rating)}
-                        {biz.hasWebsite ? (
-                          <Badge variant="outline" className="gap-1">
+                        {biz.website_url ? (
+                          <Badge variant="outline" className={websiteBadge(biz).className}>
                             <Globe className="size-3" />
-                            Has website
+                            {websiteBadge(biz).label}
                           </Badge>
                         ) : (
-                          <Badge variant="secondary" className="gap-1 text-orange-600">
-                            No website
+                          <Badge variant="secondary" className={websiteBadge(biz).className}>
+                            {websiteBadge(biz).label}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant="outline" className={enrichmentBadge(biz).className}>
+                          {enrichmentBadge(biz).label}
+                        </Badge>
+                        {biz.overall_grade && (
+                          <Badge variant="outline">Grade {biz.overall_grade}</Badge>
+                        )}
+                        {complexityLabel(biz.website_complexity) && (
+                          <Badge variant="outline">
+                            {complexityLabel(biz.website_complexity)}
                           </Badge>
                         )}
                       </div>

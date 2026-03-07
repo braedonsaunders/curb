@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -23,14 +23,11 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
   TableCell,
-  TableHead,
-  TableHeader,
   TableRow,
 } from "@/components/ui/table";
 import { toast } from "sonner";
@@ -42,8 +39,6 @@ import {
   Globe,
   ExternalLink,
   Loader2,
-  ShieldCheck,
-  Smartphone,
   RefreshCw,
   Download,
   Mail,
@@ -52,50 +47,49 @@ import {
   ChevronDown,
   ChevronUp,
   ScanSearch,
+  Camera,
+  CircleAlert,
+  Sparkles,
 } from "lucide-react";
+import {
+  BUSINESS_STATUSES,
+  getBusinessStatusLabel,
+  NOT_APPLICABLE_STATUS,
+} from "@/lib/business-status";
+import {
+  formatStoredDate,
+  formatStoredDateTime,
+  formatStoredTime,
+} from "@/lib/datetime";
 
-const STATUS_OPTIONS = [
-  "discovered",
-  "audited",
-  "flagged",
-  "generated",
-  "reviewed",
-  "emailed",
-  "sold",
-  "skipped",
-  "archived",
-];
-
-const STATUS_COLORS: Record<string, string> = {
-  discovered: "bg-gray-100 text-gray-700",
-  audited: "bg-blue-50 text-blue-700",
-  flagged: "bg-orange-50 text-orange-700",
-  generated: "bg-green-50 text-green-700",
-  reviewed: "bg-indigo-50 text-indigo-700",
-  emailed: "bg-purple-50 text-purple-700",
-  sold: "bg-emerald-50 text-emerald-700",
-  skipped: "bg-slate-100 text-slate-600",
-  archived: "bg-red-50 text-red-600",
-};
+const STATUS_OPTIONS = BUSINESS_STATUSES;
 
 interface AuditData {
   id: number;
-  performance: number;
-  accessibility: number;
-  seo: number;
-  grade: string;
-  mobile: boolean | number;
-  ssl: boolean | number;
+  grade: string | null;
   notes: string;
-  performance_score: number;
-  accessibility_score: number;
-  seo_score: number;
-  overall_grade: string;
-  is_mobile_friendly: boolean | number;
-  is_ssl: boolean | number;
+  summary: string;
+  overall_grade: string | null;
   has_website: boolean | number;
   hasWebsite: boolean | number;
+  url_reachable: boolean | number | null;
+  urlReachable: boolean | number | null;
+  owner_sentiment: "proud" | "mixed" | "embarrassed" | null;
+  ownerSentiment: "proud" | "mixed" | "embarrassed" | null;
+  screenshot_path: string | null;
+  screenshotUrl: string | null;
+  strengths_json: string | null;
+  issues_json: string | null;
+  website_complexity: string | null;
+  websiteComplexity: string | null;
+  replacement_difficulty: string | null;
+  replacementDifficulty: string | null;
+  advanced_features_json: string | null;
+  advancedFeatures: string[];
+  strengths: string[];
+  issues: string[];
   created_at: string;
+  createdAt: string;
 }
 
 interface SiteData {
@@ -138,6 +132,65 @@ interface BusinessDetail {
   emails: EmailDraft[];
 }
 
+interface GenerationActivity {
+  id: number;
+  kind: string;
+  stage: string;
+  message: string;
+  createdAt: string;
+}
+
+const GENERATION_STAGE_ORDER = [
+  "started",
+  "assets",
+  "crawl",
+  "crawl_complete",
+  "screenshots",
+  "model",
+  "write",
+  "completed",
+] as const;
+
+const GENERATION_STAGE_LABELS: Record<string, string> = {
+  started: "Starting",
+  assets: "Assets",
+  crawl: "Source Crawl",
+  crawl_complete: "Content Ready",
+  screenshots: "Screenshots",
+  model: "AI Generation",
+  write: "Writing Files",
+  completed: "Done",
+  failed: "Failed",
+};
+
+const TERMINAL_GENERATION_STAGES = new Set(["completed", "failed"]);
+type SiteDialogMode = "generate" | "modify" | "regenerate";
+
+function isTerminalGenerationStage(stage: string): boolean {
+  return TERMINAL_GENERATION_STAGES.has(stage);
+}
+
+function extractLatestGenerationRun(
+  recentActivity: GenerationActivity[]
+): GenerationActivity[] {
+  if (recentActivity.length === 0) {
+    return [];
+  }
+
+  const latestRunDescending: GenerationActivity[] = [];
+  for (const item of recentActivity) {
+    if (
+      latestRunDescending.length > 0 &&
+      isTerminalGenerationStage(item.stage)
+    ) {
+      break;
+    }
+    latestRunDescending.push(item);
+  }
+
+  return latestRunDescending.slice().reverse();
+}
+
 export default function BusinessDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -147,22 +200,31 @@ export default function BusinessDetailPage() {
   const [loading, setLoading] = useState(true);
   const [notes, setNotes] = useState("");
   const [regeneratePrompt, setRegeneratePrompt] = useState("");
-  const [regenerateOpen, setRegenerateOpen] = useState(false);
+  const [siteDialogMode, setSiteDialogMode] = useState<SiteDialogMode | null>(
+    null
+  );
   const [editingEmail, setEditingEmail] = useState<EmailDraft | null>(null);
   const [editSubject, setEditSubject] = useState("");
   const [editBody, setEditBody] = useState("");
   const [editEmailOpen, setEditEmailOpen] = useState(false);
   const [expandedEmails, setExpandedEmails] = useState<Set<number>>(new Set());
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [generationActivity, setGenerationActivity] = useState<
+    GenerationActivity[]
+  >([]);
+  const [generationActive, setGenerationActive] = useState(false);
+  const [generationBaselineId, setGenerationBaselineId] = useState<number | null>(
+    null
+  );
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const siteDialogOpen = siteDialogMode !== null;
 
-  useEffect(() => {
-    fetchBusiness();
-  }, [id]);
-
-  async function fetchBusiness() {
+  const fetchBusiness = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/businesses/${id}`);
+      const res = await fetch(`/api/businesses/${id}`, {
+        cache: "no-store",
+      });
       if (!res.ok) throw new Error("Not found");
       const data: BusinessDetail = await res.json();
       setBiz(data);
@@ -172,7 +234,133 @@ export default function BusinessDetailPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [id]);
+
+  useEffect(() => {
+    void fetchBusiness();
+  }, [fetchBusiness]);
+
+  const fetchGenerationActivity = useCallback(
+    async ({
+      baselineId = generationBaselineId,
+      latestRunOnly = false,
+    }: {
+      baselineId?: number | null;
+      latestRunOnly?: boolean;
+    } = {}) => {
+      const res = await fetch(
+        `/api/activity?kind=generation&businessId=${id}&limit=25`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) {
+        throw new Error("Failed to load generation activity");
+      }
+
+      const data = (await res.json()) as {
+        recent?: GenerationActivity[];
+      };
+      const recent = Array.isArray(data.recent) ? data.recent : [];
+      const chronological =
+        baselineId == null
+          ? latestRunOnly
+            ? extractLatestGenerationRun(recent)
+            : recent.slice().reverse()
+          : recent.filter((item) => item.id > baselineId).slice().reverse();
+      const latestItem =
+        chronological.length > 0
+          ? chronological[chronological.length - 1]
+          : null;
+
+      setGenerationActivity(chronological);
+      setGenerationActive(
+        latestItem ? !isTerminalGenerationStage(latestItem.stage) : baselineId != null
+      );
+      return recent;
+    },
+    [generationBaselineId, id]
+  );
+
+  useEffect(() => {
+    const shouldPoll =
+      siteDialogOpen && (actionLoading === "regenerate" || generationActive);
+    if (!shouldPoll) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        await fetchGenerationActivity({
+          baselineId:
+            actionLoading === "regenerate" ? generationBaselineId : null,
+          latestRunOnly: actionLoading !== "regenerate",
+        });
+        if (!cancelled) {
+          setGenerationError(null);
+        }
+      } catch {
+        if (!cancelled) {
+          setGenerationError("Failed to load live generation progress");
+        }
+      }
+    };
+
+    void poll();
+    const intervalId = window.setInterval(() => {
+      void poll();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    actionLoading,
+    fetchGenerationActivity,
+    generationActive,
+    generationBaselineId,
+    siteDialogOpen,
+  ]);
+
+  useEffect(() => {
+    if (!siteDialogOpen || actionLoading === "regenerate") {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadCurrentGeneration = async () => {
+      try {
+        const recent = await fetchGenerationActivity({ latestRunOnly: true });
+        if (cancelled) {
+          return;
+        }
+
+        const latestRun = extractLatestGenerationRun(recent);
+        const latestItem =
+          latestRun.length > 0 ? latestRun[latestRun.length - 1] : null;
+        const isActive =
+          latestItem != null && !isTerminalGenerationStage(latestItem.stage);
+
+        if (!isActive) {
+          setGenerationActivity([]);
+          setGenerationActive(false);
+        }
+        setGenerationError(null);
+      } catch {
+        if (!cancelled) {
+          setGenerationError("Failed to load live generation progress");
+        }
+      }
+    };
+
+    void loadCurrentGeneration();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [actionLoading, fetchGenerationActivity, siteDialogOpen]);
 
   async function updateStatus(status: string) {
     try {
@@ -183,7 +371,7 @@ export default function BusinessDetailPage() {
       });
       if (!res.ok) throw new Error("Failed");
       setBiz((prev) => prev ? { ...prev, status } : prev);
-      toast.success(`Status updated to ${status}`);
+      toast.success(`Status updated to ${getBusinessStatusLabel(status)}`);
     } catch {
       toast.error("Failed to update status");
     }
@@ -217,21 +405,109 @@ export default function BusinessDetailPage() {
     }
   }
 
-  async function regenerateSite() {
-    setActionLoading("regenerate");
+  async function rerunEnrichment() {
+    setActionLoading("enrichment");
     try {
+      const res = await fetch("/api/enrichment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "rerun",
+          businessIds: [Number(id)],
+        }),
+      });
+      const data = (await res.json()) as {
+        queued?: number;
+        skippedInProgress?: number;
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to rerun enrichment");
+      }
+
+      if ((data.skippedInProgress ?? 0) > 0) {
+        toast.error("This business is already being enriched");
+      } else {
+        toast.success("Business requeued for enrichment");
+      }
+      void fetchBusiness();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to rerun enrichment"
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function regenerateSite() {
+    setGenerationError(null);
+    const requestedMode: SiteDialogMode =
+      siteDialogMode ?? (site ? "regenerate" : "generate");
+    try {
+      const recentActivity = await fetchGenerationActivity({
+        baselineId: null,
+        latestRunOnly: true,
+      }).catch(() => []);
+      const latestRun = extractLatestGenerationRun(recentActivity);
+      const latestRunItem =
+        latestRun.length > 0 ? latestRun[latestRun.length - 1] : null;
+
+      if (
+        latestRunItem &&
+        !isTerminalGenerationStage(latestRunItem.stage)
+      ) {
+        setGenerationActivity(latestRun);
+        setGenerationActive(true);
+        toast.error("Site generation is already in progress for this business");
+        return;
+      }
+
+      setActionLoading("regenerate");
+      setGenerationActive(true);
+
+      const baselineId =
+        recentActivity.length > 0 ? recentActivity[0]?.id ?? null : null;
+      setGenerationBaselineId(baselineId);
+      setGenerationActivity([]);
+
+      const promptForRequest =
+        requestedMode === "modify" || requestedMode === "generate"
+          ? regeneratePrompt || undefined
+          : undefined;
+
       const res = await fetch(`/api/businesses/${id}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: regeneratePrompt || undefined }),
+        body: JSON.stringify({
+          modificationPrompt: promptForRequest,
+        }),
       });
-      if (!res.ok) throw new Error("Failed");
-      toast.success("Site regenerated");
-      setRegenerateOpen(false);
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || "Generation failed");
+      }
+      await fetchGenerationActivity({ baselineId }).catch(() => undefined);
+      toast.success(
+        requestedMode === "modify"
+          ? "Site updated"
+          : requestedMode === "regenerate"
+            ? "Site regenerated"
+            : "Site generated"
+      );
+      setSiteDialogMode(null);
       setRegeneratePrompt("");
-      fetchBusiness();
-    } catch {
-      toast.error("Regeneration failed");
+      setGenerationActivity([]);
+      setGenerationActive(false);
+      setGenerationBaselineId(null);
+      setGenerationError(null);
+      await fetchBusiness();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Regeneration failed";
+      setGenerationError(message);
+      setGenerationActive(false);
+      toast.error(message);
     } finally {
       setActionLoading(null);
     }
@@ -240,6 +516,11 @@ export default function BusinessDetailPage() {
   // Derived data from arrays
   const audit = biz?.audits?.[0] ?? null;
   const site = biz?.generatedSites?.[0] ?? null;
+  const sitePreviewUrl = site
+    ? `/sites/${site.slug}?v=${encodeURIComponent(
+        `${site.version}-${site.generatedAt ?? site.created_at ?? ""}`
+      )}`
+    : null;
   const hours: Record<string, string> = (() => {
     try {
       return biz?.hours_json ? JSON.parse(biz.hours_json) : {};
@@ -247,13 +528,76 @@ export default function BusinessDetailPage() {
       return {};
     }
   })();
-  const photos: string[] = (() => {
+  const photos: Array<{ reference: string; url: string }> = (() => {
     try {
-      return biz?.photos_json ? JSON.parse(biz.photos_json) : [];
+      const parsed = biz?.photos_json ? JSON.parse(biz.photos_json) : [];
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+
+      return parsed
+        .map((reference) => String(reference).trim())
+        .filter(Boolean)
+        .map((reference) => ({
+          reference,
+          url:
+            reference.startsWith("http://") ||
+            reference.startsWith("https://")
+              ? reference
+              : `/api/place-photo?reference=${encodeURIComponent(reference)}&maxWidth=800`,
+        }));
     } catch {
       return [];
     }
   })();
+  const latestGenerationActivity =
+    generationActivity.length > 0
+      ? generationActivity[generationActivity.length - 1]
+      : null;
+  const generationRunning =
+    actionLoading === "regenerate" || generationActive;
+  const siteDialogShowsPrompt =
+    siteDialogMode === "modify" || siteDialogMode === "generate";
+  const siteDialogTitle =
+    siteDialogMode === "modify"
+      ? "Modify Site"
+      : siteDialogMode === "regenerate"
+        ? "Regenerate Site"
+        : "Generate Site";
+  const siteDialogPromptLabel =
+    siteDialogMode === "modify"
+      ? "Changes to make"
+      : "Generation notes";
+  const siteDialogPromptPlaceholder =
+    siteDialogMode === "modify"
+      ? "Describe what to change on the current site..."
+      : "Add any specific direction for the next draft...";
+  const siteDialogSubmitLabel =
+    generationActive && actionLoading !== "regenerate"
+      ? "Generation Running"
+      : siteDialogMode === "modify"
+        ? "Apply Changes"
+        : siteDialogMode === "regenerate"
+          ? "Regenerate Site"
+          : "Generate Site";
+  const generationStageIndex = latestGenerationActivity
+    ? GENERATION_STAGE_ORDER.indexOf(
+        latestGenerationActivity.stage as (typeof GENERATION_STAGE_ORDER)[number]
+      )
+    : -1;
+  const generationProgressPercent =
+    generationRunning
+      ? Math.max(
+          8,
+          generationStageIndex >= 0
+            ? Math.round(
+                ((generationStageIndex + 1) / GENERATION_STAGE_ORDER.length) * 100
+              )
+            : 8
+        )
+      : latestGenerationActivity?.stage === "completed"
+        ? 100
+        : 0;
 
   async function exportSite() {
     try {
@@ -326,12 +670,6 @@ export default function BusinessDetailPage() {
     );
   }
 
-  function scoreColor(score: number) {
-    if (score >= 90) return "text-green-600";
-    if (score >= 50) return "text-yellow-600";
-    return "text-red-600";
-  }
-
   function gradeColor(grade: string) {
     if (grade === "A") return "bg-green-100 text-green-700 border-green-300";
     if (grade === "B") return "bg-blue-100 text-blue-700 border-blue-300";
@@ -339,6 +677,151 @@ export default function BusinessDetailPage() {
     if (grade === "D") return "bg-orange-100 text-orange-700 border-orange-300";
     return "bg-red-100 text-red-700 border-red-300";
   }
+
+  function sentimentBadge(sentiment: AuditData["ownerSentiment"]) {
+    if (sentiment === "proud") {
+      return "bg-green-100 text-green-700";
+    }
+    if (sentiment === "mixed") {
+      return "bg-yellow-100 text-yellow-700";
+    }
+    if (sentiment === "embarrassed") {
+      return "bg-red-100 text-red-700";
+    }
+    return "bg-slate-100 text-slate-600";
+  }
+
+  function sentimentLabel(sentiment: AuditData["ownerSentiment"]) {
+    if (sentiment === "proud") return "Proud";
+    if (sentiment === "mixed") return "Mixed";
+    if (sentiment === "embarrassed") return "Embarrassed";
+    return "Unavailable";
+  }
+
+  function complexityBadge(complexity: AuditData["websiteComplexity"]) {
+    if (complexity === "advanced") {
+      return "bg-red-100 text-red-700";
+    }
+    if (complexity === "moderate") {
+      return "bg-orange-100 text-orange-700";
+    }
+    if (complexity === "simple") {
+      return "bg-green-100 text-green-700";
+    }
+    if (complexity === "none") {
+      return "bg-slate-100 text-slate-600";
+    }
+    return "bg-slate-100 text-slate-600";
+  }
+
+  function complexityLabel(complexity: AuditData["websiteComplexity"]) {
+    if (complexity === "advanced") return "Advanced";
+    if (complexity === "moderate") return "Moderate";
+    if (complexity === "simple") return "Simple";
+    if (complexity === "none") return "No website";
+    return "Unknown";
+  }
+
+  function difficultyBadge(difficulty: AuditData["replacementDifficulty"]) {
+    if (difficulty === "hard") {
+      return "bg-red-100 text-red-700";
+    }
+    if (difficulty === "medium") {
+      return "bg-orange-100 text-orange-700";
+    }
+    if (difficulty === "easy") {
+      return "bg-green-100 text-green-700";
+    }
+    return "bg-slate-100 text-slate-600";
+  }
+
+  function difficultyLabel(difficulty: AuditData["replacementDifficulty"]) {
+    if (difficulty === "hard") return "Hard to replace";
+    if (difficulty === "medium") return "Moderate effort";
+    if (difficulty === "easy") return "Easy to replace";
+    return "Unknown effort";
+  }
+
+  const generationProgressPanel =
+    generationRunning ||
+    generationActivity.length > 0 ||
+    generationError ? (
+      <div className="space-y-3 rounded-lg border bg-muted/30 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">
+              {latestGenerationActivity?.message ||
+                "Preparing website generation..."}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Building a production-ready site bundle from source content,
+              screenshots, and business data.
+            </p>
+          </div>
+          {generationRunning ? (
+            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+          ) : null}
+        </div>
+
+        <div className="h-2 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-blue-600 transition-all duration-500"
+            style={{ width: `${generationProgressPercent}%` }}
+          />
+        </div>
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          {GENERATION_STAGE_ORDER.map((stage, index) => {
+            const completed = generationActivity.some(
+              (item) => item.stage === stage
+            );
+            const active = latestGenerationActivity?.stage === stage;
+
+            return (
+              <div
+                key={stage}
+                className={`rounded-md border px-3 py-2 text-xs ${
+                  active
+                    ? "border-blue-300 bg-blue-50 text-blue-700"
+                    : completed
+                      ? "border-green-300 bg-green-50 text-green-700"
+                      : "border-border bg-background text-muted-foreground"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span>{GENERATION_STAGE_LABELS[stage] ?? stage}</span>
+                  <span>{index + 1}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {generationActivity.length > 0 ? (
+          <div className="max-h-40 space-y-2 overflow-y-auto rounded-md border bg-background p-3 text-xs">
+            {generationActivity.map((item) => (
+              <div key={item.id} className="space-y-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium">
+                    {GENERATION_STAGE_LABELS[item.stage] ?? item.stage}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {formatStoredTime(item.createdAt)}
+                  </span>
+                </div>
+                <p className="text-muted-foreground">{item.message}</p>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {generationError ? (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            {generationError}
+          </div>
+        ) : null}
+      </div>
+    ) : null;
 
   if (loading) {
     return (
@@ -412,14 +895,38 @@ export default function BusinessDetailPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          <Select value={biz.status} onValueChange={(val: string | null) => { if (val) updateStatus(val); }}>
-            <SelectTrigger className="w-36">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void rerunEnrichment()}
+            disabled={actionLoading === "enrichment"}
+          >
+            {actionLoading === "enrichment" ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <RefreshCw className="size-4" />
+            )}
+            Rerun Enrichment
+          </Button>
+          <Button
+            variant={biz.status === NOT_APPLICABLE_STATUS ? "secondary" : "outline"}
+            size="sm"
+            disabled={biz.status === NOT_APPLICABLE_STATUS}
+            onClick={() => void updateStatus(NOT_APPLICABLE_STATUS)}
+          >
+            <Check className="size-4" />
+            {biz.status === NOT_APPLICABLE_STATUS
+              ? "Not Applicable"
+              : "Mark Not Applicable"}
+          </Button>
+          <Select value={biz.status} onValueChange={(val: string | null) => { if (val) void updateStatus(val); }}>
+            <SelectTrigger className="w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {STATUS_OPTIONS.map((s) => (
                 <SelectItem key={s} value={s}>
-                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                  {getBusinessStatusLabel(s)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -552,15 +1059,16 @@ export default function BusinessDetailPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                    {photos.map((url, i) => (
+                    {photos.map((photo, i) => (
                       <div
-                        key={i}
+                        key={photo.reference || i}
                         className="aspect-square overflow-hidden rounded-lg bg-muted"
                       >
                         <img
-                          src={url}
+                          src={photo.url}
                           alt={`${biz.name} photo ${i + 1}`}
                           className="size-full object-cover"
+                          loading="lazy"
                         />
                       </div>
                     ))}
@@ -576,81 +1084,158 @@ export default function BusinessDetailPage() {
         <TabsContent value="audit">
           <div className="space-y-6">
             {audit ? (
-              <div className="grid grid-cols-1 gap-6 md:grid-cols-4">
-                {/* Overall Grade */}
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-6">
                     <p className="mb-2 text-sm text-muted-foreground">Overall Grade</p>
                     <div
                       className={`flex size-20 items-center justify-center rounded-2xl border-2 text-4xl font-bold ${gradeColor(
-                        audit.grade
+                        audit.grade ?? "F"
                       )}`}
                     >
-                      {audit.grade}
+                      {audit.grade ?? "--"}
                     </div>
-                  </CardContent>
-                </Card>
-
-                {/* Performance */}
-                <Card>
-                  <CardContent className="flex flex-col items-center justify-center py-6">
-                    <p className="mb-2 text-sm text-muted-foreground">Performance</p>
-                    <p className={`text-3xl font-bold ${scoreColor(audit.performance)}`}>
-                      {audit.performance}
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      {audit.createdAt
+                        ? formatStoredDateTime(audit.createdAt)
+                        : ""}
                     </p>
-                    <p className="text-xs text-muted-foreground">/100</p>
                   </CardContent>
                 </Card>
 
-                {/* Accessibility */}
                 <Card>
-                  <CardContent className="flex flex-col items-center justify-center py-6">
-                    <p className="mb-2 text-sm text-muted-foreground">Accessibility</p>
-                    <p className={`text-3xl font-bold ${scoreColor(audit.accessibility)}`}>
-                      {audit.accessibility}
-                    </p>
-                    <p className="text-xs text-muted-foreground">/100</p>
-                  </CardContent>
-                </Card>
-
-                {/* SEO */}
-                <Card>
-                  <CardContent className="flex flex-col items-center justify-center py-6">
-                    <p className="mb-2 text-sm text-muted-foreground">SEO</p>
-                    <p className={`text-3xl font-bold ${scoreColor(audit.seo)}`}>
-                      {audit.seo}
-                    </p>
-                    <p className="text-xs text-muted-foreground">/100</p>
-                  </CardContent>
-                </Card>
-
-                {/* Badges + Notes */}
-                <Card className="md:col-span-4">
-                  <CardContent className="flex flex-wrap items-center gap-4">
+                  <CardContent className="flex h-full flex-col justify-center gap-3 py-6">
                     <div className="flex items-center gap-2">
-                      <Smartphone className="size-4" />
-                      <span className="text-sm">Mobile Friendly</span>
-                      {audit.mobile ? (
-                        <Badge className="bg-green-100 text-green-700">Yes</Badge>
-                      ) : (
-                        <Badge variant="destructive">No</Badge>
-                      )}
+                      <Sparkles className="size-4 text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">Owner Sentiment</p>
                     </div>
-                    <Separator orientation="vertical" className="h-6" />
+                    <Badge className={sentimentBadge(audit.ownerSentiment)}>
+                      {sentimentLabel(audit.ownerSentiment)}
+                    </Badge>
+                    <p className="text-sm text-muted-foreground">
+                      Based on the screenshot, not technical audit scores.
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="flex h-full flex-col justify-center gap-3 py-6">
                     <div className="flex items-center gap-2">
-                      <ShieldCheck className="size-4" />
-                      <span className="text-sm">SSL</span>
-                      {audit.ssl ? (
-                        <Badge className="bg-green-100 text-green-700">Secure</Badge>
-                      ) : (
-                        <Badge variant="destructive">Not Secure</Badge>
-                      )}
+                      <CircleAlert className="size-4 text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">Website Status</p>
                     </div>
-                    {audit.notes && (
-                      <>
-                        <Separator orientation="vertical" className="h-6" />
-                        <p className="text-sm text-muted-foreground">{audit.notes}</p>
-                      </>
+                    <Badge
+                      className={
+                        audit.hasWebsite
+                          ? audit.urlReachable
+                            ? "bg-green-100 text-green-700"
+                            : "bg-red-100 text-red-700"
+                          : "bg-slate-100 text-slate-600"
+                      }
+                    >
+                      {audit.hasWebsite
+                        ? audit.urlReachable
+                          ? "Reachable"
+                          : "Not reachable"
+                        : "No website"}
+                    </Badge>
+                    <p className="text-sm text-muted-foreground">
+                      {audit.hasWebsite
+                        ? "Audit uses a live browser capture of the current site."
+                        : "No live website was available to capture."}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardContent className="flex h-full flex-col justify-center gap-3 py-6">
+                    <div className="flex items-center gap-2">
+                      <Globe className="size-4 text-muted-foreground" />
+                      <p className="text-sm text-muted-foreground">Replacement Complexity</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge className={complexityBadge(audit.websiteComplexity)}>
+                        {complexityLabel(audit.websiteComplexity)}
+                      </Badge>
+                      <Badge className={difficultyBadge(audit.replacementDifficulty)}>
+                        {difficultyLabel(audit.replacementDifficulty)}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {audit.advancedFeatures.length > 0
+                        ? audit.advancedFeatures.join(", ")
+                        : "No advanced site features were detected."}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card className="lg:col-span-4">
+                  <CardHeader>
+                    <CardTitle>Audit Summary</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm leading-6 text-muted-foreground">
+                      {audit.summary || audit.notes || "No summary available."}
+                    </p>
+                  </CardContent>
+                </Card>
+
+                <Card className="lg:col-span-3">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Camera className="size-4" />
+                      Website Screenshot
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {audit.screenshotUrl ? (
+                      <img
+                        src={audit.screenshotUrl}
+                        alt={`${biz.name} website screenshot`}
+                        className="w-full rounded-xl border object-cover"
+                      />
+                    ) : (
+                      <div className="flex min-h-64 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground">
+                        No screenshot stored for this audit.
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Strengths</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {audit.strengths.length > 0 ? (
+                      <ul className="space-y-2 text-sm text-muted-foreground">
+                        {audit.strengths.map((item, index) => (
+                          <li key={`${item}-${index}`}>{item}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        No strengths were captured for this audit.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card className="lg:col-span-4">
+                  <CardHeader>
+                    <CardTitle>Visible Problems</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {audit.issues.length > 0 ? (
+                      <ul className="space-y-2 text-sm text-muted-foreground">
+                        {audit.issues.map((item, index) => (
+                          <li key={`${item}-${index}`}>{item}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        No visible issues were captured for this audit.
+                      </p>
                     )}
                   </CardContent>
                 </Card>
@@ -661,7 +1246,7 @@ export default function BusinessDetailPage() {
                   <ScanSearch className="mb-3 size-12 text-muted-foreground" />
                   <p className="mb-1 font-medium">No Audit Data</p>
                   <p className="mb-4 text-sm text-muted-foreground">
-                    Run an audit to analyze this business&apos;s web presence.
+                    Run a visual audit to capture the current website and have the LLM review the screenshot.
                   </p>
                 </CardContent>
               </Card>
@@ -672,7 +1257,7 @@ export default function BusinessDetailPage() {
               ) : (
                 <ScanSearch className="size-4" />
               )}
-              Run Audit
+              Run Visual Audit
             </Button>
           </div>
         </TabsContent>
@@ -685,7 +1270,7 @@ export default function BusinessDetailPage() {
                 <div className="flex flex-wrap items-center gap-4">
                   <Badge variant="secondary">Version {site.version}</Badge>
                   <span className="text-sm text-muted-foreground">
-                    Generated {new Date(site.generatedAt).toLocaleString()}
+                    Generated {formatStoredDateTime(site.generatedAt)}
                   </span>
                   <div className="ml-auto flex gap-2">
                     <a
@@ -702,49 +1287,37 @@ export default function BusinessDetailPage() {
                       <Download className="size-4" />
                       Export
                     </Button>
-                    <Dialog open={regenerateOpen} onOpenChange={setRegenerateOpen}>
-                      <DialogTrigger
-                        render={
-                          <Button variant="outline" size="sm">
-                            <RefreshCw className="size-4" />
-                            Regenerate
-                          </Button>
-                        }
-                      />
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Regenerate Site</DialogTitle>
-                        </DialogHeader>
-                        <div className="space-y-3">
-                          <Label>Custom prompt (optional)</Label>
-                          <Textarea
-                            value={regeneratePrompt}
-                            onChange={(e) => setRegeneratePrompt(e.target.value)}
-                            placeholder="Add specific instructions for the regeneration..."
-                            rows={4}
-                          />
-                        </div>
-                        <DialogFooter>
-                          <Button
-                            onClick={regenerateSite}
-                            disabled={actionLoading === "regenerate"}
-                          >
-                            {actionLoading === "regenerate" ? (
-                              <Loader2 className="size-4 animate-spin" />
-                            ) : (
-                              <RefreshCw className="size-4" />
-                            )}
-                            Regenerate
-                          </Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setRegeneratePrompt("");
+                        setSiteDialogMode("modify");
+                      }}
+                      disabled={generationRunning}
+                    >
+                      <RefreshCw className="size-4" />
+                      Modify
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setRegeneratePrompt("");
+                        setSiteDialogMode("regenerate");
+                      }}
+                      disabled={generationRunning}
+                    >
+                      <RefreshCw className="size-4" />
+                      Regenerate
+                    </Button>
                   </div>
                 </div>
 
                 <Card className="overflow-hidden p-0">
                   <iframe
-                    src={`/sites/${site.slug}`}
+                    key={sitePreviewUrl}
+                    src={sitePreviewUrl ?? `/sites/${site.slug}`}
                     className="h-[600px] w-full border-0"
                     title={`${biz.name} site preview`}
                   />
@@ -760,49 +1333,75 @@ export default function BusinessDetailPage() {
                   </p>
                   <Button
                     onClick={() => {
-                      setRegenerateOpen(true);
+                      setRegeneratePrompt("");
+                      setSiteDialogMode("generate");
                     }}
-                    disabled={actionLoading === "regenerate"}
+                    disabled={generationRunning}
                   >
-                    {actionLoading === "regenerate" ? (
+                    {generationRunning ? (
                       <Loader2 className="size-4 animate-spin" />
                     ) : (
                       <Globe className="size-4" />
                     )}
                     Generate Site
                   </Button>
-                  <Dialog open={regenerateOpen} onOpenChange={setRegenerateOpen}>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Generate Site</DialogTitle>
-                      </DialogHeader>
-                      <div className="space-y-3">
-                        <Label>Custom prompt (optional)</Label>
-                        <Textarea
-                          value={regeneratePrompt}
-                          onChange={(e) => setRegeneratePrompt(e.target.value)}
-                          placeholder="Add specific instructions..."
-                          rows={4}
-                        />
-                      </div>
-                      <DialogFooter>
-                        <Button
-                          onClick={regenerateSite}
-                          disabled={actionLoading === "regenerate"}
-                        >
-                          {actionLoading === "regenerate" ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <Globe className="size-4" />
-                          )}
-                          Generate
-                        </Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
                 </CardContent>
               </Card>
             )}
+
+            <Dialog
+              open={siteDialogOpen}
+              onOpenChange={(open) => {
+                if (actionLoading === "regenerate") {
+                  return;
+                }
+                if (!open) {
+                  setSiteDialogMode(null);
+                  setGenerationActivity([]);
+                  setGenerationActive(false);
+                  setGenerationBaselineId(null);
+                  setGenerationError(null);
+                }
+              }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{siteDialogTitle}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3">
+                  {siteDialogShowsPrompt ? (
+                    <>
+                      <Label>{siteDialogPromptLabel} (optional)</Label>
+                      <Textarea
+                        value={regeneratePrompt}
+                        onChange={(e) => setRegeneratePrompt(e.target.value)}
+                        placeholder={siteDialogPromptPlaceholder}
+                        rows={4}
+                      />
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Rebuild this site from the source website, screenshots, and
+                      business data without applying prompt-based edits to the
+                      current draft.
+                    </p>
+                  )}
+                  {generationProgressPanel}
+                </div>
+                <DialogFooter>
+                  <Button onClick={regenerateSite} disabled={generationRunning}>
+                    {generationRunning ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : siteDialogMode === "generate" ? (
+                      <Globe className="size-4" />
+                    ) : (
+                      <RefreshCw className="size-4" />
+                    )}
+                    {siteDialogSubmitLabel}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         </TabsContent>
 
@@ -853,7 +1452,7 @@ export default function BusinessDetailPage() {
                             <div>
                               <p className="font-medium">{email.subject}</p>
                               <p className="text-xs text-muted-foreground">
-                                {new Date(email.createdAt).toLocaleDateString()}
+                                {formatStoredDate(email.createdAt)}
                               </p>
                             </div>
                           </button>

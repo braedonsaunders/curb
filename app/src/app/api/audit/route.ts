@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { ensureEnrichmentWorkerRunning } from '@/lib/core/enrichment';
 import { initializeDatabase } from '@/lib/schema';
 import { auditBusiness, batchAudit } from '@/lib/core/audit';
 
 export async function POST(request: NextRequest) {
   try {
     initializeDatabase();
+    ensureEnrichmentWorkerRunning();
 
     const body = await request.json();
     const { businessId, batch } = body;

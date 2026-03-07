@@ -5,10 +5,10 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatStoredDateTime } from "@/lib/datetime";
 import { toast } from "sonner";
 import {
   Search,
-  Zap,
   FileText,
   Building2,
   Globe,
@@ -190,20 +190,10 @@ export default function DashboardPage() {
             <Button
               variant="outline"
               className="justify-start gap-2"
-              onClick={async () => {
-                try {
-                  const res = await fetch("/api/generate-next", { method: "POST" });
-                  if (!res.ok) throw new Error("Failed");
-                  const data = await res.json();
-                  toast.success(`Site generated for ${data.businessName ?? "business"}`);
-                  fetchStats();
-                } catch {
-                  toast.error("No businesses ready for generation");
-                }
-              }}
+              onClick={() => router.push("/businesses")}
             >
-              <Zap className="size-4" />
-              Generate Next
+              <Globe className="size-4" />
+              Open Businesses
             </Button>
             <Button
               variant="outline"
@@ -232,7 +222,7 @@ export default function DashboardPage() {
                     <div className="flex-1">
                       <p className="text-foreground">{item.message}</p>
                       <p className="text-xs text-muted-foreground">
-                        {new Date(item.timestamp).toLocaleString()}
+                        {formatStoredDateTime(item.timestamp)}
                       </p>
                     </div>
                     <Badge variant="secondary" className="shrink-0">

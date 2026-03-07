@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { formatStoredDate } from "@/lib/datetime";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -285,7 +286,7 @@ export default function OutreachPage() {
                         </span>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
-                        {new Date(email.createdAt).toLocaleDateString()}
+                        {formatStoredDate(email.createdAt)}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">

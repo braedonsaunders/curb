@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { ensureEnrichmentWorkerRunning } from '@/lib/core/enrichment';
 import { initializeDatabase } from '@/lib/schema';
 import { auditBusiness } from '@/lib/core/audit';
 
@@ -8,6 +9,7 @@ export async function POST(
 ) {
   try {
     initializeDatabase();
+    ensureEnrichmentWorkerRunning();
 
     const { id } = await params;
     const businessId = parseInt(id, 10);

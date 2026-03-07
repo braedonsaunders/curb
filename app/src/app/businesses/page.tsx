@@ -3,7 +3,6 @@
 import { Suspense, useEffect, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -42,7 +41,17 @@ import {
   Globe,
   LayoutGrid,
   TableProperties,
+  Check,
+  Pause,
+  Play,
+  RefreshCw,
 } from "lucide-react";
+import {
+  BUSINESS_BOARD_COLUMNS,
+  BUSINESS_STATUSES,
+  getBusinessStatusLabel,
+  NOT_APPLICABLE_STATUS,
+} from "@/lib/business-status";
 
 const STATUS_COLORS: Record<string, string> = {
   discovered: "bg-gray-100 text-gray-700 border-gray-200",
@@ -56,16 +65,6 @@ const STATUS_COLORS: Record<string, string> = {
   archived: "bg-red-50 text-red-600 border-red-200",
 };
 
-const BOARD_COLUMNS = [
-  "discovered",
-  "audited",
-  "flagged",
-  "generated",
-  "reviewed",
-  "emailed",
-  "sold",
-] as const;
-
 const COLUMN_BORDER_COLORS: Record<string, string> = {
   discovered: "border-t-gray-400",
   audited: "border-t-blue-400",
@@ -74,20 +73,10 @@ const COLUMN_BORDER_COLORS: Record<string, string> = {
   reviewed: "border-t-indigo-400",
   emailed: "border-t-purple-400",
   sold: "border-t-emerald-400",
+  skipped: "border-t-slate-400",
 };
 
-const STATUSES = [
-  "all",
-  "discovered",
-  "audited",
-  "flagged",
-  "generated",
-  "reviewed",
-  "emailed",
-  "sold",
-  "skipped",
-  "archived",
-];
+const STATUSES = ["all", ...BUSINESS_STATUSES];
 
 const CATEGORIES_FILTER = [
   "all",
@@ -109,7 +98,10 @@ interface Business {
   category: string;
   city: string;
   status: string;
-  overall_grade: string;
+  enrichment_status: string | null;
+  overall_grade: string | null;
+  website_url: string | null;
+  audit_has_website: boolean | number | null;
   site_slug: string | null;
 }
 
@@ -142,6 +134,11 @@ function BusinessesContent() {
   const [sortField, setSortField] = useState("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [viewMode, setViewMode] = useState<"table" | "board">("table");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [enrichmentEnabled, setEnrichmentEnabled] = useState(true);
+  const [enrichmentActionLoading, setEnrichmentActionLoading] = useState<
+    "pause" | "resume" | "rerun" | null
+  >(null);
 
   const fetchBusinesses = useCallback(async () => {
     setLoading(true);
@@ -160,6 +157,10 @@ function BusinessesContent() {
       const data: BusinessesResponse = await res.json();
       setBusinesses(data.businesses ?? []);
       setTotal(data.total ?? 0);
+      setSelectedIds((prev) => {
+        const visible = new Set((data.businesses ?? []).map((biz) => biz.id));
+        return new Set(Array.from(prev).filter((id) => visible.has(id)));
+      });
     } catch {
       toast.error("Failed to load businesses");
       setBusinesses([]);
@@ -172,6 +173,21 @@ function BusinessesContent() {
     fetchBusinesses();
   }, [fetchBusinesses]);
 
+  const fetchEnrichmentState = useCallback(async () => {
+    try {
+      const res = await fetch("/api/enrichment");
+      if (!res.ok) throw new Error("Failed to fetch enrichment state");
+      const data = (await res.json()) as { enabled?: boolean };
+      setEnrichmentEnabled(data.enabled !== false);
+    } catch {
+      // Keep previous state if the control endpoint is unavailable.
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchEnrichmentState();
+  }, [fetchEnrichmentState]);
+
   function handleSort(field: string) {
     if (sortField === field) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -181,16 +197,175 @@ function BusinessesContent() {
     }
   }
 
-  async function handleAction(action: string, bizId: string) {
+  async function handleAction(
+    action:
+      | "audit"
+      | "generate"
+      | "markNotApplicable"
+      | "archive"
+      | "rerunEnrichment",
+    bizId: string
+  ) {
     try {
-      const res = await fetch(`/api/businesses/${bizId}/${action}`, {
+      let res: Response;
+      let successMessage: string;
+      let failureMessage: string;
+
+      switch (action) {
+        case "audit":
+          res = await fetch(`/api/businesses/${bizId}/audit`, {
+            method: "POST",
+          });
+          successMessage = "Audit complete";
+          failureMessage = "Failed to audit business";
+          break;
+        case "generate":
+          res = await fetch(`/api/businesses/${bizId}/generate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          successMessage = "Site generated";
+          failureMessage = "Failed to generate site";
+          break;
+        case "markNotApplicable":
+          res = await fetch(`/api/businesses/${bizId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: NOT_APPLICABLE_STATUS }),
+          });
+          successMessage = "Business marked as not applicable";
+          failureMessage = "Failed to mark business as not applicable";
+          break;
+        case "archive":
+          res = await fetch(`/api/businesses/${bizId}`, {
+            method: "DELETE",
+          });
+          successMessage = "Business archived";
+          failureMessage = "Failed to archive business";
+          break;
+        case "rerunEnrichment":
+          res = await fetch("/api/enrichment", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "rerun",
+              businessIds: [Number(bizId)],
+            }),
+          });
+          successMessage = "Business requeued for enrichment";
+          failureMessage = "Failed to rerun enrichment";
+          break;
+      }
+
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(data?.error || failureMessage);
+      }
+
+      toast.success(successMessage);
+      await fetchBusinesses();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update business"
+      );
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === businesses.length && businesses.length > 0) {
+      setSelectedIds(new Set());
+      return;
+    }
+
+    setSelectedIds(new Set(businesses.map((biz) => biz.id)));
+  }
+
+  async function toggleEnrichment() {
+    setEnrichmentActionLoading(enrichmentEnabled ? "pause" : "resume");
+    try {
+      const action = enrichmentEnabled ? "pause" : "resume";
+      const res = await fetch("/api/enrichment", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
       });
-      if (!res.ok) throw new Error("Failed");
-      toast.success(`${action.charAt(0).toUpperCase() + action.slice(1)} complete`);
-      fetchBusinesses();
-    } catch {
-      toast.error(`Failed to ${action} business`);
+      const data = (await res.json()) as { enabled?: boolean; error?: string };
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to update enrichment");
+      }
+
+      setEnrichmentEnabled(data.enabled !== false);
+      toast.success(
+        action === "pause"
+          ? "Automatic enrichment paused"
+          : "Automatic enrichment resumed"
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update enrichment"
+      );
+    } finally {
+      setEnrichmentActionLoading(null);
+    }
+  }
+
+  async function rerunSelectedEnrichment() {
+    const ids = Array.from(selectedIds).map((id) => Number(id));
+    if (ids.length === 0) {
+      toast.error("Select at least one business");
+      return;
+    }
+
+    setEnrichmentActionLoading("rerun");
+    try {
+      const res = await fetch("/api/enrichment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "rerun",
+          businessIds: ids,
+        }),
+      });
+      const data = (await res.json()) as {
+        queued?: number;
+        skippedInProgress?: number;
+        error?: string;
+      };
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to rerun enrichment");
+      }
+
+      const queued = data.queued ?? 0;
+      const skipped = data.skippedInProgress ?? 0;
+      toast.success(
+        skipped > 0
+          ? `Queued ${queued} business(es); skipped ${skipped} currently running`
+          : `Queued ${queued} business(es) for enrichment`
+      );
+      setSelectedIds(new Set());
+      await fetchBusinesses();
+      await fetchEnrichmentState();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to rerun enrichment"
+      );
+    } finally {
+      setEnrichmentActionLoading(null);
     }
   }
 
@@ -207,6 +382,26 @@ function BusinessesContent() {
         <ArrowUpDown className="size-3" />
       </button>
     );
+  }
+
+  function getWebsiteStatus(biz: Business): "yes" | "no" | "checking" {
+    if (biz.audit_has_website === true || biz.audit_has_website === 1) {
+      return "yes";
+    }
+
+    if (biz.audit_has_website === false || biz.audit_has_website === 0) {
+      return "no";
+    }
+
+    if (biz.website_url) {
+      return "yes";
+    }
+
+    if (biz.enrichment_status === "completed") {
+      return "no";
+    }
+
+    return "checking";
   }
 
   return (
@@ -246,7 +441,7 @@ function BusinessesContent() {
             <SelectContent>
               {STATUSES.map((s) => (
                 <SelectItem key={s} value={s}>
-                  {s === "all" ? "All statuses" : s.charAt(0).toUpperCase() + s.slice(1)}
+                  {s === "all" ? "All statuses" : getBusinessStatusLabel(s)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -295,6 +490,44 @@ function BusinessesContent() {
               Board
             </button>
           </div>
+          <div className="ml-auto flex items-center gap-2">
+            {selectedIds.size > 0 && (
+              <span className="text-sm text-muted-foreground">
+                {selectedIds.size} selected
+              </span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={rerunSelectedEnrichment}
+              disabled={
+                selectedIds.size === 0 || enrichmentActionLoading === "rerun"
+              }
+            >
+              {enrichmentActionLoading === "rerun" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="size-4" />
+              )}
+              Rerun Enrichment
+            </Button>
+            <Button
+              variant={enrichmentEnabled ? "outline" : "default"}
+              size="sm"
+              onClick={toggleEnrichment}
+              disabled={enrichmentActionLoading === "pause" || enrichmentActionLoading === "resume"}
+            >
+              {enrichmentActionLoading === "pause" ||
+              enrichmentActionLoading === "resume" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : enrichmentEnabled ? (
+                <Pause className="size-4" />
+              ) : (
+                <Play className="size-4" />
+              )}
+              {enrichmentEnabled ? "Stop Enrichment" : "Resume Enrichment"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -316,6 +549,17 @@ function BusinessesContent() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">
+                        <input
+                          type="checkbox"
+                          checked={
+                            businesses.length > 0 &&
+                            selectedIds.size === businesses.length
+                          }
+                          onChange={toggleSelectAll}
+                          className="size-4 rounded border-gray-300 accent-primary"
+                        />
+                      </TableHead>
                       <TableHead>
                         <SortHeader field="name">Name</SortHeader>
                       </TableHead>
@@ -342,6 +586,14 @@ function BusinessesContent() {
                         className="cursor-pointer"
                         onClick={() => router.push(`/businesses/${biz.id}`)}
                       >
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(biz.id)}
+                            onChange={() => toggleSelect(biz.id)}
+                            className="size-4 rounded border-gray-300 accent-primary"
+                          />
+                        </TableCell>
                         <TableCell className="font-medium">{biz.name}</TableCell>
                         <TableCell className="text-muted-foreground">
                           {biz.category}
@@ -355,7 +607,7 @@ function BusinessesContent() {
                               STATUS_COLORS[biz.status] ?? STATUS_COLORS.discovered
                             }`}
                           >
-                            {biz.status}
+                            {getBusinessStatusLabel(biz.status)}
                           </span>
                         </TableCell>
                         <TableCell>
@@ -380,10 +632,15 @@ function BusinessesContent() {
                           )}
                         </TableCell>
                         <TableCell>
-                          {biz.site_slug ? (
-                            <Globe className="size-4 text-green-600" />
+                          {getWebsiteStatus(biz) === "yes" ? (
+                            <span className="inline-flex items-center gap-1 text-green-600">
+                              <Globe className="size-4" />
+                              Yes
+                            </span>
+                          ) : getWebsiteStatus(biz) === "no" ? (
+                            <span className="text-orange-600">No</span>
                           ) : (
-                            <span className="text-muted-foreground">--</span>
+                            <span className="text-muted-foreground">Checking</span>
                           )}
                         </TableCell>
                         <TableCell>
@@ -395,6 +652,15 @@ function BusinessesContent() {
                               <MoreHorizontal className="size-4" />
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleAction("rerunEnrichment", biz.id);
+                                }}
+                              >
+                                <RefreshCw className="size-4" />
+                                Rerun Enrichment
+                              </DropdownMenuItem>
                               <DropdownMenuItem
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -413,12 +679,21 @@ function BusinessesContent() {
                                 <Zap className="size-4" />
                                 Generate
                               </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleAction("markNotApplicable", biz.id);
+                                }}
+                              >
+                                <Check className="size-4" />
+                                Mark Not Applicable
+                              </DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 variant="destructive"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleAction("archive", biz.id);
+                                  void handleAction("archive", biz.id);
                                 }}
                               >
                                 <Archive className="size-4" />
@@ -480,7 +755,7 @@ function BusinessesContent() {
           </div>
         ) : (
           <div className="flex gap-4 overflow-x-auto pb-4">
-            {BOARD_COLUMNS.map((status) => {
+            {BUSINESS_BOARD_COLUMNS.map((status) => {
               const columnBiz = businesses.filter((b) => b.status === status);
               return (
                 <div
@@ -494,7 +769,7 @@ function BusinessesContent() {
                         STATUS_COLORS[status]
                       }`}
                     >
-                      {status.charAt(0).toUpperCase() + status.slice(1)}
+                      {getBusinessStatusLabel(status)}
                     </span>
                     <span className="ml-auto text-xs font-medium text-muted-foreground">
                       {columnBiz.length}

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Curb
+Comment=Install dependencies, start Curb, and open it in your browser
+Exec=/bin/bash "/Users/braedonsaunders/Documents/Code/curb/launch-curb.sh"
+Path=/Users/braedonsaunders/Documents/Code/curb
+Terminal=true
+Categories=Development;

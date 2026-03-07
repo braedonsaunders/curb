@@ -1,12 +1,11 @@
 import type { NextConfig } from "next";
-import path from "path";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ['better-sqlite3'],
+  serverExternalPackages: ['better-sqlite3', 'playwright'],
   async rewrites() {
     return [
       {
-        source: '/sites/:path*',
+        source: '/sites/:path+',
         destination: '/api/sites/:path*',
       },
     ];
