@@ -1552,6 +1552,7 @@ export async function generateSite(
     "- If single-page, consolidate content into anchored sections and use working in-page navigation like #about-us or #specials.",
     "- If multi-page, return a static site bundle with one file per page and keep all internal navigation relative to the site bundle.",
     "- The output must be a static site bundle with no build step and no framework runtime requirement.",
+    "- Never leave bundler placeholders such as assets/main.js, assets/index.js, assets/index.css, /src/main.jsx, or rel=\"modulepreload\" unless you also return those exact files.",
     "- Never emit broken root-relative internal links such as /about-us/ or /specials/.",
     "- Contact, quote, and booking-request forms must use standard HTML form markup and remain compatible with static hosting. Prefer leaving action blank and adding data-curb-contact-form=\"true\" when you include a lead form.",
     "- Remove obsolete admin, CMS, webmaster login, and old vendor-credit links unless the user explicitly needs them."
@@ -1640,6 +1641,7 @@ export async function modifySiteWithTools(
       "- Reuse the existing CSS, JS, tokens, structure, and copy unless the user explicitly asks for broader changes.",
       "- Do not make unrelated design, layout, copy, or architecture changes.",
       "- Keep the site static-hosting friendly and preserve working internal links and local asset references.",
+      "- Remove dead bundler entry tags such as assets/main.js, assets/index.js, assets/index.css, /src/main.jsx, or rel=\"modulepreload\" when the referenced file is not present in the bundle.",
       "- If the user asks for a new page, create that page and update only the navigation or CTA links that need to point to it.",
     ].join("\n"),
   ];

@@ -54,6 +54,9 @@ const REQUESTED_ROUTE_PATTERNS: Array<{
   { route: "/menu/", pattern: /\bmenu\b/i },
   { route: "/services/", pattern: /\bservices?\b/i },
 ];
+const BUNDLER_ENTRY_DIRECTORY_PATTERN = /(^|\/)(?:assets|build|dist|src|static)\//i;
+const BUNDLER_ENTRY_SCRIPT_FILE_PATTERN =
+  /^(?:main|index|app|bundle|runtime|vendor|chunk)(?:[-._][a-z0-9]+)*\.(?:[cm]?[jt]sx?)$/i;
 
 export interface GenerateResult {
   businessId: number;
@@ -103,6 +106,24 @@ function buildMissingReferenceKey(
   >
 ): string {
   return `${issue.fromFilePath}::${issue.rawReference}::${issue.targetType}::${issue.resolvedTarget}`;
+}
+
+function isLikelyBundlerEntryScriptReference(
+  rawReference: string,
+  resolvedTarget: string
+): boolean {
+  const normalizedReference = rawReference.trim().toLowerCase();
+  const normalizedTarget = resolvedTarget.trim().toLowerCase();
+  const baseName = path.posix.basename(normalizedTarget);
+
+  if (!BUNDLER_ENTRY_SCRIPT_FILE_PATTERN.test(baseName)) {
+    return false;
+  }
+
+  return (
+    BUNDLER_ENTRY_DIRECTORY_PATTERN.test(normalizedReference) ||
+    BUNDLER_ENTRY_DIRECTORY_PATTERN.test(normalizedTarget)
+  );
 }
 
 function isEditableSiteFile(filePath: string): boolean {
@@ -492,6 +513,7 @@ function buildBundleIntegrityCorrectionPrompt(
     "Every local href, src, poster, action, srcset, and CSS url() reference must resolve to a real page or asset inside the returned static bundle.",
     "Add the missing files or pages, or rewrite the references to existing bundle paths.",
     "Do not reference assets/style.css, contact/index.html, products/index.html, or any other local path unless that exact file exists in the returned bundle.",
+    "Do not leave stray bundler entry references such as assets/main.js, assets/index.js, /src/main.jsx, or modulepreload tags unless those exact files are included.",
     examples,
   ].join(" ");
 }
@@ -1091,6 +1113,76 @@ function resolveBundleReference(
   } catch {
     return null;
   }
+}
+
+function stripMissingBundlerEntrypointsFromHtml(
+  htmlContent: string,
+  currentFilePath: string,
+  availableFilePaths: ReadonlySet<string>
+): string {
+  const withoutMissingScriptTags = htmlContent.replace(
+    /(?:\s*)<script\b[^>]*\bsrc=(["'])([^"']+)\1[^>]*>\s*<\/script>\s*/gi,
+    (fullMatch, _quote: string, rawReference: string) => {
+      const resolved = resolveBundleReference(rawReference, currentFilePath);
+      if (
+        !resolved ||
+        resolved.targetType !== "file" ||
+        availableFilePaths.has(resolved.target) ||
+        !isLikelyBundlerEntryScriptReference(rawReference, resolved.target)
+      ) {
+        return fullMatch;
+      }
+
+      return "";
+    }
+  );
+
+  return withoutMissingScriptTags.replace(
+    /(?:\s*)<link\b[^>]*\bhref=(["'])([^"']+)\1[^>]*>\s*/gi,
+    (fullMatch, _quote: string, rawReference: string) => {
+      const resolved = resolveBundleReference(rawReference, currentFilePath);
+      if (
+        !resolved ||
+        resolved.targetType !== "file" ||
+        availableFilePaths.has(resolved.target) ||
+        !isLikelyBundlerEntryScriptReference(rawReference, resolved.target)
+      ) {
+        return fullMatch;
+      }
+
+      const relMatch = fullMatch.match(/\brel=(["'])([^"']+)\1/i);
+      const asMatch = fullMatch.match(/\bas=(["'])([^"']+)\1/i);
+      const relValue = relMatch?.[2]?.toLowerCase() ?? "";
+      const asValue = asMatch?.[2]?.toLowerCase() ?? "";
+      const isScriptPreload =
+        relValue.includes("modulepreload") ||
+        relValue.includes("prefetch") ||
+        (relValue.includes("preload") && asValue === "script");
+
+      return isScriptPreload ? "" : fullMatch;
+    }
+  );
+}
+
+function stripMissingBundlerEntrypoints(
+  files: GeneratedSiteFile[]
+): GeneratedSiteFile[] {
+  const availableFilePaths = new Set(files.map((file) => file.path));
+
+  return files.map((file) => {
+    if (!isHtmlFile(file.path)) {
+      return file;
+    }
+
+    return {
+      ...file,
+      content: stripMissingBundlerEntrypointsFromHtml(
+        file.content,
+        file.path,
+        availableFilePaths
+      ),
+    };
+  });
 }
 
 function collectHtmlReferences(content: string): string[] {
@@ -2218,9 +2310,11 @@ export async function generateSiteForBusiness(
         sourceBrandAssets,
       });
 
-      let normalizedFiles = injectPortableRuntime(
-        readGeneratedSiteFilesFromDirectory(outputSiteDir),
-        businessData
+      let normalizedFiles = stripMissingBundlerEntrypoints(
+        injectPortableRuntime(
+          readGeneratedSiteFilesFromDirectory(outputSiteDir),
+          businessData
+        )
       );
       const availableStaticAssetPaths = walkDirectoryFiles(outputSiteDir)
         .map((fullPath) =>
@@ -2285,9 +2379,11 @@ export async function generateSiteForBusiness(
           sourceBrandAssets,
         });
 
-        normalizedFiles = injectPortableRuntime(
-          readGeneratedSiteFilesFromDirectory(outputSiteDir),
-          businessData
+        normalizedFiles = stripMissingBundlerEntrypoints(
+          injectPortableRuntime(
+            readGeneratedSiteFilesFromDirectory(outputSiteDir),
+            businessData
+          )
         );
         bundleValidation = analyzeGeneratedBundle(
           normalizedFiles,
@@ -2564,9 +2660,11 @@ export async function generateSiteForBusiness(
       sourceSiteVisuals,
     });
     let parsedFiles = parseGeneratedSiteFiles(payload);
-    let normalizedFiles = injectPortableRuntime(
-      rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
-      businessData
+    let normalizedFiles = stripMissingBundlerEntrypoints(
+      injectPortableRuntime(
+        rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
+        businessData
+      )
     );
     const availableStaticAssetPaths = walkDirectoryFiles(outputSiteDir)
       .map((fullPath) =>
@@ -2642,9 +2740,11 @@ export async function generateSiteForBusiness(
         sourceSiteVisuals,
       });
       parsedFiles = parseGeneratedSiteFiles(payload);
-      normalizedFiles = injectPortableRuntime(
-        rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
-        businessData
+      normalizedFiles = stripMissingBundlerEntrypoints(
+        injectPortableRuntime(
+          rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
+          businessData
+        )
       );
       bundleValidation = analyzeGeneratedBundle(
         normalizedFiles,
