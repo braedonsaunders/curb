@@ -10,6 +10,7 @@ import { getDb } from "../db";
 import { initializeDatabase } from "../schema";
 import {
   generateSite,
+  modifySiteWithTools,
   recommendSiteArchitecture,
   type BusinessData,
   type ExistingSiteFile,
@@ -63,6 +64,13 @@ export interface GenerateResult {
   generationTimeMs: number;
 }
 
+export type SiteGenerationMode = "generate" | "modify" | "regenerate";
+
+export interface GenerateSiteForBusinessOptions {
+  mode?: SiteGenerationMode;
+  prompt?: string;
+}
+
 interface GeneratedSiteFile {
   path: string;
   content: string;
@@ -73,6 +81,28 @@ interface MissingBundleReference {
   rawReference: string;
   resolvedTarget: string;
   targetType: "file" | "route";
+}
+
+interface MissingPageLink {
+  fromFilePath: string;
+  rawReference: string;
+  resolvedTarget: string;
+}
+
+interface GeneratedBundleValidationResult {
+  htmlPageCount: number;
+  missingNonPageBundleReferences: MissingBundleReference[];
+  missingPageLinks: MissingPageLink[];
+  missingRequestedPageRoutes: string[];
+}
+
+function buildMissingReferenceKey(
+  issue: Pick<
+    MissingBundleReference,
+    "fromFilePath" | "rawReference" | "resolvedTarget" | "targetType"
+  >
+): string {
+  return `${issue.fromFilePath}::${issue.rawReference}::${issue.targetType}::${issue.resolvedTarget}`;
 }
 
 function isEditableSiteFile(filePath: string): boolean {
@@ -462,6 +492,26 @@ function buildBundleIntegrityCorrectionPrompt(
     "Every local href, src, poster, action, srcset, and CSS url() reference must resolve to a real page or asset inside the returned static bundle.",
     "Add the missing files or pages, or rewrite the references to existing bundle paths.",
     "Do not reference assets/style.css, contact/index.html, products/index.html, or any other local path unless that exact file exists in the returned bundle.",
+    examples,
+  ].join(" ");
+}
+
+function buildMissingPageLinkCorrectionPrompt(
+  missingPageLinks: MissingPageLink[]
+): string {
+  const examples = missingPageLinks
+    .slice(0, 8)
+    .map(
+      (issue) =>
+        `${issue.fromFilePath} links to "${issue.rawReference}" but no HTML page exists for ${issue.resolvedTarget}.`
+    )
+    .join(" ");
+
+  return [
+    "Internal page-link correction:",
+    "Every internal <a href> link to another page in the site must resolve to a real HTML page in the returned bundle.",
+    "Add the missing destination pages as HTML files, or change those links to existing pages if the destinations were mistakes.",
+    "Do not leave navigation, CTA, card, or footer links pointing at routes that are not returned as HTML pages.",
     examples,
   ].join(" ");
 }
@@ -866,12 +916,7 @@ function synthesizeMissingRouteAliasPages(
 ): GeneratedSiteFile[] {
   const routeKeys = new Set(files.flatMap((file) => routeKeysForGeneratedFile(file.path)));
   const routesToCreate = Array.from(
-    new Set([
-      ...findMissingLocalBundleReferences(files)
-        .filter((issue) => issue.targetType === "route")
-        .map((issue) => issue.resolvedTarget),
-      ...preferredRoutes.filter((route) => !routeKeys.has(route)),
-    ])
+    new Set(preferredRoutes.filter((route) => !routeKeys.has(route)))
   );
 
   if (routesToCreate.length === 0) {
@@ -1077,6 +1122,20 @@ function collectHtmlReferences(content: string): string[] {
   return references;
 }
 
+function collectHtmlPageLinkReferences(content: string): string[] {
+  const references: string[] = [];
+  const anchorHrefPattern = /<a\b[^>]*\bhref=(["'])([^"']+)\1/gi;
+
+  for (const match of content.matchAll(anchorHrefPattern)) {
+    const reference = (match[2] ?? "").trim();
+    if (reference) {
+      references.push(reference);
+    }
+  }
+
+  return references;
+}
+
 function collectCssReferences(content: string): string[] {
   const references: string[] = [];
   const urlPattern = /url\(([^)]+)\)/gi;
@@ -1134,7 +1193,12 @@ function findMissingLocalBundleReferences(
         continue;
       }
 
-      const issueKey = `${file.path}::${reference}::${resolved.targetType}::${resolved.target}`;
+      const issueKey = buildMissingReferenceKey({
+        fromFilePath: file.path,
+        rawReference: reference,
+        resolvedTarget: resolved.target,
+        targetType: resolved.targetType,
+      });
       missingReferences.set(issueKey, {
         fromFilePath: file.path,
         rawReference: reference,
@@ -1145,6 +1209,81 @@ function findMissingLocalBundleReferences(
   }
 
   return Array.from(missingReferences.values());
+}
+
+function findMissingLocalPageLinks(files: GeneratedSiteFile[]): MissingPageLink[] {
+  const htmlRouteKeys = new Set(
+    files
+      .filter((file) => isHtmlFile(file.path))
+      .flatMap((file) => routeKeysForGeneratedFile(file.path))
+  );
+  const missingPageLinks = new Map<string, MissingPageLink>();
+
+  for (const file of files) {
+    if (!isHtmlFile(file.path)) {
+      continue;
+    }
+
+    const references = new Set(collectHtmlPageLinkReferences(file.content));
+    for (const reference of references) {
+      const resolved = resolveBundleReference(reference, file.path);
+      if (!resolved || resolved.targetType !== "route") {
+        continue;
+      }
+
+      if (htmlRouteKeys.has(resolved.target)) {
+        continue;
+      }
+
+      const issueKey = buildMissingReferenceKey({
+        fromFilePath: file.path,
+        rawReference: reference,
+        resolvedTarget: resolved.target,
+        targetType: "route",
+      });
+      missingPageLinks.set(issueKey, {
+        fromFilePath: file.path,
+        rawReference: reference,
+        resolvedTarget: resolved.target,
+      });
+    }
+  }
+
+  return Array.from(missingPageLinks.values());
+}
+
+function analyzeGeneratedBundle(
+  files: GeneratedSiteFile[],
+  requestedRouteAliases: string[],
+  availableStaticAssetPaths: Iterable<string>
+): GeneratedBundleValidationResult {
+  const missingPageLinks = findMissingLocalPageLinks(files);
+  const missingPageLinkKeys = new Set(
+    missingPageLinks.map((issue) =>
+      buildMissingReferenceKey({
+        fromFilePath: issue.fromFilePath,
+        rawReference: issue.rawReference,
+        resolvedTarget: issue.resolvedTarget,
+        targetType: "route",
+      })
+    )
+  );
+  const missingBundleReferences = findMissingLocalBundleReferences(
+    files,
+    availableStaticAssetPaths
+  );
+
+  return {
+    htmlPageCount: countHtmlPages(files),
+    missingNonPageBundleReferences: missingBundleReferences.filter(
+      (issue) => !missingPageLinkKeys.has(buildMissingReferenceKey(issue))
+    ),
+    missingPageLinks,
+    missingRequestedPageRoutes: findMissingRequestedPageRoutes(
+      files,
+      requestedRouteAliases
+    ),
+  };
 }
 
 function normalizeInternalRoutePath(rawHref: string, currentFilePath: string): string | null {
@@ -1370,27 +1509,19 @@ function toSiteRelativePath(siteDir: string, fullPath: string): string {
   return path.relative(siteDir, fullPath).split(path.sep).join("/");
 }
 
-function shouldPreserveSiteFile(relativePath: string): boolean {
-  return relativePath === SOURCE_SNAPSHOT_FILE || !isEditableSiteFile(relativePath);
-}
-
 function createWorkingSiteDirectory(siteDir: string): string {
   const parentDir = path.dirname(siteDir);
   fs.mkdirSync(parentDir, { recursive: true });
   return fs.mkdtempSync(path.join(parentDir, `${path.basename(siteDir)}-staging-`));
 }
 
-function copyPreservedSiteFiles(sourceDir: string, targetDir: string): void {
+function copySiteDirectory(sourceDir: string, targetDir: string): void {
   if (!fs.existsSync(sourceDir)) {
     return;
   }
 
   for (const fullPath of walkDirectoryFiles(sourceDir)) {
     const relativePath = toSiteRelativePath(sourceDir, fullPath);
-    if (!shouldPreserveSiteFile(relativePath)) {
-      continue;
-    }
-
     const outputPath = path.join(targetDir, ...relativePath.split("/"));
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
     fs.copyFileSync(fullPath, outputPath);
@@ -1497,6 +1628,52 @@ function walkDirectoryFiles(rootDir: string): string[] {
   }
 
   return results.sort((left, right) => left.localeCompare(right));
+}
+
+function readGeneratedSiteFilesFromDirectory(siteDir: string): GeneratedSiteFile[] {
+  return walkDirectoryFiles(siteDir)
+    .map((fullPath) => ({
+      fullPath,
+      relativePath: path.relative(siteDir, fullPath).split(path.sep).join("/"),
+    }))
+    .filter(
+      ({ relativePath }) =>
+        relativePath !== SOURCE_SNAPSHOT_FILE && isEditableSiteFile(relativePath)
+    )
+    .map(({ fullPath, relativePath }) => ({
+      path: relativePath,
+      content: fs.readFileSync(fullPath, "utf-8"),
+    }));
+}
+
+function listDirectoryDifferences(leftDir: string, rightDir: string): string[] {
+  const leftFiles = new Map(
+    walkDirectoryFiles(leftDir).map((fullPath) => [
+      toSiteRelativePath(leftDir, fullPath),
+      fullPath,
+    ])
+  );
+  const rightFiles = new Map(
+    walkDirectoryFiles(rightDir).map((fullPath) => [
+      toSiteRelativePath(rightDir, fullPath),
+      fullPath,
+    ])
+  );
+
+  const allPaths = Array.from(
+    new Set([...leftFiles.keys(), ...rightFiles.keys()])
+  ).sort((left, right) => left.localeCompare(right));
+
+  return allPaths.filter((relativePath) => {
+    const leftPath = leftFiles.get(relativePath);
+    const rightPath = rightFiles.get(relativePath);
+
+    if (!leftPath || !rightPath) {
+      return true;
+    }
+
+    return !fs.readFileSync(leftPath).equals(fs.readFileSync(rightPath));
+  });
 }
 
 function readExistingSiteFiles(siteDir: string): ExistingSiteFile[] {
@@ -1950,10 +2127,19 @@ async function downloadPhotos(
 
 export async function generateSiteForBusiness(
   businessId: number,
-  modificationPrompt?: string
+  options: GenerateSiteForBusinessOptions | string = {}
 ): Promise<GenerateResult> {
   initializeDatabase();
   const db = getDb();
+
+  const requestOptions: GenerateSiteForBusinessOptions =
+    typeof options === "string"
+      ? { prompt: options, mode: options.trim() ? "modify" : "regenerate" }
+      : options;
+  const promptText = requestOptions.prompt?.trim() || undefined;
+  const generationMode: SiteGenerationMode =
+    requestOptions.mode ??
+    (promptText ? "modify" : "regenerate");
 
   const business = db
     .prepare("SELECT * FROM businesses WHERE id = ?")
@@ -1970,8 +2156,8 @@ export async function generateSiteForBusiness(
 
   const siteDir = path.join(SITES_DIR, slug);
   const existingSiteFiles = readExistingSiteFiles(siteDir);
-  const isModificationRequest = Boolean(modificationPrompt?.trim());
-  const requestedRouteAliases = extractRequestedRouteAliases(modificationPrompt);
+  const isModificationRequest = generationMode === "modify";
+  const requestedRouteAliases = extractRequestedRouteAliases(promptText);
 
   const businessData = businessRowToData(business);
 
@@ -1980,9 +2166,12 @@ export async function generateSiteForBusiness(
     stage: "started",
     businessId,
     businessName: name,
-    message: isModificationRequest
-      ? `Started website update for ${name}`
-      : `Started website generation for ${name}`,
+    message:
+      generationMode === "modify"
+        ? `Started website update for ${name}`
+        : generationMode === "generate"
+          ? `Started website generation for ${name}`
+          : `Started website regeneration for ${name}`,
   });
 
   let workingSiteDir: string | null = null;
@@ -1997,12 +2186,240 @@ export async function generateSiteForBusiness(
     const outputSiteDir = workingSiteDir;
 
     if (isModificationRequest) {
-      copyPreservedSiteFiles(siteDir, outputSiteDir);
+      if (!promptText) {
+        throw new Error("Modify mode requires a change request.");
+      }
+
+      if (!fs.existsSync(siteDir) || !fs.statSync(siteDir).isDirectory()) {
+        throw new Error(`No generated site found for ${name}.`);
+      }
+
+      copySiteDirectory(siteDir, outputSiteDir);
+
+      const sourceSiteSnapshot = readCachedSourceSnapshot(siteDir);
+      const sourceBrandAssets: NonNullable<
+        GenerateSiteOptions["sourceBrandAssets"]
+      > = {
+        logo: readCachedSourceLogoAsset(siteDir, sourceSiteSnapshot),
+      };
+
+      logActivity({
+        kind: "generation",
+        stage: "model",
+        businessId,
+        businessName: name,
+        message: `Applying targeted site edits with ${providerLabel} for ${name}`,
+      });
+
+      await modifySiteWithTools(businessData, {
+        siteDir: outputSiteDir,
+        modificationPrompt: promptText,
+        sourceSiteSnapshot,
+        sourceBrandAssets,
+      });
+
+      let normalizedFiles = injectPortableRuntime(
+        readGeneratedSiteFilesFromDirectory(outputSiteDir),
+        businessData
+      );
+      const availableStaticAssetPaths = walkDirectoryFiles(outputSiteDir)
+        .map((fullPath) =>
+          path.relative(outputSiteDir, fullPath).split(path.sep).join("/")
+        )
+        .filter((relativePath) => relativePath !== SOURCE_SNAPSHOT_FILE);
+      let bundleValidation = analyzeGeneratedBundle(
+        normalizedFiles,
+        requestedRouteAliases,
+        availableStaticAssetPaths
+      );
+
+      const correctionPrompts: string[] = [];
+      if (
+        sourceBrandAssets.logo &&
+        !bundleReferencesAssetPath(
+          normalizedFiles,
+          sourceBrandAssets.logo.relativePath
+        )
+      ) {
+        correctionPrompts.push(
+          buildExactLogoCorrectionPrompt(sourceBrandAssets.logo.relativePath)
+        );
+      }
+
+      if (bundleValidation.missingRequestedPageRoutes.length > 0) {
+        correctionPrompts.push(
+          buildRequestedPageCorrectionPrompt(
+            bundleValidation.missingRequestedPageRoutes
+          )
+        );
+      }
+
+      if (bundleValidation.missingPageLinks.length > 0) {
+        correctionPrompts.push(
+          buildMissingPageLinkCorrectionPrompt(bundleValidation.missingPageLinks)
+        );
+      }
+
+      if (bundleValidation.missingNonPageBundleReferences.length > 0) {
+        correctionPrompts.push(
+          buildBundleIntegrityCorrectionPrompt(
+            bundleValidation.missingNonPageBundleReferences
+          )
+        );
+      }
+
+      if (correctionPrompts.length > 0) {
+        logActivity({
+          kind: "generation",
+          stage: "model",
+          businessId,
+          businessName: name,
+          message: `Revising targeted site edits to resolve bundle issues for ${name}`,
+        });
+
+        await modifySiteWithTools(businessData, {
+          siteDir: outputSiteDir,
+          modificationPrompt: promptText,
+          additionalInstructions: correctionPrompts,
+          sourceSiteSnapshot,
+          sourceBrandAssets,
+        });
+
+        normalizedFiles = injectPortableRuntime(
+          readGeneratedSiteFilesFromDirectory(outputSiteDir),
+          businessData
+        );
+        bundleValidation = analyzeGeneratedBundle(
+          normalizedFiles,
+          requestedRouteAliases,
+          availableStaticAssetPaths
+        );
+
+        if (
+          sourceBrandAssets.logo &&
+          !bundleReferencesAssetPath(
+            normalizedFiles,
+            sourceBrandAssets.logo.relativePath
+          )
+        ) {
+          throw new Error(
+            `Updated site did not preserve the exact source logo asset at ./${sourceBrandAssets.logo.relativePath}.`
+          );
+        }
+
+        if (bundleValidation.missingPageLinks.length > 0) {
+          throw new Error(
+            `Updated site still contains internal page links without matching HTML pages: ${bundleValidation.missingPageLinks
+              .slice(0, 6)
+              .map(
+                (issue) =>
+                  `${issue.fromFilePath} -> ${issue.rawReference} (${issue.resolvedTarget})`
+              )
+              .join("; ")}`
+          );
+        }
+
+        if (bundleValidation.missingNonPageBundleReferences.length > 0) {
+          throw new Error(
+            `Updated site still contains broken local bundle references: ${bundleValidation.missingNonPageBundleReferences
+              .slice(0, 6)
+              .map(
+                (issue) =>
+                  `${issue.fromFilePath} -> ${issue.rawReference} (${issue.resolvedTarget})`
+              )
+              .join("; ")}`
+          );
+        }
+
+        if (bundleValidation.missingRequestedPageRoutes.length > 0) {
+          logActivity({
+            kind: "generation",
+            stage: "validation",
+            businessId,
+            businessName: name,
+            message: `Updated bundle still omitted dedicated pages for ${bundleValidation.missingRequestedPageRoutes.join(", ")}; keeping exact-route aliases so navigation still resolves for ${name}.`,
+          });
+        }
+      }
+
+      normalizedFiles = synthesizeMissingRouteAliasPages(
+        normalizedFiles,
+        sourceSiteSnapshot,
+        bundleValidation.missingRequestedPageRoutes
+      );
+
+      logActivity({
+        kind: "generation",
+        stage: "write",
+        businessId,
+        businessName: name,
+        message: `Writing ${normalizedFiles.length} site file${normalizedFiles.length === 1 ? "" : "s"} for ${name}`,
+      });
+      writeGeneratedSiteFiles(outputSiteDir, normalizedFiles);
+
+      const changedPaths = listDirectoryDifferences(siteDir, outputSiteDir);
+      if (changedPaths.length === 0) {
+        throw new Error(
+          "Requested site modification produced no file changes."
+        );
+      }
+
+      promoteWorkingSiteDirectory(siteDir, outputSiteDir);
+      promotedWorkingSiteDir = true;
+
+      const generationTimeMs = Date.now() - startTime;
+      const latestVersion = db
+        .prepare(
+          "SELECT MAX(version) as max_version FROM generated_sites WHERE business_id = ?"
+        )
+        .get(businessId) as { max_version: number | null } | undefined;
+
+      const version = (latestVersion?.max_version ?? 0) + 1;
+      const sitePath = path.relative(
+        path.resolve(process.cwd(), ".."),
+        siteDir
+      );
+
+      db.prepare(
+        `INSERT INTO generated_sites (
+          business_id, version, slug, site_path, prompt_used, model_used,
+          generation_time_ms, exported
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)`
+      ).run(
+        businessId,
+        version,
+        slug,
+        sitePath,
+        promptText,
+        modelUsed,
+        generationTimeMs
+      );
+
+      db.prepare(
+        "UPDATE businesses SET status = 'generated', updated_at = datetime('now') WHERE id = ?"
+      ).run(businessId);
+
+      logActivity({
+        kind: "generation",
+        stage: "completed",
+        businessId,
+        businessName: name,
+        message: `Updated production site for ${name} in ${Math.round(
+          generationTimeMs / 1000
+        )}s`,
+      });
+
+      return {
+        businessId,
+        businessName: name,
+        slug,
+        sitePath: siteDir,
+        version,
+        generationTimeMs,
+      };
     }
 
-    let sourceSiteSnapshot = isModificationRequest
-      ? readCachedSourceSnapshot(siteDir)
-      : null;
+    let sourceSiteSnapshot: WebsiteSourceSnapshot | null = null;
 
     if (!isModificationRequest) {
       const assetsDir = path.join(outputSiteDir, "assets", "photos");
@@ -2134,12 +2551,13 @@ export async function generateSiteForBusiness(
       stage: "model",
       businessId,
       businessName: name,
-      message: isModificationRequest
-        ? `Applying requested site changes with ${providerLabel} for ${name}`
-        : `Generating upgraded production site with ${providerLabel} for ${name}`,
+      message:
+        generationMode === "generate"
+          ? `Generating production site with ${providerLabel} for ${name}`
+          : `Regenerating production site with ${providerLabel} for ${name}`,
     });
     let payload = await generateSite(businessData, {
-      modificationPrompt,
+      modificationPrompt: promptText,
       existingSiteFiles,
       sourceSiteSnapshot,
       sourceBrandAssets,
@@ -2150,21 +2568,16 @@ export async function generateSiteForBusiness(
       rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
       businessData
     );
-    const generatedHtmlPageCount = countHtmlPages(normalizedFiles);
-    const missingRequestedPageRoutes = findMissingRequestedPageRoutes(
-      normalizedFiles,
-      requestedRouteAliases
-    );
-    normalizedFiles = synthesizeMissingRouteAliasPages(
-      normalizedFiles,
-      sourceSiteSnapshot,
-      requestedRouteAliases
-    );
     const availableStaticAssetPaths = walkDirectoryFiles(outputSiteDir)
       .map((fullPath) =>
         path.relative(outputSiteDir, fullPath).split(path.sep).join("/")
       )
       .filter((relativePath) => relativePath !== SOURCE_SNAPSHOT_FILE);
+    let bundleValidation = analyzeGeneratedBundle(
+      normalizedFiles,
+      requestedRouteAliases,
+      availableStaticAssetPaths
+    );
 
     const correctionPrompts: string[] = [];
     if (
@@ -2179,26 +2592,31 @@ export async function generateSiteForBusiness(
       );
     }
 
-    if (requiresMultiPageBundle && generatedHtmlPageCount < 2) {
+    if (requiresMultiPageBundle && bundleValidation.htmlPageCount < 2) {
       correctionPrompts.push(
         buildMultiPageCorrectionPrompt(architectureRecommendation)
       );
     }
 
-    if (missingRequestedPageRoutes.length > 0) {
+    if (bundleValidation.missingRequestedPageRoutes.length > 0) {
       correctionPrompts.push(
-        buildRequestedPageCorrectionPrompt(missingRequestedPageRoutes)
+        buildRequestedPageCorrectionPrompt(
+          bundleValidation.missingRequestedPageRoutes
+        )
       );
     }
 
-    const missingBundleReferences =
-      findMissingLocalBundleReferences(
-        normalizedFiles,
-        availableStaticAssetPaths
-      );
-    if (missingBundleReferences.length > 0) {
+    if (bundleValidation.missingPageLinks.length > 0) {
       correctionPrompts.push(
-        buildBundleIntegrityCorrectionPrompt(missingBundleReferences)
+        buildMissingPageLinkCorrectionPrompt(bundleValidation.missingPageLinks)
+      );
+    }
+
+    if (bundleValidation.missingNonPageBundleReferences.length > 0) {
+      correctionPrompts.push(
+        buildBundleIntegrityCorrectionPrompt(
+          bundleValidation.missingNonPageBundleReferences
+        )
       );
     }
 
@@ -2213,7 +2631,7 @@ export async function generateSiteForBusiness(
 
       payload = await generateSite(businessData, {
         modificationPrompt: [
-          modificationPrompt?.trim() || null,
+          promptText || null,
           ...correctionPrompts,
         ]
           .filter(Boolean)
@@ -2228,15 +2646,10 @@ export async function generateSiteForBusiness(
         rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
         businessData
       );
-      const revisedHtmlPageCount = countHtmlPages(normalizedFiles);
-      const remainingMissingRequestedPageRoutes = findMissingRequestedPageRoutes(
+      bundleValidation = analyzeGeneratedBundle(
         normalizedFiles,
-        requestedRouteAliases
-      );
-      normalizedFiles = synthesizeMissingRouteAliasPages(
-        normalizedFiles,
-        sourceSiteSnapshot,
-        requestedRouteAliases
+        requestedRouteAliases,
+        availableStaticAssetPaths
       );
 
       if (
@@ -2251,20 +2664,15 @@ export async function generateSiteForBusiness(
         );
       }
 
-      if (requiresMultiPageBundle && revisedHtmlPageCount < 2) {
+      if (requiresMultiPageBundle && bundleValidation.htmlPageCount < 2) {
         throw new Error(
           "Generated site returned only one HTML page even though a multi-page bundle was required."
         );
       }
 
-      const remainingMissingBundleReferences =
-        findMissingLocalBundleReferences(
-          normalizedFiles,
-          availableStaticAssetPaths
-        );
-      if (remainingMissingBundleReferences.length > 0) {
+      if (bundleValidation.missingPageLinks.length > 0) {
         throw new Error(
-          `Generated site still contains broken local bundle references: ${remainingMissingBundleReferences
+          `Generated site still contains internal page links without matching HTML pages: ${bundleValidation.missingPageLinks
             .slice(0, 6)
             .map(
               (issue) =>
@@ -2274,18 +2682,35 @@ export async function generateSiteForBusiness(
         );
       }
 
-      if (remainingMissingRequestedPageRoutes.length > 0) {
+      if (bundleValidation.missingNonPageBundleReferences.length > 0) {
+        throw new Error(
+          `Generated site still contains broken local bundle references: ${bundleValidation.missingNonPageBundleReferences
+            .slice(0, 6)
+            .map(
+              (issue) =>
+                `${issue.fromFilePath} -> ${issue.rawReference} (${issue.resolvedTarget})`
+            )
+            .join("; ")}`
+        );
+      }
+
+      if (bundleValidation.missingRequestedPageRoutes.length > 0) {
         logActivity({
           kind: "generation",
           stage: "validation",
           businessId,
           businessName: name,
-          message: `Generated bundle still omitted dedicated pages for ${remainingMissingRequestedPageRoutes.join(", ")}; keeping exact-route aliases so navigation still resolves for ${name}.`,
+          message: `Generated bundle still omitted dedicated pages for ${bundleValidation.missingRequestedPageRoutes.join(", ")}; keeping exact-route aliases so navigation still resolves for ${name}.`,
         });
       }
     }
 
-    const finalHtmlPageCount = countHtmlPages(normalizedFiles);
+    const finalHtmlPageCount = bundleValidation.htmlPageCount;
+    normalizedFiles = synthesizeMissingRouteAliasPages(
+      normalizedFiles,
+      sourceSiteSnapshot,
+      bundleValidation.missingRequestedPageRoutes
+    );
     if (
       isBelowRecommendedHtmlPageCount(
         architectureRecommendation,
@@ -2339,7 +2764,7 @@ export async function generateSiteForBusiness(
       version,
       slug,
       sitePath,
-      modificationPrompt ?? null,
+      promptText ?? null,
       modelUsed,
       generationTimeMs
     );
@@ -2354,9 +2779,9 @@ export async function generateSiteForBusiness(
       stage: "completed",
       businessId,
       businessName: name,
-      message: `Generated production site for ${name} in ${Math.round(
-        generationTimeMs / 1000
-      )}s`,
+      message: `${
+        generationMode === "generate" ? "Generated" : "Regenerated"
+      } production site for ${name} in ${Math.round(generationTimeMs / 1000)}s`,
     });
 
     return {

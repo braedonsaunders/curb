@@ -116,6 +116,55 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+@keyframes site-preview-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, -18px, 0) scale(1.04);
+  }
+}
+
+@keyframes site-preview-float-delayed {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(0, 16px, 0) scale(0.97);
+  }
+}
+
+@keyframes site-preview-beam {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateX(520%);
+    opacity: 0;
+  }
+}
+
+@keyframes site-preview-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -125,5 +174,23 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+@layer utilities {
+  .animate-site-preview-float {
+    animation: site-preview-float 7s ease-in-out infinite;
+  }
+
+  .animate-site-preview-float-delayed {
+    animation: site-preview-float-delayed 8.2s ease-in-out infinite;
+  }
+
+  .animate-site-preview-beam {
+    animation: site-preview-beam 2.6s ease-in-out infinite;
+  }
+
+  .animate-site-preview-pulse {
+    animation: site-preview-pulse 1.8s ease-in-out infinite;
   }
 }

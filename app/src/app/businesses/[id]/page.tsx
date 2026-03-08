@@ -238,6 +238,153 @@ function getBusinessesReturnHref(returnTo: string | null) {
   return "/businesses";
 }
 
+const MIN_SITE_PREVIEW_LOADER_MS = 900;
+
+function SitePreviewFrame({
+  businessName,
+  sitePreviewUrl,
+  siteSlug,
+}: {
+  businessName: string;
+  sitePreviewUrl: string | null;
+  siteSlug: string;
+}) {
+  const [iframeLoaded, setIframeLoaded] = useState(false);
+  const [minimumLoaderElapsed, setMinimumLoaderElapsed] = useState(false);
+  const previewLoading = !iframeLoaded || !minimumLoaderElapsed;
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setMinimumLoaderElapsed(true);
+    }, MIN_SITE_PREVIEW_LOADER_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, []);
+
+  return (
+    <Card className="relative overflow-hidden p-0">
+      <div
+        aria-hidden={!previewLoading}
+        className={`absolute inset-0 z-10 transition-opacity duration-500 ${
+          previewLoading ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
+      >
+        <div className="absolute inset-0 overflow-hidden bg-[linear-gradient(135deg,rgba(248,250,252,0.96),rgba(239,246,255,0.98),rgba(236,253,245,0.96))]">
+          <div className="animate-site-preview-float absolute left-[-4rem] top-10 h-44 w-44 rounded-full bg-sky-300/25 blur-3xl" />
+          <div className="animate-site-preview-float-delayed absolute bottom-6 right-[-2rem] h-56 w-56 rounded-full bg-emerald-300/25 blur-3xl" />
+
+          <div className="relative flex h-full items-center justify-center p-6 sm:p-10">
+            <div
+              role="status"
+              aria-live="polite"
+              className="relative w-full max-w-4xl overflow-hidden rounded-[2rem] border border-slate-200/70 bg-white/75 p-4 shadow-[0_24px_80px_-36px_rgba(15,23,42,0.45)] backdrop-blur-sm sm:p-6"
+            >
+              <div className="animate-site-preview-beam absolute inset-y-0 left-[-25%] w-[28%] bg-gradient-to-r from-transparent via-white/80 to-transparent" />
+
+              <div className="mb-6 flex items-center gap-2">
+                <span className="animate-site-preview-pulse h-2.5 w-2.5 rounded-full bg-rose-400/75" />
+                <span
+                  className="animate-site-preview-pulse h-2.5 w-2.5 rounded-full bg-amber-400/75"
+                  style={{ animationDelay: "120ms" }}
+                />
+                <span
+                  className="animate-site-preview-pulse h-2.5 w-2.5 rounded-full bg-emerald-400/75"
+                  style={{ animationDelay: "240ms" }}
+                />
+                <div className="ml-3 h-3 flex-1 rounded-full bg-slate-200/80" />
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(15rem,0.85fr)]">
+                <div className="space-y-4">
+                  <div className="overflow-hidden rounded-[1.6rem] border border-slate-200/70 bg-white/85 p-5 shadow-sm">
+                    <div className="mb-4 flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-100 text-sky-700">
+                        <Sparkles className="size-5" />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="h-4 w-40 rounded-full bg-slate-200/90" />
+                        <div className="h-3 w-28 rounded-full bg-slate-100" />
+                      </div>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="h-24 rounded-3xl bg-slate-100/90" />
+                      <div className="h-24 rounded-3xl bg-slate-100/90" />
+                      <div className="h-24 rounded-3xl bg-slate-100/90" />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-[minmax(0,1.1fr)_minmax(13rem,0.9fr)]">
+                    <div className="space-y-3 rounded-[1.5rem] border border-slate-200/70 bg-white/85 p-5 shadow-sm">
+                      <div className="h-4 w-32 rounded-full bg-slate-200/90" />
+                      <div className="h-3 w-full rounded-full bg-slate-100" />
+                      <div className="h-3 w-5/6 rounded-full bg-slate-100" />
+                      <div className="h-3 w-2/3 rounded-full bg-slate-100" />
+                    </div>
+                    <div className="rounded-[1.5rem] border border-dashed border-sky-200 bg-sky-50/80 p-5 shadow-sm">
+                      <div className="mb-3 h-4 w-24 rounded-full bg-sky-200/80" />
+                      <div className="space-y-2">
+                        <div className="h-12 rounded-2xl bg-white/90" />
+                        <div className="h-12 rounded-2xl bg-white/90" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="rounded-[1.6rem] border border-slate-200/70 bg-slate-950 px-5 py-6 text-white shadow-[0_18px_55px_-28px_rgba(15,23,42,0.9)]">
+                    <div className="mb-3 flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10">
+                        <Globe className="size-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium text-white/90">
+                          Rendering site preview
+                        </p>
+                        <p className="text-xs text-white/60">{businessName}</p>
+                      </div>
+                    </div>
+                    <p className="text-sm leading-6 text-white/70">
+                      Loading the latest generated version and preparing the
+                      live preview canvas.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3 rounded-[1.5rem] border border-slate-200/70 bg-white/85 p-5 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="h-4 w-24 rounded-full bg-slate-200/90" />
+                      <div className="animate-site-preview-pulse rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-medium text-emerald-700">
+                        Booting
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="h-3 w-full rounded-full bg-slate-100" />
+                      <div className="h-3 w-4/5 rounded-full bg-slate-100" />
+                      <div className="h-3 w-3/5 rounded-full bg-slate-100" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <iframe
+        key={sitePreviewUrl}
+        src={sitePreviewUrl ?? `/sites/${siteSlug}`}
+        className={`h-[600px] w-full border-0 transition-opacity duration-500 ${
+          previewLoading ? "opacity-0" : "opacity-100"
+        }`}
+        title={`${businessName} site preview`}
+        sandbox="allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-scripts"
+        onLoad={() => setIframeLoaded(true)}
+      />
+    </Card>
+  );
+}
+
 export default function BusinessDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -536,7 +683,8 @@ export default function BusinessDetailPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          modificationPrompt: promptForRequest,
+          mode: requestedMode,
+          prompt: promptForRequest,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -1729,15 +1877,12 @@ export default function BusinessDetailPage() {
                   </Card>
                 </div>
 
-                <Card className="overflow-hidden p-0">
-                  <iframe
-                    key={sitePreviewUrl}
-                    src={sitePreviewUrl ?? `/sites/${site.slug}`}
-                    className="h-[600px] w-full border-0"
-                    title={`${biz.name} site preview`}
-                    sandbox="allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-scripts"
-                  />
-                </Card>
+                <SitePreviewFrame
+                  key={sitePreviewUrl ?? site.slug}
+                  businessName={biz.name}
+                  sitePreviewUrl={sitePreviewUrl}
+                  siteSlug={site.slug}
+                />
               </>
             ) : (
               <Card>

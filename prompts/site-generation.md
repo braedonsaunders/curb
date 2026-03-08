@@ -158,6 +158,9 @@ Technical requirements:
   root-relative paths like `/about-us/`.
 - If multi-page, return a complete static site bundle with valid relative
   navigation between pages.
+- If you include an internal link to another page, return the matching HTML
+  page in the bundle. Do not leave navigation, CTA, card, or footer links
+  pointing at routes that do not exist.
 - Keep forms, contact actions, booking flows, maps, galleries, FAQs, and other
   real features when the source site includes them.
 - Contact and quote forms must remain static-hosting friendly: use ordinary HTML

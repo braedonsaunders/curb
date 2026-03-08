@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { initializeDatabase } from '@/lib/schema';
-import { generateSiteForBusiness } from '@/lib/core/generate';
+import {
+  generateSiteForBusiness,
+  type SiteGenerationMode,
+} from '@/lib/core/generate';
 import {
   deployPreviewForBusiness,
   isPreviewDeploymentConfigured,
 } from '@/lib/vercel-sites';
+
+const GENERATION_MODES = new Set(['generate', 'modify', 'regenerate']);
 
 export async function POST(
   request: NextRequest,
@@ -23,12 +28,39 @@ export async function POST(
       );
     }
 
-    const body = await request.json();
-    const { promptOverride, modificationPrompt } = body;
+    const body = (await request.json()) as {
+      mode?: unknown;
+      prompt?: unknown;
+      promptOverride?: unknown;
+      modificationPrompt?: unknown;
+    };
+    const { mode, prompt, promptOverride, modificationPrompt } = body;
     const effectivePrompt =
-      typeof modificationPrompt === 'string' && modificationPrompt.trim()
-        ? modificationPrompt
-        : promptOverride;
+      typeof prompt === 'string' && prompt.trim()
+        ? prompt
+        : typeof modificationPrompt === 'string' && modificationPrompt.trim()
+          ? modificationPrompt
+          : promptOverride;
+    const effectiveMode: SiteGenerationMode =
+      typeof mode === 'string' && GENERATION_MODES.has(mode)
+        ? (mode as SiteGenerationMode)
+        : typeof modificationPrompt === 'string' && modificationPrompt.trim()
+          ? 'modify'
+          : 'regenerate';
+
+    if (mode !== undefined && (typeof mode !== 'string' || !GENERATION_MODES.has(mode))) {
+      return NextResponse.json(
+        { error: 'mode must be one of generate, modify, or regenerate' },
+        { status: 400 }
+      );
+    }
+
+    if (prompt !== undefined && typeof prompt !== 'string') {
+      return NextResponse.json(
+        { error: 'prompt must be a string' },
+        { status: 400 }
+      );
+    }
 
     if (promptOverride !== undefined && typeof promptOverride !== 'string') {
       return NextResponse.json(
@@ -44,7 +76,20 @@ export async function POST(
       );
     }
 
-    const site = await generateSiteForBusiness(businessId, effectivePrompt);
+    if (
+      effectiveMode === 'modify' &&
+      !(typeof effectivePrompt === 'string' && effectivePrompt.trim())
+    ) {
+      return NextResponse.json(
+        { error: 'Modify mode requires a prompt describing the requested changes.' },
+        { status: 400 }
+      );
+    }
+
+    const site = await generateSiteForBusiness(businessId, {
+      mode: effectiveMode,
+      prompt: typeof effectivePrompt === 'string' ? effectivePrompt : undefined,
+    });
     let previewDeployment:
       | {
           aliasUrl: string | null;

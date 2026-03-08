@@ -1,11 +1,18 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateText, type LanguageModel, type ModelMessage } from "ai";
+import {
+  generateText,
+  stepCountIs,
+  tool,
+  type LanguageModel,
+  type ModelMessage,
+} from "ai";
 import fs from "fs";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import path from "path";
 import { randomUUID } from "node:crypto";
+import { z } from "zod";
 import {
   buildAnthropicOAuthConfigUpdates,
   refreshAnthropicToken,
@@ -102,6 +109,16 @@ export interface GenerateSiteOptions {
   }>;
 }
 
+export interface ModifySiteWithToolsOptions {
+  siteDir: string;
+  modificationPrompt: string;
+  additionalInstructions?: string[];
+  sourceSiteSnapshot?: WebsiteSourceSnapshot | null;
+  sourceBrandAssets?: {
+    logo?: SourceBrandAsset | null;
+  };
+}
+
 export type SiteArchitectureMode = "single-page" | "multi-page";
 
 export interface SiteArchitectureRecommendation {
@@ -153,6 +170,32 @@ const DEDICATED_PAGE_SLUG_HINTS = new Set([
   "specialties",
   "specialty",
 ]);
+
+const SITE_MODIFIER_MAX_STEPS = 20;
+const SITE_MODIFIER_MAX_READ_CHARS = 24000;
+const SITE_MODIFIER_MAX_FILE_LIST = 250;
+const SITE_MODIFIER_TEXT_EXTENSIONS = new Set([
+  ".css",
+  ".csv",
+  ".html",
+  ".js",
+  ".json",
+  ".jsx",
+  ".map",
+  ".md",
+  ".mjs",
+  ".svg",
+  ".text",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".webmanifest",
+  ".xml",
+  ".yaml",
+  ".yml",
+]);
+const SITE_MODIFIER_PROTECTED_FILES = new Set(["__source_snapshot.json"]);
 
 async function buildAnthropicOauthProvider(config: Config) {
   if (!config.anthropicOAuthAccessToken) {
@@ -545,6 +588,303 @@ function loadPromptTemplate(filename: string): string {
   } catch {
     return "";
   }
+}
+
+function isWithinSiteDirectory(targetPath: string, rootPath: string): boolean {
+  const relativePath = path.relative(rootPath, targetPath);
+  return (
+    relativePath === "" ||
+    (!relativePath.startsWith("..") && !path.isAbsolute(relativePath))
+  );
+}
+
+function normalizeSiteToolPath(filePath: string): string {
+  const normalized = path.posix.normalize(
+    filePath.trim().replaceAll("\\", "/").replace(/^\/+/, "")
+  );
+
+  if (!normalized || normalized === "." || normalized.startsWith("../")) {
+    throw new Error("Invalid site file path.");
+  }
+
+  return normalized;
+}
+
+function resolveSiteToolPath(siteDir: string, filePath: string): {
+  absolutePath: string;
+  relativePath: string;
+} {
+  const relativePath = normalizeSiteToolPath(filePath);
+  if (SITE_MODIFIER_PROTECTED_FILES.has(relativePath)) {
+    throw new Error("This internal site file cannot be modified.");
+  }
+  const absolutePath = path.resolve(siteDir, relativePath);
+
+  if (!isWithinSiteDirectory(absolutePath, siteDir)) {
+    throw new Error("Requested file is outside the site directory.");
+  }
+
+  return { absolutePath, relativePath };
+}
+
+function isLikelySiteTextFile(filePath: string, buffer: Buffer): boolean {
+  const extension = path.extname(filePath).toLowerCase();
+  if (SITE_MODIFIER_TEXT_EXTENSIONS.has(extension)) {
+    return true;
+  }
+
+  return !buffer.subarray(0, 8000).includes(0);
+}
+
+function walkSiteFiles(siteDir: string): string[] {
+  if (!fs.existsSync(siteDir)) {
+    return [];
+  }
+
+  const results: string[] = [];
+  const stack = [siteDir];
+
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    if (!currentDir) {
+      continue;
+    }
+
+    const entries = fs
+      .readdirSync(currentDir, { withFileTypes: true })
+      .sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+
+      if (entry.isFile()) {
+        results.push(fullPath);
+      }
+    }
+  }
+
+  return results.sort((left, right) => left.localeCompare(right));
+}
+
+function listSiteFilesForModel(siteDir: string, directory?: string): Array<{
+  path: string;
+  size: number;
+  isText: boolean;
+}> {
+  const normalizedDirectory = directory?.trim();
+  const scopedRoot =
+    !normalizedDirectory || normalizedDirectory === "." || normalizedDirectory === "./"
+      ? siteDir
+      : resolveSiteToolPath(siteDir, normalizedDirectory).absolutePath;
+
+  if (!fs.existsSync(scopedRoot)) {
+    throw new Error("Requested directory does not exist.");
+  }
+
+  const stat = fs.statSync(scopedRoot);
+  if (!stat.isDirectory()) {
+    throw new Error("Requested path is not a directory.");
+  }
+
+  return walkSiteFiles(scopedRoot)
+    .map((fullPath) => {
+      const relativePath = path.relative(siteDir, fullPath).replaceAll("\\", "/");
+      if (SITE_MODIFIER_PROTECTED_FILES.has(relativePath)) {
+        return null;
+      }
+
+      const buffer = fs.readFileSync(fullPath);
+      return {
+        path: relativePath,
+        size: buffer.byteLength,
+        isText: isLikelySiteTextFile(fullPath, buffer),
+      };
+    })
+    .filter(
+      (
+        entry
+      ): entry is {
+        path: string;
+        size: number;
+        isText: boolean;
+      } => entry !== null
+    )
+    .slice(0, SITE_MODIFIER_MAX_FILE_LIST);
+}
+
+function buildSiteFileInventory(siteDir: string): string {
+  const files = listSiteFilesForModel(siteDir);
+
+  if (files.length === 0) {
+    return "Current Site Files:\n- No files were found in the working site bundle.";
+  }
+
+  const lines = files.map(
+    (file) =>
+      `- ${file.path} (${file.isText ? "text" : "binary"}, ${file.size} bytes)`
+  );
+  const omittedCount = Math.max(0, walkSiteFiles(siteDir).length - files.length);
+
+  return [
+    "Current Site Files:",
+    ...lines,
+    omittedCount > 0
+      ? `- ...and ${omittedCount} more file${omittedCount === 1 ? "" : "s"}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function readSiteFileForModel(
+  siteDir: string,
+  filePath: string,
+  offset = 0,
+  limit = SITE_MODIFIER_MAX_READ_CHARS
+): {
+  path: string;
+  size: number;
+  isText: boolean;
+  offset: number;
+  limit: number;
+  returnedChars: number;
+  truncated: boolean;
+  content: string;
+} {
+  const { absolutePath, relativePath } = resolveSiteToolPath(siteDir, filePath);
+
+  if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+    throw new Error("Site file not found.");
+  }
+
+  const buffer = fs.readFileSync(absolutePath);
+  const isText = isLikelySiteTextFile(absolutePath, buffer);
+  if (!isText) {
+    throw new Error("This file is binary and cannot be read as text.");
+  }
+
+  const safeOffset = Math.max(0, offset);
+  const safeLimit = Math.max(1, Math.min(limit, SITE_MODIFIER_MAX_READ_CHARS));
+  const content = buffer.toString("utf-8");
+  const sliced = content.slice(safeOffset, safeOffset + safeLimit);
+
+  return {
+    path: relativePath,
+    size: buffer.byteLength,
+    isText,
+    offset: safeOffset,
+    limit: safeLimit,
+    returnedChars: sliced.length,
+    truncated: safeOffset + safeLimit < content.length,
+    content: sliced,
+  };
+}
+
+function writeSiteFileFromModel(
+  siteDir: string,
+  filePath: string,
+  content: string
+): {
+  path: string;
+  created: boolean;
+  changed: boolean;
+  size: number;
+} {
+  const { absolutePath, relativePath } = resolveSiteToolPath(siteDir, filePath);
+  const exists = fs.existsSync(absolutePath);
+
+  if (exists && fs.statSync(absolutePath).isDirectory()) {
+    throw new Error("Cannot overwrite a directory with a file.");
+  }
+
+  let changed = true;
+  if (exists) {
+    const existingBuffer = fs.readFileSync(absolutePath);
+    if (!isLikelySiteTextFile(absolutePath, existingBuffer)) {
+      throw new Error("This file is binary and cannot be overwritten as text.");
+    }
+
+    changed = existingBuffer.toString("utf-8") !== content;
+  }
+
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  fs.writeFileSync(absolutePath, content, "utf-8");
+
+  return {
+    path: relativePath,
+    created: !exists,
+    changed,
+    size: Buffer.byteLength(content, "utf-8"),
+  };
+}
+
+function replaceInSiteFileFromModel(
+  siteDir: string,
+  filePath: string,
+  oldText: string,
+  newText: string,
+  replaceAll = false
+): {
+  path: string;
+  changed: boolean;
+  replacements: number;
+  size: number;
+} {
+  const { absolutePath, relativePath } = resolveSiteToolPath(siteDir, filePath);
+
+  if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+    throw new Error("Site file not found.");
+  }
+
+  const existingBuffer = fs.readFileSync(absolutePath);
+  if (!isLikelySiteTextFile(absolutePath, existingBuffer)) {
+    throw new Error("This file is binary and cannot be edited as text.");
+  }
+
+  const existingContent = existingBuffer.toString("utf-8");
+  const matchCount = oldText ? existingContent.split(oldText).length - 1 : 0;
+  if (matchCount === 0) {
+    throw new Error("The requested text to replace was not found in the file.");
+  }
+
+  const replacements = replaceAll ? matchCount : 1;
+  const nextContent = replaceAll
+    ? existingContent.split(oldText).join(newText)
+    : existingContent.replace(oldText, newText);
+
+  fs.writeFileSync(absolutePath, nextContent, "utf-8");
+
+  return {
+    path: relativePath,
+    changed: nextContent !== existingContent,
+    replacements,
+    size: Buffer.byteLength(nextContent, "utf-8"),
+  };
+}
+
+function deleteSiteFileFromModel(
+  siteDir: string,
+  filePath: string
+): {
+  path: string;
+  deleted: boolean;
+} {
+  const { absolutePath, relativePath } = resolveSiteToolPath(siteDir, filePath);
+
+  if (!fs.existsSync(absolutePath)) {
+    return { path: relativePath, deleted: false };
+  }
+
+  if (fs.statSync(absolutePath).isDirectory()) {
+    throw new Error("Use file deletion only on files, not directories.");
+  }
+
+  fs.rmSync(absolutePath, { force: true });
+  return { path: relativePath, deleted: true };
 }
 
 function injectPlaceholders(
@@ -1257,6 +1597,177 @@ export async function generateSite(
   });
 
   return ensureGeneratedSitePayload(response.text);
+}
+
+export async function modifySiteWithTools(
+  businessData: BusinessData,
+  options: ModifySiteWithToolsOptions
+): Promise<{ summary: string; changedPaths: string[] }> {
+  const runtime = await getLanguageModelRuntime();
+  const promptTemplate = loadPromptTemplate("site-modification.md");
+  const businessContext = buildBusinessContext(businessData);
+  const sourceSiteSummary = buildSourceSiteSummary(options.sourceSiteSnapshot);
+  const sourceBrandAssetSummary = buildSourceBrandAssetSummary(
+    options.sourceBrandAssets
+  );
+  const fileInventory = buildSiteFileInventory(options.siteDir);
+  const changedPaths = new Set<string>();
+
+  const systemPrompt =
+    promptTemplate ||
+    [
+      "You are a senior front-end engineer editing an existing static website in place.",
+      "Use the available tools to inspect the current site, then make the smallest precise file edits needed to satisfy the user request.",
+      "Do not regenerate or rewrite the whole site unless the user explicitly asks for a wholesale redesign.",
+      "Prefer targeted replacements over broad rewrites. Preserve untouched files exactly.",
+      "When you are done, reply with a short plain-text summary of the edits you made.",
+    ].join("\n\n");
+
+  const promptSections = [
+    "Business Context:",
+    businessContext,
+    sourceSiteSummary,
+    sourceBrandAssetSummary,
+    fileInventory,
+    "User Request:",
+    options.modificationPrompt.trim(),
+    "Editing Rules:",
+    [
+      "- Use tools to inspect files before changing them.",
+      "- Prefer `replace_in_file` for localized edits.",
+      "- Use `write_site_file` when creating a new file or when a file needs substantial restructuring.",
+      "- Only touch files that are necessary to fulfill the request.",
+      "- Reuse the existing CSS, JS, tokens, structure, and copy unless the user explicitly asks for broader changes.",
+      "- Do not make unrelated design, layout, copy, or architecture changes.",
+      "- Keep the site static-hosting friendly and preserve working internal links and local asset references.",
+      "- If the user asks for a new page, create that page and update only the navigation or CTA links that need to point to it.",
+    ].join("\n"),
+  ];
+
+  if ((options.additionalInstructions?.length ?? 0) > 0) {
+    promptSections.push(
+      "Additional Required Fixes:",
+      options.additionalInstructions!.map((instruction) => `- ${instruction}`).join("\n")
+    );
+  }
+
+  const result = await generateText({
+    model: runtime.model,
+    system: systemPrompt,
+    prompt: promptSections.join("\n\n"),
+    tools: {
+      list_site_files: tool({
+        description:
+          "List files in the current site bundle. Use this to inspect the available HTML, CSS, JS, assets, and page paths before editing.",
+        inputSchema: z.object({
+          directory: z
+            .string()
+            .trim()
+            .optional()
+            .describe("Optional relative directory to inspect. Omit to list from the site root."),
+        }),
+        execute: async ({ directory }) => ({
+          files: listSiteFilesForModel(options.siteDir, directory),
+        }),
+      }),
+      read_site_file: tool({
+        description:
+          "Read text content from an existing site file. Use offset/limit if you need a later slice of a large file.",
+        inputSchema: z.object({
+          path: z.string().trim().min(1).describe("Relative path of the file to read."),
+          offset: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe("Optional character offset for partial reads."),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(SITE_MODIFIER_MAX_READ_CHARS)
+            .optional()
+            .describe("Optional maximum number of characters to read."),
+        }),
+        execute: async ({ path: filePath, offset, limit }) =>
+          readSiteFileForModel(options.siteDir, filePath, offset, limit),
+      }),
+      replace_in_file: tool({
+        description:
+          "Perform a targeted text replacement inside an existing text file. Prefer this for small, precise edits.",
+        inputSchema: z.object({
+          path: z.string().trim().min(1).describe("Relative path of the file to modify."),
+          oldText: z
+            .string()
+            .min(1)
+            .describe("Exact existing text to replace. It must already exist in the file."),
+          newText: z
+            .string()
+            .describe("Replacement text that should be written in place of oldText."),
+          replaceAll: z
+            .boolean()
+            .optional()
+            .describe("Set true to replace every occurrence instead of only the first."),
+        }),
+        execute: async ({ path: filePath, oldText, newText, replaceAll }) => {
+          const outcome = replaceInSiteFileFromModel(
+            options.siteDir,
+            filePath,
+            oldText,
+            newText,
+            replaceAll
+          );
+          if (outcome.changed) {
+            changedPaths.add(outcome.path);
+          }
+          return outcome;
+        },
+      }),
+      write_site_file: tool({
+        description:
+          "Write a complete text file. Use this to create a new text file or to replace an existing file after substantial restructuring.",
+        inputSchema: z.object({
+          path: z.string().trim().min(1).describe("Relative path of the file to write."),
+          content: z.string().describe("The complete file contents to write."),
+        }),
+        execute: async ({ path: filePath, content }) => {
+          const outcome = writeSiteFileFromModel(
+            options.siteDir,
+            filePath,
+            content
+          );
+          if (outcome.changed || outcome.created) {
+            changedPaths.add(outcome.path);
+          }
+          return outcome;
+        },
+      }),
+      delete_site_file: tool({
+        description:
+          "Delete an existing file from the site bundle when the user explicitly wants it removed or replaced.",
+        inputSchema: z.object({
+          path: z.string().trim().min(1).describe("Relative path of the file to delete."),
+        }),
+        execute: async ({ path: filePath }) => {
+          const outcome = deleteSiteFileFromModel(options.siteDir, filePath);
+          if (outcome.deleted) {
+            changedPaths.add(outcome.path);
+          }
+          return outcome;
+        },
+      }),
+    },
+    toolChoice: "required",
+    stopWhen: stepCountIs(SITE_MODIFIER_MAX_STEPS),
+    maxOutputTokens: 1200,
+  });
+
+  return {
+    summary: result.text.trim(),
+    changedPaths: Array.from(changedPaths).sort((left, right) =>
+      left.localeCompare(right)
+    ),
+  };
 }
 
 export async function generateEmail(
