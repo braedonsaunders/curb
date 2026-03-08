@@ -1131,7 +1131,7 @@ function buildArchitectureRecommendationSummary(
     `Confidence: ${recommendation.confidence}`,
     `Estimated source/site page complexity: ${sourcePageEstimateLabel} pages`,
     `Target substantive HTML page range: ${targetPageRangeLabel}`,
-    `Minimum substantive HTML pages required: ${recommendation.minimumHtmlPageCount}`,
+    `Recommended substantive HTML page minimum: ${recommendation.minimumHtmlPageCount}`,
     ...recommendation.reasons.map((reason) => `- ${reason}`),
     recommendation.mode === "multi-page"
       ? recommendation.required

@@ -375,6 +375,13 @@ function countHtmlPages(files: GeneratedSiteFile[]): number {
   return files.filter((file) => isHtmlFile(file.path)).length;
 }
 
+function isBelowRecommendedHtmlPageCount(
+  recommendation: SiteArchitectureRecommendation,
+  htmlPageCount: number
+): boolean {
+  return htmlPageCount < recommendation.minimumHtmlPageCount;
+}
+
 function buildExactLogoCorrectionPrompt(relativePath: string): string {
   return [
     "Critical correction:",
@@ -394,26 +401,6 @@ function buildMultiPageCorrectionPrompt(
     recommendation.reasons.length > 0
       ? `Reasons: ${recommendation.reasons.join(" ")}`
       : "Reasons: the captured source material indicates a multi-page architecture.",
-  ].join(" ");
-}
-
-function buildPageComplexityCorrectionPrompt(
-  recommendation: SiteArchitectureRecommendation,
-  currentHtmlPageCount: number
-): string {
-  const targetRange =
-    recommendation.targetHtmlPageCountMin === recommendation.targetHtmlPageCountMax
-      ? `${recommendation.targetHtmlPageCountMin}`
-      : `${recommendation.targetHtmlPageCountMin}-${recommendation.targetHtmlPageCountMax}`;
-  const sourcePageEstimateLabel = recommendation.sourcePageEstimateIsLowerBound
-    ? `at least ${recommendation.sourcePageEstimate}`
-    : `${recommendation.sourcePageEstimate}`;
-
-  return [
-    "Page complexity correction:",
-    `The source/current site is roughly a ${sourcePageEstimateLabel}-page experience, but the current bundle only has ${currentHtmlPageCount} substantive HTML pages.`,
-    `Return a richer multi-page bundle in roughly the ${targetRange}-page range, with no fewer than ${recommendation.minimumHtmlPageCount} substantive HTML pages.`,
-    "Preserve page-level separation for major sections, service groups, locations, galleries, resources, and utility flows instead of collapsing them into one or two pages.",
   ].join(" ");
 }
 
@@ -2008,17 +1995,6 @@ export async function generateSiteForBusiness(
       );
     }
 
-    if (
-      generatedHtmlPageCount < architectureRecommendation.minimumHtmlPageCount
-    ) {
-      correctionPrompts.push(
-        buildPageComplexityCorrectionPrompt(
-          architectureRecommendation,
-          generatedHtmlPageCount
-        )
-      );
-    }
-
     const missingBundleReferences =
       findMissingLocalBundleReferences(
         normalizedFiles,
@@ -2080,14 +2056,6 @@ export async function generateSiteForBusiness(
         );
       }
 
-      if (
-        revisedHtmlPageCount < architectureRecommendation.minimumHtmlPageCount
-      ) {
-        throw new Error(
-          `Generated site returned ${revisedHtmlPageCount} substantive HTML pages, but at least ${architectureRecommendation.minimumHtmlPageCount} are required to match source-site complexity.`
-        );
-      }
-
       const remainingMissingBundleReferences =
         findMissingLocalBundleReferences(
           normalizedFiles,
@@ -2104,6 +2072,22 @@ export async function generateSiteForBusiness(
             .join("; ")}`
         );
       }
+    }
+
+    const finalHtmlPageCount = countHtmlPages(normalizedFiles);
+    if (
+      isBelowRecommendedHtmlPageCount(
+        architectureRecommendation,
+        finalHtmlPageCount
+      )
+    ) {
+      logActivity({
+        kind: "generation",
+        stage: "validation",
+        businessId,
+        businessName: name,
+        message: `Accepting bundle below the recommended page target for ${name}: returned ${finalHtmlPageCount} HTML pages, target was ${architectureRecommendation.minimumHtmlPageCount}.`,
+      });
     }
 
     logActivity({
