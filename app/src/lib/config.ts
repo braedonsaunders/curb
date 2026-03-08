@@ -34,6 +34,10 @@ export interface Config {
   businessAddress: string;
   businessEmail: string;
   siteBaseUrl: string;
+  vercelToken: string;
+  vercelTeamId: string;
+  vercelPreviewProjectId: string;
+  vercelPreviewRootDomain: string;
   pricingText: string;
 }
 
@@ -69,6 +73,10 @@ const DEFAULT_CONFIG: Config = {
   businessAddress: "",
   businessEmail: "",
   siteBaseUrl: "http://localhost:3000/sites",
+  vercelToken: "",
+  vercelTeamId: "",
+  vercelPreviewProjectId: "",
+  vercelPreviewRootDomain: "",
   pricingText: "",
 };
 

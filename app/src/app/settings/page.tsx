@@ -83,6 +83,12 @@ interface SettingsData {
     categories: string[];
     siteBaseUrl: string;
   };
+  vercel: {
+    token: string;
+    teamId: string;
+    previewProjectId: string;
+    previewRootDomain: string;
+  };
   outreach: {
     yourName: string;
     businessName: string;
@@ -136,6 +142,7 @@ type SettingsResponse = Partial<
   anthropicOAuth?: Partial<SettingsData["anthropicOAuth"]>;
   openaiOAuth?: Partial<SettingsData["openaiOAuth"]>;
   defaults?: Partial<SettingsData["defaults"]>;
+  vercel?: Partial<SettingsData["vercel"]>;
   outreach?: Partial<SettingsData["outreach"]>;
   pricing?: Partial<SettingsData["pricing"]>;
 };
@@ -173,6 +180,12 @@ const DEFAULT_SETTINGS: SettingsData = {
     radius: 15,
     categories: [],
     siteBaseUrl: "http://localhost:3000/sites",
+  },
+  vercel: {
+    token: "",
+    teamId: "",
+    previewProjectId: "",
+    previewRootDomain: "",
   },
   outreach: { yourName: "", businessName: "", address: "", email: "" },
   pricing: { text: "" },
@@ -269,6 +282,7 @@ function normalizeSettingsData(data: SettingsResponse): SettingsData {
       ...(data.openaiOAuth ?? {}),
     },
     defaults: { ...DEFAULT_SETTINGS.defaults, ...(data.defaults ?? {}) },
+    vercel: { ...DEFAULT_SETTINGS.vercel, ...(data.vercel ?? {}) },
     outreach: { ...DEFAULT_SETTINGS.outreach, ...(data.outreach ?? {}) },
     pricing: { ...DEFAULT_SETTINGS.pricing, ...(data.pricing ?? {}) },
   };
@@ -287,6 +301,7 @@ export default function SettingsPage() {
     openaiApiKey: false,
     googleApiKey: false,
     openrouterApiKey: false,
+    vercelToken: false,
   });
   const [oauthPhase, setOauthPhase] = useState<
     "idle" | "waiting" | "exchanging" | "disconnecting"
@@ -513,6 +528,16 @@ export default function SettingsPage() {
     setSettings((prev) => ({
       ...prev,
       defaults: { ...prev.defaults, [key]: value },
+    }));
+  }
+
+  function updateVercel(
+    key: keyof SettingsData["vercel"],
+    value: string
+  ) {
+    setSettings((prev) => ({
+      ...prev,
+      vercel: { ...prev.vercel, [key]: value },
     }));
   }
 
@@ -993,721 +1018,894 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      {/* Credentials */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Key className="size-4" />
-            Credentials
-          </CardTitle>
-          <CardDescription>
-            Google Places powers discovery. Choose the AI provider Curb should
-            use for audits, site generation, and outreach.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="space-y-2">
-            <Label htmlFor="googlePlaces">Google Places API Key</Label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Input
-                  id="googlePlaces"
-                  type={showKeys.googlePlaces ? "text" : "password"}
-                  value={settings.credentials.googlePlaces}
-                  onChange={(e) =>
-                    updateCredential("googlePlaces", e.target.value)
-                  }
-                  placeholder="Enter your Google Places API key"
-                />
-              </div>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => toggleKeyVisibility("googlePlaces")}
-              >
-                {showKeys.googlePlaces ? (
-                  <EyeOff className="size-4" />
-                ) : (
-                  <Eye className="size-4" />
-                )}
-              </Button>
-            </div>
-          </div>
+      <Tabs defaultValue="vercel" className="space-y-6">
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="vercel">Vercel</TabsTrigger>
+          <TabsTrigger value="credentials">AI & APIs</TabsTrigger>
+          <TabsTrigger value="defaults">Defaults</TabsTrigger>
+          <TabsTrigger value="outreach">Outreach</TabsTrigger>
+          <TabsTrigger value="pricing">Pricing</TabsTrigger>
+        </TabsList>
 
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div className="space-y-1">
-                <Label>AI Provider</Label>
+        <TabsContent value="vercel" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Link2 className="size-4" />
+                Vercel Deployments
+              </CardTitle>
+              <CardDescription>
+                Shared preview-project settings plus the credentials needed to
+                spin up dedicated customer projects later.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="vercelToken">Vercel Token</Label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      id="vercelToken"
+                      type={showKeys.vercelToken ? "text" : "password"}
+                      value={settings.vercel.token}
+                      onChange={(e) => updateVercel("token", e.target.value)}
+                      placeholder="Enter a Vercel access token"
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => toggleKeyVisibility("vercelToken")}
+                  >
+                    {showKeys.vercelToken ? (
+                      <EyeOff className="size-4" />
+                    ) : (
+                      <Eye className="size-4" />
+                    )}
+                  </Button>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  Each provider keeps its own API key and model ID. Anthropic
-                  also supports the existing OAuth flow.
+                  Use a token from the Vercel account or team that should own
+                  the preview and customer projects.
                 </p>
               </div>
-              <Badge variant="outline">{activeProviderLabel}</Badge>
-            </div>
 
-            <Tabs
-              value={settings.credentials.provider}
-              onValueChange={(value) => {
-                if (
-                  value === "anthropic" ||
-                  value === "openai" ||
-                  value === "google" ||
-                  value === "openrouter"
-                ) {
-                  updateCredential("provider", value);
-                }
-              }}
-            >
-              <TabsList className="h-auto flex-wrap">
-                {AI_PROVIDER_ORDER.map((provider) => (
-                  <TabsTrigger key={provider} value={provider}>
-                    {AI_PROVIDER_LABELS[provider]}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="vercelTeamId">Team ID</Label>
+                  <Input
+                    id="vercelTeamId"
+                    value={settings.vercel.teamId}
+                    onChange={(e) => updateVercel("teamId", e.target.value)}
+                    placeholder="Optional for personal accounts"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Leave blank if you deploy into your personal Vercel account.
+                  </p>
+                </div>
 
-              <TabsContent value="anthropic" className="space-y-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="vercelPreviewProjectId">
+                    Preview Project ID
+                  </Label>
+                  <Input
+                    id="vercelPreviewProjectId"
+                    value={settings.vercel.previewProjectId}
+                    onChange={(e) =>
+                      updateVercel("previewProjectId", e.target.value)
+                    }
+                    placeholder="Existing shared preview project"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Curb deploys every prospect preview into this one project.
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="vercelPreviewRootDomain">
+                  Preview Root Domain
+                </Label>
+                <Input
+                  id="vercelPreviewRootDomain"
+                  value={settings.vercel.previewRootDomain}
+                  onChange={(e) =>
+                    updateVercel("previewRootDomain", e.target.value)
+                  }
+                  placeholder="preview.example.com"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Optional, but recommended. Curb aliases previews to
+                  `slug.preview.example.com` when this is set and available on
+                  your Vercel account.
+                </p>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={() => saveSection("vercel")}
+                  disabled={saving === "vercel"}
+                >
+                  {saving === "vercel" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Save Vercel Settings
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="credentials" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Key className="size-4" />
+                Credentials
+              </CardTitle>
+              <CardDescription>
+                Google Places powers discovery. Choose the AI provider Curb
+                should use for audits, site generation, and outreach.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="googlePlaces">Google Places API Key</Label>
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      id="googlePlaces"
+                      type={showKeys.googlePlaces ? "text" : "password"}
+                      value={settings.credentials.googlePlaces}
+                      onChange={(e) =>
+                        updateCredential("googlePlaces", e.target.value)
+                      }
+                      placeholder="Enter your Google Places API key"
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => toggleKeyVisibility("googlePlaces")}
+                  >
+                    {showKeys.googlePlaces ? (
+                      <EyeOff className="size-4" />
+                    ) : (
+                      <Eye className="size-4" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="space-y-1">
-                    <Label>Anthropic Authentication</Label>
+                    <Label>AI Provider</Label>
                     <p className="text-xs text-muted-foreground">
-                      Use a standard API key or Anthropic&apos;s Claude-account
-                      OAuth flow.
+                      Each provider keeps its own API key and model ID.
+                      Anthropic also supports the existing OAuth flow.
                     </p>
                   </div>
-                  <Badge variant="outline">
-                    {settings.credentials.anthropicAuthMode === "oauth"
-                      ? "Using OAuth"
-                      : "Using API key"}
-                  </Badge>
+                  <Badge variant="outline">{activeProviderLabel}</Badge>
                 </div>
 
                 <Tabs
-                  value={settings.credentials.anthropicAuthMode}
+                  value={settings.credentials.provider}
                   onValueChange={(value) => {
-                    if (value === "apiKey" || value === "oauth") {
-                      updateAnthropicAuthMode(value);
+                    if (
+                      value === "anthropic" ||
+                      value === "openai" ||
+                      value === "google" ||
+                      value === "openrouter"
+                    ) {
+                      updateCredential("provider", value);
                     }
                   }}
                 >
-                  <TabsList>
-                    <TabsTrigger value="apiKey">API Key</TabsTrigger>
-                    <TabsTrigger value="oauth">Anthropic OAuth</TabsTrigger>
+                  <TabsList className="h-auto flex-wrap">
+                    {AI_PROVIDER_ORDER.map((provider) => (
+                      <TabsTrigger key={provider} value={provider}>
+                        {AI_PROVIDER_LABELS[provider]}
+                      </TabsTrigger>
+                    ))}
                   </TabsList>
 
-                  <TabsContent value="apiKey" className="space-y-3 pt-2">
-                    <div className="space-y-2">
-                      <Label htmlFor="anthropicApiKey">Anthropic API Key</Label>
-                      <div className="flex gap-2">
-                        <div className="relative flex-1">
-                          <Input
-                            id="anthropicApiKey"
-                            type={
-                              showKeys.anthropicApiKey ? "text" : "password"
-                            }
-                            value={settings.credentials.anthropicApiKey}
-                            onChange={(e) =>
-                              updateCredential(
-                                "anthropicApiKey",
-                                e.target.value
-                              )
-                            }
-                            placeholder="Enter your Anthropic API key"
-                          />
-                        </div>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => toggleKeyVisibility("anthropicApiKey")}
-                        >
-                          {showKeys.anthropicApiKey ? (
-                            <EyeOff className="size-4" />
-                          ) : (
-                            <Eye className="size-4" />
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="oauth" className="space-y-3 pt-2">
-                    <div className="rounded-lg border bg-muted/30 p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <p className="text-sm font-medium">
-                            Anthropic OAuth
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Authorize in the browser, then paste the full
-                            `code#state` value back here.
-                          </p>
-                        </div>
-                        {settings.anthropicOAuth.connected ? (
-                          <Badge variant="secondary">
-                            <CheckCircle2 className="size-3" />
-                            Connected
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline">Not connected</Badge>
-                        )}
-                      </div>
-
-                      <div className="mt-3 space-y-2 text-xs text-muted-foreground">
-                        {oauthExpiryLabel ? (
-                          <p>Current token expires: {oauthExpiryLabel}</p>
-                        ) : null}
-                        {settings.anthropicOAuth.hasRefreshToken ? (
-                          <p>
-                            Refresh token is available for automatic renewal.
-                          </p>
-                        ) : null}
-                      </div>
-
-                      {oauthError ? (
-                        <p className="mt-3 text-xs text-destructive">
-                          {oauthError}
+                  <TabsContent value="anthropic" className="space-y-4 pt-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <Label>Anthropic Authentication</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Use a standard API key or Anthropic&apos;s
+                          Claude-account OAuth flow.
                         </p>
-                      ) : null}
-
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {oauthViewState === "disconnecting" ? (
-                          <Button variant="outline" disabled>
-                            <Loader2 className="size-4 animate-spin" />
-                            Disconnecting
-                          </Button>
-                        ) : settings.anthropicOAuth.connected ? (
-                          <Button
-                            variant="outline"
-                            onClick={() => void disconnectAnthropicOAuth()}
-                          >
-                            <Unplug className="size-4" />
-                            Disconnect OAuth
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            onClick={() => void startAnthropicOAuth()}
-                            disabled={
-                              oauthViewState === "waiting" ||
-                              oauthViewState === "exchanging"
-                            }
-                          >
-                            {oauthViewState === "waiting" ? (
-                              <Loader2 className="size-4 animate-spin" />
-                            ) : (
-                              <ExternalLink className="size-4" />
-                            )}
-                            Connect Anthropic
-                          </Button>
-                        )}
-
-                        {oauthAuthorizeUrl ? (
-                          <a
-                            href={oauthAuthorizeUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex h-8 items-center rounded-lg border border-border px-2.5 text-sm font-medium hover:bg-muted"
-                          >
-                            <ExternalLink className="mr-1.5 size-4" />
-                            Open auth page
-                          </a>
-                        ) : null}
                       </div>
+                      <Badge variant="outline">
+                        {settings.credentials.anthropicAuthMode === "oauth"
+                          ? "Using OAuth"
+                          : "Using API key"}
+                      </Badge>
+                    </div>
 
-                      {(oauthViewState === "waiting" ||
-                        oauthViewState === "exchanging") && (
-                        <div className="mt-4 space-y-3 rounded-lg border border-dashed bg-background p-3">
-                          <div className="space-y-1">
-                            <Label htmlFor="anthropic-oauth-code">
-                              Paste the Anthropic authorization code
-                            </Label>
-                            <p className="text-xs text-muted-foreground">
-                              Anthropic returns a single value in the format
-                              `code#state`. Paste it exactly as shown.
-                            </p>
-                          </div>
-                          <div className="flex flex-col gap-2 sm:flex-row">
-                            <Input
-                              id="anthropic-oauth-code"
-                              value={oauthCode}
-                              onChange={(e) => setOauthCode(e.target.value)}
-                              placeholder="code#state"
-                            />
+                    <Tabs
+                      value={settings.credentials.anthropicAuthMode}
+                      onValueChange={(value) => {
+                        if (value === "apiKey" || value === "oauth") {
+                          updateAnthropicAuthMode(value);
+                        }
+                      }}
+                    >
+                      <TabsList>
+                        <TabsTrigger value="apiKey">API Key</TabsTrigger>
+                        <TabsTrigger value="oauth">Anthropic OAuth</TabsTrigger>
+                      </TabsList>
+
+                      <TabsContent value="apiKey" className="space-y-3 pt-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="anthropicApiKey">
+                            Anthropic API Key
+                          </Label>
+                          <div className="flex gap-2">
+                            <div className="relative flex-1">
+                              <Input
+                                id="anthropicApiKey"
+                                type={
+                                  showKeys.anthropicApiKey
+                                    ? "text"
+                                    : "password"
+                                }
+                                value={settings.credentials.anthropicApiKey}
+                                onChange={(e) =>
+                                  updateCredential(
+                                    "anthropicApiKey",
+                                    e.target.value
+                                  )
+                                }
+                                placeholder="Enter your Anthropic API key"
+                              />
+                            </div>
                             <Button
-                              onClick={() => void exchangeAnthropicOAuth()}
-                              disabled={
-                                !oauthCode.trim() ||
-                                oauthViewState === "exchanging"
+                              variant="outline"
+                              size="icon"
+                              onClick={() =>
+                                toggleKeyVisibility("anthropicApiKey")
                               }
                             >
-                              {oauthViewState === "exchanging" ? (
-                                <Loader2 className="size-4 animate-spin" />
+                              {showKeys.anthropicApiKey ? (
+                                <EyeOff className="size-4" />
                               ) : (
-                                <Link2 className="size-4" />
+                                <Eye className="size-4" />
                               )}
-                              Connect
                             </Button>
                           </div>
                         </div>
-                      )}
-                    </div>
+                      </TabsContent>
+
+                      <TabsContent value="oauth" className="space-y-3 pt-2">
+                        <div className="rounded-lg border bg-muted/30 p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <p className="text-sm font-medium">
+                                Anthropic OAuth
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                Authorize in the browser, then paste the full
+                                `code#state` value back here.
+                              </p>
+                            </div>
+                            {settings.anthropicOAuth.connected ? (
+                              <Badge variant="secondary">
+                                <CheckCircle2 className="size-3" />
+                                Connected
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline">Not connected</Badge>
+                            )}
+                          </div>
+
+                          <div className="mt-3 space-y-2 text-xs text-muted-foreground">
+                            {oauthExpiryLabel ? (
+                              <p>Current token expires: {oauthExpiryLabel}</p>
+                            ) : null}
+                            {settings.anthropicOAuth.hasRefreshToken ? (
+                              <p>
+                                Refresh token is available for automatic
+                                renewal.
+                              </p>
+                            ) : null}
+                          </div>
+
+                          {oauthError ? (
+                            <p className="mt-3 text-xs text-destructive">
+                              {oauthError}
+                            </p>
+                          ) : null}
+
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {oauthViewState === "disconnecting" ? (
+                              <Button variant="outline" disabled>
+                                <Loader2 className="size-4 animate-spin" />
+                                Disconnecting
+                              </Button>
+                            ) : settings.anthropicOAuth.connected ? (
+                              <Button
+                                variant="outline"
+                                onClick={() => void disconnectAnthropicOAuth()}
+                              >
+                                <Unplug className="size-4" />
+                                Disconnect OAuth
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                onClick={() => void startAnthropicOAuth()}
+                                disabled={
+                                  oauthViewState === "waiting" ||
+                                  oauthViewState === "exchanging"
+                                }
+                              >
+                                {oauthViewState === "waiting" ? (
+                                  <Loader2 className="size-4 animate-spin" />
+                                ) : (
+                                  <ExternalLink className="size-4" />
+                                )}
+                                Connect Anthropic
+                              </Button>
+                            )}
+
+                            {oauthAuthorizeUrl ? (
+                              <a
+                                href={oauthAuthorizeUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex h-8 items-center rounded-lg border border-border px-2.5 text-sm font-medium hover:bg-muted"
+                              >
+                                <ExternalLink className="mr-1.5 size-4" />
+                                Open auth page
+                              </a>
+                            ) : null}
+                          </div>
+
+                          {(oauthViewState === "waiting" ||
+                            oauthViewState === "exchanging") && (
+                            <div className="mt-4 space-y-3 rounded-lg border border-dashed bg-background p-3">
+                              <div className="space-y-1">
+                                <Label htmlFor="anthropic-oauth-code">
+                                  Paste the Anthropic authorization code
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                  Anthropic returns a single value in the format
+                                  `code#state`. Paste it exactly as shown.
+                                </p>
+                              </div>
+                              <div className="flex flex-col gap-2 sm:flex-row">
+                                <Input
+                                  id="anthropic-oauth-code"
+                                  value={oauthCode}
+                                  onChange={(e) => setOauthCode(e.target.value)}
+                                  placeholder="code#state"
+                                />
+                                <Button
+                                  onClick={() =>
+                                    void exchangeAnthropicOAuth()
+                                  }
+                                  disabled={
+                                    !oauthCode.trim() ||
+                                    oauthViewState === "exchanging"
+                                  }
+                                >
+                                  {oauthViewState === "exchanging" ? (
+                                    <Loader2 className="size-4 animate-spin" />
+                                  ) : (
+                                    <Link2 className="size-4" />
+                                  )}
+                                  Connect
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </TabsContent>
+                    </Tabs>
+
+                    {renderProviderModelField(
+                      "anthropic",
+                      "Anthropic Model",
+                      "Use a vision-capable model for screenshot audits."
+                    )}
                   </TabsContent>
-                </Tabs>
 
-                {renderProviderModelField(
-                  "anthropic",
-                  "Anthropic Model",
-                  "Use a vision-capable model for screenshot audits."
-                )}
-              </TabsContent>
+                  <TabsContent value="openai" className="space-y-4 pt-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="space-y-1">
+                        <Label>OpenAI Authentication</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Use a standard Platform API key or connect the same
+                          OpenAI OAuth flow used in your other local tools.
+                        </p>
+                      </div>
+                      <Badge variant="outline">
+                        {settings.credentials.openaiAuthMode === "oauth"
+                          ? "Using OAuth"
+                          : "Using API key"}
+                      </Badge>
+                    </div>
 
-              <TabsContent value="openai" className="space-y-4 pt-2">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="space-y-1">
-                    <Label>OpenAI Authentication</Label>
-                    <p className="text-xs text-muted-foreground">
-                      Use a standard Platform API key or connect the same
-                      OpenAI OAuth flow used in your other local tools.
-                    </p>
-                  </div>
-                  <Badge variant="outline">
-                    {settings.credentials.openaiAuthMode === "oauth"
-                      ? "Using OAuth"
-                      : "Using API key"}
-                  </Badge>
-                </div>
+                    <Tabs
+                      value={settings.credentials.openaiAuthMode}
+                      onValueChange={(value) => {
+                        if (value === "apiKey" || value === "oauth") {
+                          updateOpenAIAuthMode(value);
+                        }
+                      }}
+                    >
+                      <TabsList>
+                        <TabsTrigger value="apiKey">API Key</TabsTrigger>
+                        <TabsTrigger value="oauth">OpenAI OAuth</TabsTrigger>
+                      </TabsList>
 
-                <Tabs
-                  value={settings.credentials.openaiAuthMode}
-                  onValueChange={(value) => {
-                    if (value === "apiKey" || value === "oauth") {
-                      updateOpenAIAuthMode(value);
-                    }
-                  }}
-                >
-                  <TabsList>
-                    <TabsTrigger value="apiKey">API Key</TabsTrigger>
-                    <TabsTrigger value="oauth">OpenAI OAuth</TabsTrigger>
-                  </TabsList>
+                      <TabsContent value="apiKey" className="space-y-3 pt-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="openaiApiKey">OpenAI API Key</Label>
+                          <div className="flex gap-2">
+                            <div className="relative flex-1">
+                              <Input
+                                id="openaiApiKey"
+                                type={
+                                  showKeys.openaiApiKey
+                                    ? "text"
+                                    : "password"
+                                }
+                                value={settings.credentials.openaiApiKey}
+                                onChange={(e) =>
+                                  updateCredential(
+                                    "openaiApiKey",
+                                    e.target.value
+                                  )
+                                }
+                                placeholder="Enter your OpenAI API key"
+                              />
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              onClick={() =>
+                                toggleKeyVisibility("openaiApiKey")
+                              }
+                            >
+                              {showKeys.openaiApiKey ? (
+                                <EyeOff className="size-4" />
+                              ) : (
+                                <Eye className="size-4" />
+                              )}
+                            </Button>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Standard OpenAI Platform access for models like
+                            `gpt-4.1`.
+                          </p>
+                        </div>
+                      </TabsContent>
 
-                  <TabsContent value="apiKey" className="space-y-3 pt-2">
+                      <TabsContent value="oauth" className="space-y-3 pt-2">
+                        <div className="rounded-lg border bg-muted/30 p-4">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <p className="text-sm font-medium">
+                                OpenAI OAuth
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                This opens the OpenAI browser flow and completes
+                                the callback on `localhost:1455`.
+                              </p>
+                            </div>
+                            {settings.openaiOAuth.connected ? (
+                              <Badge variant="secondary">
+                                <CheckCircle2 className="size-3" />
+                                Connected
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline">Not connected</Badge>
+                            )}
+                          </div>
+
+                          <div className="mt-3 space-y-2 text-xs text-muted-foreground">
+                            {settings.openaiOAuth.mode ===
+                            "platformApiKey" ? (
+                              <p>
+                                OAuth produced a Platform API key, so OpenAI
+                                runs on the standard API path.
+                              </p>
+                            ) : settings.openaiOAuth.mode ===
+                              "chatgptBackend" ? (
+                              <p>
+                                OAuth is connected in ChatGPT/Codex backend
+                                mode. Use a codex-compatible model for best
+                                results.
+                              </p>
+                            ) : null}
+                            {openAIOauthExpiryLabel ? (
+                              <p>
+                                Current token expires: {openAIOauthExpiryLabel}
+                              </p>
+                            ) : null}
+                            {settings.openaiOAuth.hasRefreshToken ? (
+                              <p>
+                                Refresh token is available for automatic
+                                renewal.
+                              </p>
+                            ) : null}
+                            {settings.openaiOAuth.hasAccountId ? (
+                              <p>ChatGPT account metadata is available.</p>
+                            ) : null}
+                          </div>
+
+                          {openAIOauthError ? (
+                            <p className="mt-3 text-xs text-destructive">
+                              {openAIOauthError}
+                            </p>
+                          ) : null}
+
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {openAIOauthViewState === "disconnecting" ? (
+                              <Button variant="outline" disabled>
+                                <Loader2 className="size-4 animate-spin" />
+                                Disconnecting
+                              </Button>
+                            ) : settings.openaiOAuth.connected ? (
+                              <Button
+                                variant="outline"
+                                onClick={() => void disconnectOpenAIOAuth()}
+                              >
+                                <Unplug className="size-4" />
+                                Disconnect OAuth
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                onClick={() => void startOpenAIOAuth()}
+                                disabled={openAIOauthViewState === "waiting"}
+                              >
+                                {openAIOauthViewState === "waiting" ? (
+                                  <Loader2 className="size-4 animate-spin" />
+                                ) : (
+                                  <ExternalLink className="size-4" />
+                                )}
+                                Connect OpenAI
+                              </Button>
+                            )}
+
+                            {openAIOauthAuthorizeUrl ? (
+                              <a
+                                href={openAIOauthAuthorizeUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex h-8 items-center rounded-lg border border-border px-2.5 text-sm font-medium hover:bg-muted"
+                              >
+                                <ExternalLink className="mr-1.5 size-4" />
+                                Open auth page
+                              </a>
+                            ) : null}
+                          </div>
+                        </div>
+                      </TabsContent>
+                    </Tabs>
+
+                    {renderProviderModelField(
+                      "openai",
+                      "OpenAI Model",
+                      "If OpenAI OAuth falls back to ChatGPT/Codex backend mode, the list is still fetched from the connected OpenAI account."
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="google" className="space-y-4 pt-2">
                     <div className="space-y-2">
-                      <Label htmlFor="openaiApiKey">OpenAI API Key</Label>
+                      <Label htmlFor="googleApiKey">Google AI API Key</Label>
                       <div className="flex gap-2">
                         <div className="relative flex-1">
                           <Input
-                            id="openaiApiKey"
-                            type={showKeys.openaiApiKey ? "text" : "password"}
-                            value={settings.credentials.openaiApiKey}
-                            onChange={(e) =>
-                              updateCredential("openaiApiKey", e.target.value)
+                            id="googleApiKey"
+                            type={
+                              showKeys.googleApiKey ? "text" : "password"
                             }
-                            placeholder="Enter your OpenAI API key"
+                            value={settings.credentials.googleApiKey}
+                            onChange={(e) =>
+                              updateCredential("googleApiKey", e.target.value)
+                            }
+                            placeholder="Enter your Google AI API key"
                           />
                         </div>
                         <Button
                           variant="outline"
                           size="icon"
-                          onClick={() => toggleKeyVisibility("openaiApiKey")}
+                          onClick={() => toggleKeyVisibility("googleApiKey")}
                         >
-                          {showKeys.openaiApiKey ? (
+                          {showKeys.googleApiKey ? (
                             <EyeOff className="size-4" />
                           ) : (
                             <Eye className="size-4" />
                           )}
                         </Button>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        Standard OpenAI Platform access for models like `gpt-4.1`.
-                      </p>
                     </div>
+
+                    {renderProviderModelField(
+                      "google",
+                      "Gemini Model",
+                      "Only Gemini models that support content generation are shown."
+                    )}
                   </TabsContent>
 
-                  <TabsContent value="oauth" className="space-y-3 pt-2">
-                    <div className="rounded-lg border bg-muted/30 p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <p className="text-sm font-medium">OpenAI OAuth</p>
-                          <p className="text-xs text-muted-foreground">
-                            This opens the OpenAI browser flow and completes the
-                            callback on `localhost:1455`.
-                          </p>
+                  <TabsContent value="openrouter" className="space-y-4 pt-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="openrouterApiKey">
+                        OpenRouter API Key
+                      </Label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Input
+                            id="openrouterApiKey"
+                            type={
+                              showKeys.openrouterApiKey
+                                ? "text"
+                                : "password"
+                            }
+                            value={settings.credentials.openrouterApiKey}
+                            onChange={(e) =>
+                              updateCredential(
+                                "openrouterApiKey",
+                                e.target.value
+                              )
+                            }
+                            placeholder="Enter your OpenRouter API key"
+                          />
                         </div>
-                        {settings.openaiOAuth.connected ? (
-                          <Badge variant="secondary">
-                            <CheckCircle2 className="size-3" />
-                            Connected
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline">Not connected</Badge>
-                        )}
-                      </div>
-
-                      <div className="mt-3 space-y-2 text-xs text-muted-foreground">
-                        {settings.openaiOAuth.mode === "platformApiKey" ? (
-                          <p>
-                            OAuth produced a Platform API key, so OpenAI runs on
-                            the standard API path.
-                          </p>
-                        ) : settings.openaiOAuth.mode === "chatgptBackend" ? (
-                          <p>
-                            OAuth is connected in ChatGPT/Codex backend mode.
-                            Use a codex-compatible model for best results.
-                          </p>
-                        ) : null}
-                        {openAIOauthExpiryLabel ? (
-                          <p>Current token expires: {openAIOauthExpiryLabel}</p>
-                        ) : null}
-                        {settings.openaiOAuth.hasRefreshToken ? (
-                          <p>
-                            Refresh token is available for automatic renewal.
-                          </p>
-                        ) : null}
-                        {settings.openaiOAuth.hasAccountId ? (
-                          <p>ChatGPT account metadata is available.</p>
-                        ) : null}
-                      </div>
-
-                      {openAIOauthError ? (
-                        <p className="mt-3 text-xs text-destructive">
-                          {openAIOauthError}
-                        </p>
-                      ) : null}
-
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {openAIOauthViewState === "disconnecting" ? (
-                          <Button variant="outline" disabled>
-                            <Loader2 className="size-4 animate-spin" />
-                            Disconnecting
-                          </Button>
-                        ) : settings.openaiOAuth.connected ? (
-                          <Button
-                            variant="outline"
-                            onClick={() => void disconnectOpenAIOAuth()}
-                          >
-                            <Unplug className="size-4" />
-                            Disconnect OAuth
-                          </Button>
-                        ) : (
-                          <Button
-                            variant="outline"
-                            onClick={() => void startOpenAIOAuth()}
-                            disabled={openAIOauthViewState === "waiting"}
-                          >
-                            {openAIOauthViewState === "waiting" ? (
-                              <Loader2 className="size-4 animate-spin" />
-                            ) : (
-                              <ExternalLink className="size-4" />
-                            )}
-                            Connect OpenAI
-                          </Button>
-                        )}
-
-                        {openAIOauthAuthorizeUrl ? (
-                          <a
-                            href={openAIOauthAuthorizeUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex h-8 items-center rounded-lg border border-border px-2.5 text-sm font-medium hover:bg-muted"
-                          >
-                            <ExternalLink className="mr-1.5 size-4" />
-                            Open auth page
-                          </a>
-                        ) : null}
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() =>
+                            toggleKeyVisibility("openrouterApiKey")
+                          }
+                        >
+                          {showKeys.openrouterApiKey ? (
+                            <EyeOff className="size-4" />
+                          ) : (
+                            <Eye className="size-4" />
+                          )}
+                        </Button>
                       </div>
                     </div>
+
+                    {renderProviderModelField(
+                      "openrouter",
+                      "OpenRouter Model",
+                      "Models are fetched directly from OpenRouter for the connected account."
+                    )}
                   </TabsContent>
                 </Tabs>
+              </div>
 
-                {renderProviderModelField(
-                  "openai",
-                  "OpenAI Model",
-                  "If OpenAI OAuth falls back to ChatGPT/Codex backend mode, the list is still fetched from the connected OpenAI account."
-                )}
-              </TabsContent>
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={() => saveSection("credentials")}
+                  disabled={saving === "credentials"}
+                >
+                  {saving === "credentials" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Save Credentials
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-              <TabsContent value="google" className="space-y-4 pt-2">
+        <TabsContent value="defaults" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MapPin className="size-4" />
+                Defaults
+              </CardTitle>
+              <CardDescription>
+                Default values for discovery searches
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="googleApiKey">Google AI API Key</Label>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <Input
-                        id="googleApiKey"
-                        type={showKeys.googleApiKey ? "text" : "password"}
-                        value={settings.credentials.googleApiKey}
-                        onChange={(e) =>
-                          updateCredential("googleApiKey", e.target.value)
-                        }
-                        placeholder="Enter your Google AI API key"
-                      />
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={() => toggleKeyVisibility("googleApiKey")}
-                    >
-                      {showKeys.googleApiKey ? (
-                        <EyeOff className="size-4" />
-                      ) : (
-                        <Eye className="size-4" />
-                      )}
-                    </Button>
-                  </div>
+                  <Label htmlFor="defaultLocation">Default Location</Label>
+                  <Input
+                    id="defaultLocation"
+                    value={settings.defaults.location}
+                    onChange={(e) => updateDefaults("location", e.target.value)}
+                    placeholder="City, Province"
+                  />
                 </div>
-
-                {renderProviderModelField(
-                  "google",
-                  "Gemini Model",
-                  "Only Gemini models that support content generation are shown."
-                )}
-              </TabsContent>
-
-              <TabsContent value="openrouter" className="space-y-4 pt-2">
                 <div className="space-y-2">
-                  <Label htmlFor="openrouterApiKey">OpenRouter API Key</Label>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
-                      <Input
-                        id="openrouterApiKey"
-                        type={showKeys.openrouterApiKey ? "text" : "password"}
-                        value={settings.credentials.openrouterApiKey}
-                        onChange={(e) =>
-                          updateCredential("openrouterApiKey", e.target.value)
-                        }
-                        placeholder="Enter your OpenRouter API key"
-                      />
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={() => toggleKeyVisibility("openrouterApiKey")}
-                    >
-                      {showKeys.openrouterApiKey ? (
-                        <EyeOff className="size-4" />
-                      ) : (
-                        <Eye className="size-4" />
-                      )}
-                    </Button>
-                  </div>
+                  <Label htmlFor="defaultRadius">Default Radius (km)</Label>
+                  <Input
+                    id="defaultRadius"
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={settings.defaults.radius}
+                    onChange={(e) =>
+                      updateDefaults("radius", Number(e.target.value))
+                    }
+                  />
                 </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="defaultCategories">Default Categories</Label>
+                <p className="text-xs text-muted-foreground">
+                  Comma-separated list of category IDs from the Discover page
+                </p>
+                <Input
+                  id="defaultCategories"
+                  value={settings.defaults.categories.join(", ")}
+                  onChange={(e) =>
+                    updateDefaults(
+                      "categories",
+                      e.target.value
+                        .split(",")
+                        .map((s) => s.trim())
+                        .filter(Boolean)
+                    )
+                  }
+                  placeholder="restaurants, trades, salons"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="siteBaseUrl">Preview Base URL</Label>
+                <p className="text-xs text-muted-foreground">
+                  Used when building preview links in outreach emails when no
+                  deployed public preview exists yet
+                </p>
+                <Input
+                  id="siteBaseUrl"
+                  value={settings.defaults.siteBaseUrl}
+                  onChange={(e) =>
+                    updateDefaults("siteBaseUrl", e.target.value)
+                  }
+                  placeholder="http://localhost:3000/sites"
+                />
+              </div>
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={() => saveSection("defaults")}
+                  disabled={saving === "defaults"}
+                >
+                  {saving === "defaults" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Save Defaults
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-                {renderProviderModelField(
-                  "openrouter",
-                  "OpenRouter Model",
-                  "Models are fetched directly from OpenRouter for the connected account."
-                )}
-              </TabsContent>
-            </Tabs>
-          </div>
+        <TabsContent value="outreach" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <User className="size-4" />
+                Outreach Information
+              </CardTitle>
+              <CardDescription>
+                Your contact details used in outreach emails (required for CASL
+                compliance)
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="yourName">Your Name</Label>
+                  <Input
+                    id="yourName"
+                    value={settings.outreach.yourName}
+                    onChange={(e) => updateOutreach("yourName", e.target.value)}
+                    placeholder="John Smith"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="bizName">Business Name</Label>
+                  <Input
+                    id="bizName"
+                    value={settings.outreach.businessName}
+                    onChange={(e) =>
+                      updateOutreach("businessName", e.target.value)
+                    }
+                    placeholder="Curb Digital"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="outreachAddress">Address</Label>
+                  <Input
+                    id="outreachAddress"
+                    value={settings.outreach.address}
+                    onChange={(e) => updateOutreach("address", e.target.value)}
+                    placeholder="123 Main St, Hamilton, ON"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="outreachEmail">Email</Label>
+                  <Input
+                    id="outreachEmail"
+                    type="email"
+                    value={settings.outreach.email}
+                    onChange={(e) => updateOutreach("email", e.target.value)}
+                    placeholder="hello@curb.digital"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={() => saveSection("outreach")}
+                  disabled={saving === "outreach"}
+                >
+                  {saving === "outreach" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Save Outreach Info
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-          <div className="flex justify-end pt-2">
-            <Button
-              onClick={() => saveSection("credentials")}
-              disabled={saving === "credentials"}
-            >
-              {saving === "credentials" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Save className="size-4" />
-              )}
-              Save Credentials
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Defaults */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <MapPin className="size-4" />
-            Defaults
-          </CardTitle>
-          <CardDescription>
-            Default values for discovery searches
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="defaultLocation">Default Location</Label>
-              <Input
-                id="defaultLocation"
-                value={settings.defaults.location}
-                onChange={(e) => updateDefaults("location", e.target.value)}
-                placeholder="City, Province"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="defaultRadius">Default Radius (km)</Label>
-              <Input
-                id="defaultRadius"
-                type="number"
-                min={1}
-                max={50}
-                value={settings.defaults.radius}
-                onChange={(e) => updateDefaults("radius", Number(e.target.value))}
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="defaultCategories">Default Categories</Label>
-            <p className="text-xs text-muted-foreground">
-              Comma-separated list of category IDs from the Discover page
-            </p>
-            <Input
-              id="defaultCategories"
-              value={settings.defaults.categories.join(", ")}
-              onChange={(e) =>
-                updateDefaults(
-                  "categories",
-                  e.target.value
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter(Boolean)
-                )
-              }
-              placeholder="restaurants, trades, salons"
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="siteBaseUrl">Preview Base URL</Label>
-            <p className="text-xs text-muted-foreground">
-              Used when building preview links in outreach emails
-            </p>
-            <Input
-              id="siteBaseUrl"
-              value={settings.defaults.siteBaseUrl}
-              onChange={(e) => updateDefaults("siteBaseUrl", e.target.value)}
-              placeholder="http://localhost:3000/sites"
-            />
-          </div>
-          <div className="flex justify-end pt-2">
-            <Button
-              onClick={() => saveSection("defaults")}
-              disabled={saving === "defaults"}
-            >
-              {saving === "defaults" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Save className="size-4" />
-              )}
-              Save Defaults
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Outreach Info */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <User className="size-4" />
-            Outreach Information
-          </CardTitle>
-          <CardDescription>
-            Your contact details used in outreach emails (required for CASL compliance)
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="yourName">Your Name</Label>
-              <Input
-                id="yourName"
-                value={settings.outreach.yourName}
-                onChange={(e) => updateOutreach("yourName", e.target.value)}
-                placeholder="John Smith"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="bizName">Business Name</Label>
-              <Input
-                id="bizName"
-                value={settings.outreach.businessName}
-                onChange={(e) => updateOutreach("businessName", e.target.value)}
-                placeholder="Curb Digital"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="outreachAddress">Address</Label>
-              <Input
-                id="outreachAddress"
-                value={settings.outreach.address}
-                onChange={(e) => updateOutreach("address", e.target.value)}
-                placeholder="123 Main St, Hamilton, ON"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="outreachEmail">Email</Label>
-              <Input
-                id="outreachEmail"
-                type="email"
-                value={settings.outreach.email}
-                onChange={(e) => updateOutreach("email", e.target.value)}
-                placeholder="hello@curb.digital"
-              />
-            </div>
-          </div>
-          <div className="flex justify-end pt-2">
-            <Button
-              onClick={() => saveSection("outreach")}
-              disabled={saving === "outreach"}
-            >
-              {saving === "outreach" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Save className="size-4" />
-              )}
-              Save Outreach Info
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Pricing */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <DollarSign className="size-4" />
-            Pricing
-          </CardTitle>
-          <CardDescription>
-            Pricing information included in outreach emails
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="pricingText">Pricing Text</Label>
-            <Textarea
-              id="pricingText"
-              value={settings.pricing.text}
-              onChange={(e) =>
-                setSettings((prev) => ({
-                  ...prev,
-                  pricing: { text: e.target.value },
-                }))
-              }
-              placeholder="e.g., Starting at $49/month for a professionally designed website with hosting, SSL, and ongoing updates."
-              rows={4}
-            />
-          </div>
-          <div className="flex justify-end pt-2">
-            <Button
-              onClick={() => saveSection("pricing")}
-              disabled={saving === "pricing"}
-            >
-              {saving === "pricing" ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <Save className="size-4" />
-              )}
-              Save Pricing
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+        <TabsContent value="pricing" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <DollarSign className="size-4" />
+                Pricing
+              </CardTitle>
+              <CardDescription>
+                Pricing information included in outreach emails
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="pricingText">Pricing Text</Label>
+                <Textarea
+                  id="pricingText"
+                  value={settings.pricing.text}
+                  onChange={(e) =>
+                    setSettings((prev) => ({
+                      ...prev,
+                      pricing: { text: e.target.value },
+                    }))
+                  }
+                  placeholder="e.g., Starting at $49/month for a professionally designed website with hosting, SSL, and ongoing updates."
+                  rows={4}
+                />
+              </div>
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={() => saveSection("pricing")}
+                  disabled={saving === "pricing"}
+                >
+                  {saving === "pricing" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Save Pricing
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

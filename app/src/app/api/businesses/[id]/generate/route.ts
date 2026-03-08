@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { initializeDatabase } from '@/lib/schema';
 import { generateSiteForBusiness } from '@/lib/core/generate';
+import {
+  deployPreviewForBusiness,
+  isPreviewDeploymentConfigured,
+} from '@/lib/vercel-sites';
 
 export async function POST(
   request: NextRequest,
@@ -41,6 +45,28 @@ export async function POST(
     }
 
     const site = await generateSiteForBusiness(businessId, effectivePrompt);
+    let previewDeployment:
+      | {
+          aliasUrl: string | null;
+          deploymentId: string;
+          deploymentUrl: string;
+          generatedSiteId: number;
+          readyState: string | null;
+          version: number;
+        }
+      | null = null;
+    let previewDeploymentError: string | null = null;
+
+    if (isPreviewDeploymentConfigured()) {
+      try {
+        previewDeployment = await deployPreviewForBusiness(businessId, {
+          initiatedBy: 'automatic',
+        });
+      } catch (error) {
+        previewDeploymentError =
+          error instanceof Error ? error.message : 'Preview deployment failed';
+      }
+    }
 
     return NextResponse.json({
       success: true,
@@ -52,6 +78,8 @@ export async function POST(
         path: site.sitePath,
         generationTimeMs: site.generationTimeMs,
       },
+      previewDeployment,
+      previewDeploymentError,
     });
   } catch (err) {
     console.error('Generate error:', err);

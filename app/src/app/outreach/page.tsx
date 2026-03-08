@@ -1,14 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { useCallback, useEffect, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatStoredDate } from "@/lib/datetime";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -42,35 +40,36 @@ import {
   Edit,
   CheckSquare,
 } from "lucide-react";
+import { buildMailtoUrl } from "@/lib/mailto";
 
 interface EmailEntry {
-  id: string;
-  businessId: string;
+  id: number;
+  businessId: number;
   businessName: string;
   subject: string;
   body: string;
+  toAddress: string | null;
   status: string;
   createdAt: string;
+  sentAt: string | null;
 }
 
 const STATUS_FILTER_OPTIONS = ["all", "draft", "approved", "sent", "bounced"];
+type EmailUpdate = Partial<Pick<EmailEntry, "subject" | "body" | "status" | "toAddress">>;
 
 export default function OutreachPage() {
   const [emails, setEmails] = useState<EmailEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [editOpen, setEditOpen] = useState(false);
   const [editingEmail, setEditingEmail] = useState<EmailEntry | null>(null);
+  const [editToAddress, setEditToAddress] = useState("");
   const [editSubject, setEditSubject] = useState("");
   const [editBody, setEditBody] = useState("");
 
-  useEffect(() => {
-    fetchEmails();
-  }, [statusFilter]);
-
-  async function fetchEmails() {
+  const fetchEmails = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -85,9 +84,13 @@ export default function OutreachPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [statusFilter]);
 
-  function toggleExpand(id: string) {
+  useEffect(() => {
+    void fetchEmails();
+  }, [fetchEmails]);
+
+  function toggleExpand(id: number) {
     setExpandedRows((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -96,7 +99,7 @@ export default function OutreachPage() {
     });
   }
 
-  function toggleSelect(id: string) {
+  function toggleSelect(id: number) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -113,7 +116,11 @@ export default function OutreachPage() {
     }
   }
 
-  async function updateEmail(emailId: string, updates: Record<string, string>) {
+  async function updateEmail(
+    emailId: number,
+    updates: EmailUpdate,
+    successMessage = "Email updated"
+  ) {
     try {
       const res = await fetch(`/api/emails/${emailId}`, {
         method: "PATCH",
@@ -121,11 +128,31 @@ export default function OutreachPage() {
         body: JSON.stringify(updates),
       });
       if (!res.ok) throw new Error("Failed");
-      toast.success("Email updated");
-      fetchEmails();
+      toast.success(successMessage);
+      void fetchEmails();
     } catch {
       toast.error("Failed to update email");
     }
+  }
+
+  function openInMailApp(email: EmailEntry) {
+    const mailtoUrl = buildMailtoUrl({
+      toAddress: email.toAddress,
+      subject: email.subject,
+      body: email.body,
+    });
+
+    if (!mailtoUrl) {
+      toast.error("Add a recipient email before opening your mail app");
+      return;
+    }
+
+    window.location.href = mailtoUrl;
+    toast.success("Opening your default mail app");
+  }
+
+  async function markSent(emailId: number) {
+    await updateEmail(emailId, { status: "sent" }, "Email marked as sent");
   }
 
   async function bulkApprove() {
@@ -139,12 +166,12 @@ export default function OutreachPage() {
       const res = await fetch("/api/emails/bulk-approve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ emailIds: ids }),
       });
       if (!res.ok) throw new Error("Failed");
       toast.success(`${ids.length} email(s) approved`);
       setSelectedIds(new Set());
-      fetchEmails();
+      void fetchEmails();
     } catch {
       toast.error("Bulk approve failed");
     }
@@ -168,7 +195,7 @@ export default function OutreachPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Outreach</h1>
         <p className="text-muted-foreground">
-          Manage email drafts and outreach campaigns
+          Review drafts and open them in your default desktop mail app
         </p>
       </div>
 
@@ -236,7 +263,7 @@ export default function OutreachPage() {
                   <TableHead>Subject</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Date</TableHead>
-                  <TableHead className="w-40">Actions</TableHead>
+                  <TableHead className="w-52">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -269,9 +296,15 @@ export default function OutreachPage() {
                       <TableCell>
                         <div>
                           <p className="truncate max-w-xs">{email.subject}</p>
+                          <p className="mt-1 truncate max-w-xs text-xs text-muted-foreground">
+                            {email.toAddress ? `To: ${email.toAddress}` : "Add a recipient email"}
+                          </p>
                           {isExpanded && (
-                            <div className="mt-3 rounded-lg bg-muted/50 p-4 text-sm whitespace-pre-wrap">
-                              {email.body}
+                            <div className="mt-3 space-y-3 rounded-lg bg-muted/50 p-4 text-sm">
+                              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                {email.toAddress ? `To: ${email.toAddress}` : "Recipient missing"}
+                              </p>
+                              <div className="whitespace-pre-wrap">{email.body}</div>
                             </div>
                           )}
                         </div>
@@ -295,10 +328,12 @@ export default function OutreachPage() {
                             size="icon-xs"
                             onClick={() => {
                               setEditingEmail(email);
+                              setEditToAddress(email.toAddress ?? "");
                               setEditSubject(email.subject);
                               setEditBody(email.body);
                               setEditOpen(true);
                             }}
+                            aria-label="Edit email draft"
                           >
                             <Edit className="size-3.5" />
                           </Button>
@@ -306,16 +341,29 @@ export default function OutreachPage() {
                             <Button
                               variant="ghost"
                               size="icon-xs"
-                              onClick={() => updateEmail(email.id, { status: "approved" })}
+                              onClick={() =>
+                                updateEmail(email.id, { status: "approved" }, "Email approved")
+                              }
+                              aria-label="Approve email draft"
                             >
                               <Check className="size-3.5 text-blue-600" />
                             </Button>
                           )}
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            onClick={() => openInMailApp(email)}
+                            disabled={!email.toAddress}
+                            aria-label="Open draft in mail app"
+                          >
+                            <Mail className="size-3.5 text-slate-700" />
+                          </Button>
                           {(email.status === "draft" || email.status === "approved") && (
                             <Button
                               variant="ghost"
                               size="icon-xs"
-                              onClick={() => updateEmail(email.id, { status: "sent" })}
+                              onClick={() => markSent(email.id)}
+                              aria-label="Mark email as sent"
                             >
                               <Send className="size-3.5 text-green-600" />
                             </Button>
@@ -339,6 +387,15 @@ export default function OutreachPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
+              <Label>To</Label>
+              <Input
+                type="email"
+                value={editToAddress}
+                onChange={(e) => setEditToAddress(e.target.value)}
+                placeholder="owner@business.com"
+              />
+            </div>
+            <div className="space-y-2">
               <Label>Subject</Label>
               <Input
                 value={editSubject}
@@ -359,6 +416,7 @@ export default function OutreachPage() {
               onClick={async () => {
                 if (editingEmail) {
                   await updateEmail(editingEmail.id, {
+                    toAddress: editToAddress,
                     subject: editSubject,
                     body: editBody,
                   });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { initializeDatabase } from '@/lib/schema';
 import { getDb } from '@/lib/db';
+import { normalizeEmailRecord } from '@/lib/email-record';
 
 export async function GET(request: NextRequest) {
   try {
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
     ).get(...params) as { total: number };
     const total = countResult.total;
 
-    const emails = db.prepare(`
+    const emailRows = db.prepare(`
       SELECT
         e.*,
         b.name as business_name,
@@ -38,10 +39,10 @@ export async function GET(request: NextRequest) {
       ${whereClause}
       ORDER BY e.created_at DESC
       LIMIT ? OFFSET ?
-    `).all(...params, limit, offset);
+    `).all(...params, limit, offset) as Record<string, unknown>[];
 
     return NextResponse.json({
-      emails,
+      emails: emailRows.map(normalizeEmailRecord),
       total,
       page,
       totalPages: Math.ceil(total / limit),

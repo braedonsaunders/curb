@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
     const db = getDb();
 
     const body = await request.json();
-    const { emailIds } = body;
+    const emailIds = body.emailIds ?? body.ids;
 
     if (!Array.isArray(emailIds) || emailIds.length === 0) {
       return NextResponse.json(

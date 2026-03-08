@@ -15,6 +15,7 @@
     "@base-ui/react": "^1.2.0",
     "@monaco-editor/react": "^4.7.0",
     "@openrouter/ai-sdk-provider": "^2.2.5",
+    "@vercel/sdk": "^1.19.11",
     "ai": "^6.0.116",
     "archiver": "^7.0.1",
     "better-sqlite3": "^12.6.2",

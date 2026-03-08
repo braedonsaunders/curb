@@ -5,6 +5,12 @@ import {
 } from '@/lib/core/enrichment';
 import { initializeDatabase } from '@/lib/schema';
 import { getDb } from '@/lib/db';
+import { normalizeEmailRecord } from '@/lib/email-record';
+import {
+  getCustomerProjectState,
+  getPublicPreviewLinkForBusiness,
+  listSiteDeploymentsForBusiness,
+} from '@/lib/vercel-sites';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -64,6 +70,12 @@ export async function GET(
     const emails = db.prepare(
       'SELECT * FROM emails WHERE business_id = ? ORDER BY created_at DESC'
     ).all(businessId);
+    const siteDeployments = listSiteDeploymentsForBusiness(businessId);
+    const previewLink = getPublicPreviewLinkForBusiness(
+      businessId,
+      String((business as Record<string, unknown>).slug ?? "")
+    );
+    const customerProjectState = getCustomerProjectState(businessId);
 
     // Add camelCase aliases for audits
     const normalizedAudits = (audits as Record<string, unknown>[]).map((audit) => ({
@@ -91,16 +103,26 @@ export async function GET(
     }));
 
     // Add camelCase aliases for emails
-    const normalizedEmails = (emails as Record<string, unknown>[]).map((email) => ({
-      ...email,
-      createdAt: email.created_at,
+    const normalizedEmails = (emails as Record<string, unknown>[]).map(normalizeEmailRecord);
+    const normalizedSiteDeployments = siteDeployments.map((deployment) => ({
+      ...deployment,
+      createdAt: deployment.createdAt,
+      updatedAt: deployment.updatedAt,
     }));
 
     return NextResponse.json({
       ...(business as Record<string, unknown>),
+      customerDomain: customerProjectState.customerDomain,
+      customerDomainVerified: customerProjectState.customerDomainVerified,
+      customerDomainVerification: customerProjectState.customerDomainVerification,
+      customerVercelProjectId: customerProjectState.customerProjectId,
+      customerVercelProjectName: customerProjectState.customerProjectName,
+      publicPreviewUrl: previewLink.url,
+      publicPreviewUrlSource: previewLink.source,
       audits: normalizedAudits,
       generatedSites: normalizedSites,
       emails: normalizedEmails,
+      siteDeployments: normalizedSiteDeployments,
     });
   } catch (err) {
     console.error('Get business error:', err);
@@ -142,6 +164,7 @@ export async function PATCH(
     const allowedFields = [
       'status', 'notes', 'email', 'name', 'address', 'city', 'province',
       'postal_code', 'phone', 'website_url', 'category', 'google_maps_url',
+      'customer_domain',
     ];
     const enrichmentSensitiveFields = new Set([
       'name',
@@ -162,6 +185,10 @@ export async function PATCH(
       if (body[field] !== undefined) {
         updates.push(`${field} = ?`);
         values.push(body[field]);
+        if (field === 'customer_domain') {
+          updates.push('customer_domain_verified = 0');
+          updates.push('customer_domain_verification_json = NULL');
+        }
         if (enrichmentSensitiveFields.has(field)) {
           shouldResetEnrichment = true;
         }

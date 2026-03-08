@@ -2,6 +2,7 @@ import { getDb } from "../db";
 import { initializeDatabase } from "../schema";
 import { getConfig } from "../config";
 import { generateEmail, type BusinessData } from "../claude";
+import { getPublicPreviewLinkForBusiness } from "../vercel-sites";
 
 export interface EmailResult {
   emailId: number;
@@ -53,7 +54,7 @@ export async function generateOutreachEmail(
   const toAddress = (business.email as string) ?? null;
 
   // Build preview URL
-  const previewUrl = `${config.siteBaseUrl}/${slug}`;
+  const previewUrl = getPublicPreviewLinkForBusiness(businessId, slug).url;
 
   // Generate email via the configured AI provider
   const businessData = businessRowToData(business);

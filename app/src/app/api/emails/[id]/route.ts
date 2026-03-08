@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { initializeDatabase } from '@/lib/schema';
 import { getDb } from '@/lib/db';
+import { normalizeEmailRecord } from '@/lib/email-record';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -30,14 +31,22 @@ export async function PATCH(
     }
 
     const body = await request.json();
-    const allowedFields = ['subject', 'body', 'status', 'to_address'];
+    const allowedFields = new Map([
+      ['subject', 'subject'],
+      ['body', 'body'],
+      ['status', 'status'],
+      ['toAddress', 'to_address'],
+      ['to_address', 'to_address'],
+    ]);
     const updates: string[] = [];
     const values: unknown[] = [];
+    const seenColumns = new Set<string>();
 
-    for (const field of allowedFields) {
-      if (body[field] !== undefined) {
-        updates.push(`${field} = ?`);
+    for (const [field, column] of allowedFields) {
+      if (body[field] !== undefined && !seenColumns.has(column)) {
+        updates.push(`${column} = ?`);
         values.push(body[field]);
+        seenColumns.add(column);
       }
     }
 
@@ -52,6 +61,9 @@ export async function PATCH(
     if (body.status === 'sent' && existing.status !== 'sent') {
       updates.push("sent_at = datetime('now')");
     }
+    if (body.status !== undefined && body.status !== 'sent' && existing.status === 'sent') {
+      updates.push('sent_at = NULL');
+    }
 
     values.push(emailId);
 
@@ -59,9 +71,9 @@ export async function PATCH(
       `UPDATE emails SET ${updates.join(', ')} WHERE id = ?`
     ).run(...values);
 
-    const updated = db.prepare('SELECT * FROM emails WHERE id = ?').get(emailId);
+    const updated = db.prepare('SELECT * FROM emails WHERE id = ?').get(emailId) as Record<string, unknown>;
 
-    return NextResponse.json({ success: true, email: updated });
+    return NextResponse.json({ success: true, email: normalizeEmailRecord(updated) });
   } catch (err) {
     console.error('Update email error:', err);
     const message = err instanceof Error ? err.message : 'Internal server error';

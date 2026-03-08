@@ -63,6 +63,7 @@ import {
   formatStoredDateTime,
   formatStoredTime,
 } from "@/lib/datetime";
+import { buildMailtoUrl } from "@/lib/mailto";
 
 const STATUS_OPTIONS = BUSINESS_STATUSES;
 
@@ -104,13 +105,40 @@ interface SiteData {
   site_path: string;
 }
 
+interface DomainVerificationChallenge {
+  type: string;
+  domain: string;
+  value: string;
+  reason: string;
+}
+
+interface SiteDeploymentData {
+  id: number;
+  generatedSiteId: number;
+  deploymentKind: "preview" | "customer";
+  vercelProjectId: string;
+  vercelProjectName: string | null;
+  vercelDeploymentId: string;
+  vercelDeploymentUrl: string;
+  aliasUrl: string | null;
+  aliasHost: string | null;
+  target: string;
+  readyState: string | null;
+  active: boolean;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface EmailDraft {
   id: number;
   subject: string;
   body: string;
+  toAddress: string | null;
   status: string;
   createdAt: string;
   created_at: string;
+  sentAt: string | null;
 }
 
 interface BusinessDetail {
@@ -127,11 +155,20 @@ interface BusinessDetail {
   review_count: number;
   status: string;
   notes: string;
+  email: string | null;
+  customerDomain: string | null;
+  customerDomainVerified: boolean;
+  customerDomainVerification: DomainVerificationChallenge[];
+  customerVercelProjectId: string | null;
+  customerVercelProjectName: string | null;
+  publicPreviewUrl: string | null;
+  publicPreviewUrlSource: "vercel-alias" | "vercel-deployment" | "local";
   hours_json: string | null;
   photos_json: string | null;
   audits: AuditData[];
   generatedSites: SiteData[];
   emails: EmailDraft[];
+  siteDeployments: SiteDeploymentData[];
 }
 
 interface GenerationActivity {
@@ -218,6 +255,7 @@ export default function BusinessDetailPage() {
     null
   );
   const [editingEmail, setEditingEmail] = useState<EmailDraft | null>(null);
+  const [editToAddress, setEditToAddress] = useState("");
   const [editSubject, setEditSubject] = useState("");
   const [editBody, setEditBody] = useState("");
   const [editEmailOpen, setEditEmailOpen] = useState(false);
@@ -233,6 +271,7 @@ export default function BusinessDetailPage() {
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [siteEditorOpen, setSiteEditorOpen] = useState(false);
   const [sitePreviewNonce, setSitePreviewNonce] = useState(0);
+  const [customerDomainDraft, setCustomerDomainDraft] = useState("");
   const siteDialogOpen = siteDialogMode !== null;
 
   const fetchBusiness = useCallback(async () => {
@@ -245,6 +284,7 @@ export default function BusinessDetailPage() {
       const data: BusinessDetail = await res.json();
       setBiz(data);
       setNotes(data.notes || "");
+      setCustomerDomainDraft(data.customerDomain || "");
     } catch {
       toast.error("Failed to load business");
     } finally {
@@ -499,7 +539,14 @@ export default function BusinessDetailPage() {
           modificationPrompt: promptForRequest,
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        previewDeploymentError?: string | null;
+        previewDeployment?: {
+          aliasUrl?: string | null;
+          deploymentUrl?: string | null;
+        } | null;
+      };
       if (!res.ok) {
         throw new Error(data.error || "Generation failed");
       }
@@ -511,6 +558,17 @@ export default function BusinessDetailPage() {
             ? "Site regenerated"
             : "Site generated"
       );
+      if (data.previewDeploymentError) {
+        toast.error(`Public preview deploy failed: ${data.previewDeploymentError}`);
+      } else if (data.previewDeployment) {
+        const deployedUrl =
+          data.previewDeployment.aliasUrl ||
+          data.previewDeployment.deploymentUrl ||
+          null;
+        if (deployedUrl) {
+          toast.success(`Public preview updated at ${deployedUrl}`);
+        }
+      }
       setSiteDialogMode(null);
       setRegeneratePrompt("");
       setGenerationActivity([]);
@@ -537,6 +595,17 @@ export default function BusinessDetailPage() {
         `${site.version}-${site.generatedAt ?? site.created_at ?? ""}-${sitePreviewNonce}`
       )}`
     : null;
+  const previewDeployment =
+    biz?.siteDeployments?.find(
+      (deployment) =>
+        deployment.deploymentKind === "preview" && deployment.active
+    ) ?? null;
+  const customerDeployment =
+    biz?.siteDeployments?.find(
+      (deployment) =>
+        deployment.deploymentKind === "customer" && deployment.active
+    ) ?? null;
+  const publicPreviewUrl = biz?.publicPreviewUrl ?? null;
   const hours: Record<string, string> = (() => {
     try {
       return biz?.hours_json ? JSON.parse(biz.hours_json) : {};
@@ -632,6 +701,109 @@ export default function BusinessDetailPage() {
     }
   }
 
+  async function saveCustomerDomain() {
+    try {
+      const res = await fetch(`/api/businesses/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_domain: customerDomainDraft.trim() || null,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      toast.success("Customer domain saved");
+      await fetchBusiness();
+    } catch {
+      toast.error("Failed to save customer domain");
+    }
+  }
+
+  async function deployPreview() {
+    setActionLoading("deployPreview");
+    try {
+      const res = await fetch(`/api/businesses/${id}/deploy-preview`, {
+        method: "POST",
+      });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            error?: string;
+            deployment?: {
+              aliasUrl?: string | null;
+              deploymentUrl?: string | null;
+            };
+          }
+        | null;
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Failed to deploy preview");
+      }
+      const deployedUrl =
+        data?.deployment?.aliasUrl || data?.deployment?.deploymentUrl || null;
+      toast.success(
+        deployedUrl
+          ? `Preview deployed at ${deployedUrl}`
+          : "Preview deployed"
+      );
+      await fetchBusiness();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to deploy preview"
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function deployCustomerProject() {
+    setActionLoading("deployCustomer");
+    try {
+      const res = await fetch(`/api/businesses/${id}/deploy-customer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerDomain: customerDomainDraft.trim() || null,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            error?: string;
+            deployment?: {
+              aliasUrl?: string | null;
+              deploymentUrl?: string | null;
+              customerDomain?: string | null;
+              customerDomainVerified?: boolean;
+            };
+          }
+        | null;
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Failed to deploy customer site");
+      }
+
+      const deployedUrl =
+        data?.deployment?.aliasUrl || data?.deployment?.deploymentUrl || null;
+      if (
+        data?.deployment?.customerDomain &&
+        data.deployment.customerDomainVerified === false
+      ) {
+        toast.success(
+          "Customer project deployed. Finish the DNS verification steps below before the custom domain will work."
+        );
+      } else {
+        toast.success(
+          deployedUrl
+            ? `Customer site deployed at ${deployedUrl}`
+            : "Customer site deployed"
+        );
+      }
+      await fetchBusiness();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to deploy customer site"
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   async function generateEmail() {
     setActionLoading("email");
     try {
@@ -655,7 +827,7 @@ export default function BusinessDetailPage() {
       });
       if (!res.ok) throw new Error("Failed");
       toast.success("Email updated");
-      fetchBusiness();
+      void fetchBusiness();
     } catch {
       toast.error("Failed to update email");
     }
@@ -663,6 +835,22 @@ export default function BusinessDetailPage() {
 
   async function approveEmail(emailId: number) {
     await updateEmail(emailId, { status: "approved" } as Partial<EmailDraft>);
+  }
+
+  function openEmailDraft(email: EmailDraft) {
+    const mailtoUrl = buildMailtoUrl({
+      toAddress: email.toAddress,
+      subject: email.subject,
+      body: email.body,
+    });
+
+    if (!mailtoUrl) {
+      toast.error("Add a recipient email before opening your mail app");
+      return;
+    }
+
+    window.location.href = mailtoUrl;
+    toast.success("Opening your default mail app");
   }
 
   async function markSent(emailId: number) {
@@ -1300,6 +1488,33 @@ export default function BusinessDetailPage() {
                     Generated {formatStoredDateTime(site.generatedAt)}
                   </span>
                   <div className="ml-auto flex gap-2">
+                    {publicPreviewUrl && biz.publicPreviewUrlSource !== "local" ? (
+                      <a
+                        href={publicPreviewUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <Button variant="outline" size="sm">
+                          <ExternalLink className="size-4" />
+                          Open Public Preview
+                        </Button>
+                      </a>
+                    ) : null}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={deployPreview}
+                      disabled={
+                        generationRunning || actionLoading === "deployPreview"
+                      }
+                    >
+                      {actionLoading === "deployPreview" ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Globe className="size-4" />
+                      )}
+                      {previewDeployment ? "Redeploy Preview" : "Deploy Preview"}
+                    </Button>
                     <a
                       href={`/sites/${site.slug}`}
                       target="_blank"
@@ -1348,6 +1563,170 @@ export default function BusinessDetailPage() {
                       Regenerate
                     </Button>
                   </div>
+                </div>
+
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Public Preview</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3 text-sm">
+                      <div className="space-y-1">
+                        <p className="font-medium">Current public URL</p>
+                        <p className="break-all text-muted-foreground">
+                          {publicPreviewUrl ?? "Not deployed yet"}
+                        </p>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Source:{" "}
+                        {biz.publicPreviewUrlSource === "vercel-alias"
+                          ? "Vercel alias"
+                          : biz.publicPreviewUrlSource === "vercel-deployment"
+                            ? "Direct Vercel deployment URL"
+                            : "Local preview fallback"}
+                      </p>
+                      {previewDeployment ? (
+                        <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
+                          <p className="font-medium">Latest deployment</p>
+                          <p className="break-all text-xs text-muted-foreground">
+                            {previewDeployment.aliasUrl ||
+                              previewDeployment.vercelDeploymentUrl}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            State: {previewDeployment.readyState ?? "Unknown"}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Deploy this site to the shared Vercel preview project
+                          to replace the local-only preview link in outreach.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">
+                        Customer Project
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3 text-sm">
+                      <div className="space-y-2">
+                        <Label htmlFor="customerDomain">Customer Domain</Label>
+                        <Input
+                          id="customerDomain"
+                          value={customerDomainDraft}
+                          onChange={(event) =>
+                            setCustomerDomainDraft(event.target.value)
+                          }
+                          placeholder="www.customerdomain.com"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Optional. When set, Curb attaches the domain to the
+                          dedicated customer project and returns any DNS
+                          verification records that are still missing.
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={saveCustomerDomain}
+                          disabled={actionLoading === "deployCustomer"}
+                        >
+                          <Check className="size-4" />
+                          Save Domain
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={deployCustomerProject}
+                          disabled={
+                            generationRunning || actionLoading === "deployCustomer"
+                          }
+                        >
+                          {actionLoading === "deployCustomer" ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <Globe className="size-4" />
+                          )}
+                          {biz.customerVercelProjectId
+                            ? "Redeploy Customer Site"
+                            : "Create Customer Project"}
+                        </Button>
+                        {customerDeployment ? (
+                          <a
+                            href={
+                              customerDeployment.aliasUrl ||
+                              customerDeployment.vercelDeploymentUrl
+                            }
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Button variant="outline" size="sm">
+                              <ExternalLink className="size-4" />
+                              Open Customer Site
+                            </Button>
+                          </a>
+                        ) : null}
+                      </div>
+
+                      {biz.customerVercelProjectId ? (
+                        <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
+                          <p className="font-medium">
+                            {biz.customerVercelProjectName || "Dedicated project"}
+                          </p>
+                          <p className="break-all text-xs text-muted-foreground">
+                            Project ID: {biz.customerVercelProjectId}
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Use this after a deal is closed and you want a
+                          separate Vercel project for the live customer site.
+                        </p>
+                      )}
+
+                      {biz.customerDomain &&
+                      biz.customerDomainVerification.length > 0 &&
+                      !biz.customerDomainVerified ? (
+                        <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                          <div className="flex items-start gap-2">
+                            <CircleAlert className="mt-0.5 size-4" />
+                            <div className="space-y-1">
+                              <p className="font-medium">
+                                DNS verification required for {biz.customerDomain}
+                              </p>
+                              {biz.customerDomainVerification.map((challenge) => (
+                                <div
+                                  key={`${challenge.type}-${challenge.domain}-${challenge.value}`}
+                                  className="space-y-1 text-xs"
+                                >
+                                  <p>
+                                    Add a {challenge.type} record on{" "}
+                                    {challenge.domain}
+                                  </p>
+                                  <p className="break-all font-mono">
+                                    {challenge.value}
+                                  </p>
+                                  {challenge.reason ? (
+                                    <p>{challenge.reason}</p>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      ) : biz.customerDomain ? (
+                        <p className="text-xs text-muted-foreground">
+                          {biz.customerDomainVerified
+                            ? `${biz.customerDomain} is verified on the customer project.`
+                            : `${biz.customerDomain} is saved for the next customer deployment.`}
+                        </p>
+                      ) : null}
+                    </CardContent>
+                  </Card>
                 </div>
 
                 <Card className="overflow-hidden p-0">
@@ -1459,7 +1838,12 @@ export default function BusinessDetailPage() {
         <TabsContent value="outreach">
           <div className="space-y-6">
             <div className="flex items-center justify-between">
-              <h3 className="font-semibold">Email Drafts</h3>
+              <div>
+                <h3 className="font-semibold">Email Drafts</h3>
+                <p className="text-sm text-muted-foreground">
+                  Open prefilled drafts in your default desktop mail app.
+                </p>
+              </div>
               <Button
                 onClick={generateEmail}
                 disabled={actionLoading === "email"}
@@ -1504,6 +1888,11 @@ export default function BusinessDetailPage() {
                               <p className="text-xs text-muted-foreground">
                                 {formatStoredDate(email.createdAt)}
                               </p>
+                              <p className="text-xs text-muted-foreground">
+                                {email.toAddress
+                                  ? `To: ${email.toAddress}`
+                                  : "Add a recipient email"}
+                              </p>
                             </div>
                           </button>
                           <div className="flex items-center gap-2">
@@ -1523,8 +1912,11 @@ export default function BusinessDetailPage() {
                         {isExpanded && (
                           <>
                             <Separator />
-                            <div className="rounded-lg bg-muted/50 p-4 text-sm whitespace-pre-wrap">
-                              {email.body}
+                            <div className="space-y-3 rounded-lg bg-muted/50 p-4 text-sm">
+                              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                {email.toAddress ? `To: ${email.toAddress}` : "Recipient missing"}
+                              </p>
+                              <div className="whitespace-pre-wrap">{email.body}</div>
                             </div>
                             <div className="flex gap-2">
                               <Button
@@ -1532,6 +1924,7 @@ export default function BusinessDetailPage() {
                                 size="sm"
                                 onClick={() => {
                                   setEditingEmail(email);
+                                  setEditToAddress(email.toAddress ?? "");
                                   setEditSubject(email.subject);
                                   setEditBody(email.body);
                                   setEditEmailOpen(true);
@@ -1549,6 +1942,15 @@ export default function BusinessDetailPage() {
                                   Approve
                                 </Button>
                               )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => openEmailDraft(email)}
+                                disabled={!email.toAddress}
+                              >
+                                <Mail className="size-3.5" />
+                                Open in Mail App
+                              </Button>
                               {(email.status === "draft" || email.status === "approved") && (
                                 <Button
                                   variant="outline"
@@ -1587,6 +1989,15 @@ export default function BusinessDetailPage() {
                 </DialogHeader>
                 <div className="space-y-4">
                   <div className="space-y-2">
+                    <Label>To</Label>
+                    <Input
+                      type="email"
+                      value={editToAddress}
+                      onChange={(e) => setEditToAddress(e.target.value)}
+                      placeholder="owner@business.com"
+                    />
+                  </div>
+                  <div className="space-y-2">
                     <Label>Subject</Label>
                     <Input
                       value={editSubject}
@@ -1607,6 +2018,7 @@ export default function BusinessDetailPage() {
                     onClick={async () => {
                       if (editingEmail) {
                         await updateEmail(editingEmail.id, {
+                          toAddress: editToAddress,
                           subject: editSubject,
                           body: editBody,
                         });

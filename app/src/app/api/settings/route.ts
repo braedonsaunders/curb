@@ -47,6 +47,12 @@ interface SettingsPayload {
     categories: string[];
     siteBaseUrl: string;
   };
+  vercel: {
+    token: string;
+    teamId: string;
+    previewProjectId: string;
+    previewRootDomain: string;
+  };
   outreach: {
     yourName: string;
     businessName: string;
@@ -61,6 +67,7 @@ interface SettingsPayload {
 type WritableSettingsSection =
   | "credentials"
   | "defaults"
+  | "vercel"
   | "outreach"
   | "pricing";
 
@@ -87,6 +94,12 @@ function toSettingsPayload(config: Config): SettingsPayload {
       radius: config.defaultRadiusKm,
       categories: config.defaultCategories,
       siteBaseUrl: config.siteBaseUrl,
+    },
+    vercel: {
+      token: config.vercelToken,
+      teamId: config.vercelTeamId,
+      previewProjectId: config.vercelPreviewProjectId,
+      previewRootDomain: config.vercelPreviewRootDomain,
     },
     outreach: {
       yourName: config.ownerName,
@@ -165,6 +178,15 @@ function flattenSettingsPayload(
     };
   }
 
+  if (section === "vercel") {
+    return {
+      vercelToken: String(source.token ?? ""),
+      vercelTeamId: String(source.teamId ?? "").trim(),
+      vercelPreviewProjectId: String(source.previewProjectId ?? "").trim(),
+      vercelPreviewRootDomain: String(source.previewRootDomain ?? "").trim(),
+    };
+  }
+
   if (section === "outreach") {
     return {
       ownerName: String(source.yourName ?? ""),
@@ -196,6 +218,9 @@ function flattenFullPayload(data: unknown): Partial<Config> {
       : {}),
     ...("defaults" in source
       ? flattenSettingsPayload("defaults", source.defaults)
+      : {}),
+    ...("vercel" in source
+      ? flattenSettingsPayload("vercel", source.vercel)
       : {}),
     ...("outreach" in source
       ? flattenSettingsPayload("outreach", source.outreach)

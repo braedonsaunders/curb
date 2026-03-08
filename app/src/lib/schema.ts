@@ -51,6 +51,11 @@ export function initializeDatabase(): void {
       enrichment_completed_at TEXT,
       enrichment_error TEXT,
       enrichment_attempts INTEGER DEFAULT 0,
+      customer_domain TEXT,
+      customer_domain_verified BOOLEAN DEFAULT 0,
+      customer_domain_verification_json TEXT,
+      vercel_customer_project_id TEXT,
+      vercel_customer_project_name TEXT,
       notes TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
@@ -86,6 +91,25 @@ export function initializeDatabase(): void {
       generation_time_ms INTEGER,
       exported BOOLEAN DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS site_deployments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      business_id INTEGER NOT NULL REFERENCES businesses(id),
+      generated_site_id INTEGER NOT NULL REFERENCES generated_sites(id),
+      deployment_kind TEXT NOT NULL,
+      vercel_project_id TEXT NOT NULL,
+      vercel_project_name TEXT,
+      vercel_deployment_id TEXT NOT NULL,
+      vercel_deployment_url TEXT NOT NULL,
+      alias_url TEXT,
+      alias_host TEXT,
+      target TEXT NOT NULL,
+      ready_state TEXT,
+      active BOOLEAN DEFAULT 0,
+      error_message TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS emails (
@@ -125,6 +149,8 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_businesses_category ON businesses(category);
     CREATE INDEX IF NOT EXISTS idx_audits_business_id ON audits(business_id);
     CREATE INDEX IF NOT EXISTS idx_generated_sites_business_id ON generated_sites(business_id);
+    CREATE INDEX IF NOT EXISTS idx_site_deployments_business_kind ON site_deployments(business_id, deployment_kind, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_site_deployments_generated_site_id ON site_deployments(generated_site_id);
     CREATE INDEX IF NOT EXISTS idx_emails_business_id ON emails(business_id);
     CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at ON activity_logs(created_at DESC);
   `);
@@ -176,6 +202,27 @@ export function initializeDatabase(): void {
     "enrichment_attempts",
     "enrichment_attempts INTEGER DEFAULT 0"
   );
+  ensureColumn("businesses", "customer_domain", "customer_domain TEXT");
+  ensureColumn(
+    "businesses",
+    "customer_domain_verified",
+    "customer_domain_verified BOOLEAN DEFAULT 0"
+  );
+  ensureColumn(
+    "businesses",
+    "customer_domain_verification_json",
+    "customer_domain_verification_json TEXT"
+  );
+  ensureColumn(
+    "businesses",
+    "vercel_customer_project_id",
+    "vercel_customer_project_id TEXT"
+  );
+  ensureColumn(
+    "businesses",
+    "vercel_customer_project_name",
+    "vercel_customer_project_name TEXT"
+  );
 
   db.prepare(
     "UPDATE businesses SET enrichment_status = 'pending' WHERE enrichment_status IS NULL"
@@ -194,5 +241,10 @@ export function initializeDatabase(): void {
         OR city IS NOT NULL
         OR hours_json IS NOT NULL
       )
+  `).run();
+  db.prepare(`
+    UPDATE businesses
+    SET customer_domain_verified = 0
+    WHERE customer_domain_verified IS NULL
   `).run();
 }
