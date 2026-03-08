@@ -37,3 +37,11 @@ Thumbs.db
 # Build
 dist/
 build/
+
+# Playwright artifacts
+.playwright/
+.playwright-cli/
+playwright-report/
+test-results/
+blob-report/
+output/playwright/
