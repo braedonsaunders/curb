@@ -265,10 +265,12 @@ export async function getPlaceDetails(
 
 export async function downloadPlacePhoto(
   photoReference: string,
-  slug: string
+  slug: string,
+  siteDir?: string
 ): Promise<string> {
   const apiKey = getApiKey();
-  const photoDir = path.join(SITES_DIR, slug, "assets", "photos");
+  const targetSiteDir = siteDir ?? path.join(SITES_DIR, slug);
+  const photoDir = path.join(targetSiteDir, "assets", "photos");
 
   fs.mkdirSync(photoDir, { recursive: true });
 

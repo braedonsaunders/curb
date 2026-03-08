@@ -50,7 +50,9 @@ import {
   Camera,
   CircleAlert,
   Sparkles,
+  FileCode2,
 } from "lucide-react";
+import { SiteEditorDialog } from "@/components/site-editor-dialog";
 import {
   BUSINESS_STATUSES,
   getBusinessStatusLabel,
@@ -229,6 +231,8 @@ export default function BusinessDetailPage() {
     null
   );
   const [generationError, setGenerationError] = useState<string | null>(null);
+  const [siteEditorOpen, setSiteEditorOpen] = useState(false);
+  const [sitePreviewNonce, setSitePreviewNonce] = useState(0);
   const siteDialogOpen = siteDialogMode !== null;
 
   const fetchBusiness = useCallback(async () => {
@@ -530,7 +534,7 @@ export default function BusinessDetailPage() {
   const site = biz?.generatedSites?.[0] ?? null;
   const sitePreviewUrl = site
     ? `/sites/${site.slug}?v=${encodeURIComponent(
-        `${site.version}-${site.generatedAt ?? site.created_at ?? ""}`
+        `${site.version}-${site.generatedAt ?? site.created_at ?? ""}-${sitePreviewNonce}`
       )}`
     : null;
   const hours: Record<string, string> = (() => {
@@ -1313,6 +1317,15 @@ export default function BusinessDetailPage() {
                     <Button
                       variant="outline"
                       size="sm"
+                      onClick={() => setSiteEditorOpen(true)}
+                      disabled={generationRunning}
+                    >
+                      <FileCode2 className="size-4" />
+                      Edit Files
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
                       onClick={() => {
                         setRegeneratePrompt("");
                         setSiteDialogMode("modify");
@@ -1426,6 +1439,19 @@ export default function BusinessDetailPage() {
                 </DialogFooter>
               </DialogContent>
             </Dialog>
+
+            {site ? (
+              <SiteEditorDialog
+                businessId={id}
+                siteSlug={site.slug}
+                siteVersion={site.version}
+                open={siteEditorOpen}
+                onOpenChange={setSiteEditorOpen}
+                onSaved={() => {
+                  setSitePreviewNonce((current) => current + 1);
+                }}
+              />
+            ) : null}
           </div>
         </TabsContent>
 

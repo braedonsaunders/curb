@@ -1,0 +1,121 @@
+<svg width="1200" height="640" viewBox="0 0 1200 640" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Curb README hero</title>
+  <desc id="desc">A stylized dashboard illustration showing Curb's flow from weak websites to generated previews and outbound email.</desc>
+  <defs>
+    <linearGradient id="bg" x1="120" y1="80" x2="1120" y2="620" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F172A"/>
+      <stop offset="0.5" stop-color="#111827"/>
+      <stop offset="1" stop-color="#1E293B"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#F8FAFC" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#CBD5E1" stop-opacity="0.04"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#F59E0B"/>
+      <stop offset="1" stop-color="#F97316"/>
+    </linearGradient>
+    <linearGradient id="accentSoft" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#22C55E"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#020617" flood-opacity="0.35"/>
+    </filter>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M36 0H0V36" stroke="#94A3B8" stroke-opacity="0.12"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="640" rx="36" fill="url(#bg)"/>
+  <rect width="1200" height="640" rx="36" fill="url(#grid)"/>
+  <circle cx="1018" cy="110" r="156" fill="#0EA5E9" fill-opacity="0.12"/>
+  <circle cx="932" cy="480" r="206" fill="#F59E0B" fill-opacity="0.1"/>
+  <circle cx="175" cy="535" r="170" fill="#22C55E" fill-opacity="0.08"/>
+
+  <g opacity="0.9">
+    <rect x="72" y="76" width="140" height="34" rx="17" fill="#0B1220" stroke="#334155"/>
+    <circle cx="97" cy="93" r="6" fill="#F59E0B"/>
+    <text x="116" y="99" fill="#E2E8F0" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15" font-weight="600">Cold outreach with receipts</text>
+  </g>
+
+  <text x="72" y="214" fill="#F8FAFC" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="88" font-weight="800" letter-spacing="-3.2">curb</text>
+  <text x="72" y="272" fill="#CBD5E1" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="28" font-weight="500">Build the replacement site first.</text>
+  <text x="72" y="312" fill="#CBD5E1" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="28" font-weight="500">Send the proof in the first email.</text>
+
+  <g transform="translate(72 370)">
+    <rect width="158" height="118" rx="24" fill="url(#panel)" stroke="#334155"/>
+    <text x="22" y="30" fill="#94A3B8" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing="1.6">DISCOVER</text>
+    <text x="22" y="62" fill="#F8FAFC" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="21" font-weight="700">Find weak sites</text>
+    <text x="22" y="90" fill="#CBD5E1" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">Google Places + local data</text>
+  </g>
+
+  <g transform="translate(250 370)">
+    <rect width="158" height="118" rx="24" fill="url(#panel)" stroke="#334155"/>
+    <text x="22" y="30" fill="#94A3B8" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing="1.6">AUDIT</text>
+    <text x="22" y="62" fill="#F8FAFC" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="21" font-weight="700">Score the gap</text>
+    <text x="22" y="90" fill="#CBD5E1" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">Screenshots + AI review</text>
+  </g>
+
+  <g transform="translate(428 370)">
+    <rect width="158" height="118" rx="24" fill="url(#panel)" stroke="#334155"/>
+    <text x="22" y="30" fill="#94A3B8" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="700" letter-spacing="1.6">GENERATE</text>
+    <text x="22" y="62" fill="#F8FAFC" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="21" font-weight="700">Ship a preview</text>
+    <text x="22" y="90" fill="#CBD5E1" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">Static site, ready to send</text>
+  </g>
+
+  <path d="M228 428H244" stroke="#475569" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M406 428H422" stroke="#475569" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M584 428H600" stroke="#475569" stroke-width="2.5" stroke-linecap="round"/>
+
+  <g filter="url(#shadow)">
+    <rect x="664" y="92" width="464" height="456" rx="28" fill="#F8FAFC"/>
+    <rect x="664" y="92" width="464" height="456" rx="28" stroke="#CBD5E1"/>
+
+    <rect x="694" y="122" width="196" height="146" rx="20" fill="#0F172A"/>
+    <text x="718" y="152" fill="#94A3B8" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="1.4">TARGET SITE</text>
+    <rect x="718" y="170" width="64" height="10" rx="5" fill="#334155"/>
+    <rect x="718" y="191" width="118" height="10" rx="5" fill="#1E293B"/>
+    <rect x="718" y="228" width="148" height="16" rx="8" fill="#7C2D12"/>
+    <text x="731" y="240" fill="#FDBA74" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="11" font-weight="700">Outdated. Slow. No CTA.</text>
+    <rect x="804" y="170" width="62" height="62" rx="14" fill="#1E293B"/>
+    <path d="M817 214L832 186L848 206L854 196L866 214H817Z" fill="#475569"/>
+    <circle cx="862" cy="148" r="10" fill="#EF4444"/>
+
+    <rect x="902" y="122" width="196" height="146" rx="20" fill="#F8FAFC" stroke="#E2E8F0"/>
+    <text x="926" y="152" fill="#64748B" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="1.4">CURB PREVIEW</text>
+    <rect x="926" y="170" width="86" height="10" rx="5" fill="#CBD5E1"/>
+    <rect x="926" y="192" width="126" height="10" rx="5" fill="#CBD5E1"/>
+    <rect x="926" y="220" width="148" height="30" rx="15" fill="url(#accent)"/>
+    <text x="951" y="240" fill="#FFF7ED" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="13" font-weight="800">Book an Estimate</text>
+    <rect x="1020" y="168" width="54" height="54" rx="18" fill="url(#accentSoft)"/>
+    <path d="M1038 199C1045 184 1050 178 1057 171C1063 165 1070 161 1075 160C1070 169 1067 176 1063 184C1058 194 1050 203 1038 199Z" fill="#ECFEFF"/>
+
+    <g transform="translate(694 298)">
+      <rect width="404" height="116" rx="22" fill="#0F172A"/>
+      <text x="24" y="34" fill="#94A3B8" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="1.4">OUTREACH DRAFT</text>
+      <text x="24" y="63" fill="#F8FAFC" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="19" font-weight="700">I rebuilt your site before reaching out.</text>
+      <text x="24" y="88" fill="#CBD5E1" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="15">Preview link, pricing, and a before-and-after story in one send.</text>
+      <rect x="292" y="26" width="88" height="30" rx="15" fill="#052E16" stroke="#166534"/>
+      <text x="314" y="46" fill="#86EFAC" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="800">READY</text>
+    </g>
+
+    <g transform="translate(694 432)">
+      <rect width="128" height="86" rx="20" fill="#FFF7ED" stroke="#FED7AA"/>
+      <text x="18" y="30" fill="#9A3412" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="1.2">PIPELINE</text>
+      <text x="18" y="63" fill="#7C2D12" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="28" font-weight="800">1-shot</text>
+    </g>
+
+    <g transform="translate(836 432)">
+      <rect width="128" height="86" rx="20" fill="#ECFEFF" stroke="#A5F3FC"/>
+      <text x="18" y="30" fill="#155E75" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="1.2">OUTPUT</text>
+      <text x="18" y="63" fill="#0F172A" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="28" font-weight="800">Static</text>
+    </g>
+
+    <g transform="translate(978 432)">
+      <rect width="120" height="86" rx="20" fill="#F0FDF4" stroke="#BBF7D0"/>
+      <text x="18" y="30" fill="#166534" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="12" font-weight="700" letter-spacing="1.2">PITCH</text>
+      <text x="18" y="63" fill="#14532D" font-family="system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="28" font-weight="800">Proof</text>
+    </g>
+  </g>
+</svg>

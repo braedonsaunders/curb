@@ -34,6 +34,7 @@ const CONTACT_CONFIG_PATH = "assets/curb-site-config.js";
 const CONTACT_RUNTIME_PATH = "assets/curb-contact.js";
 const VERCEL_CONFIG_PATH = "vercel.json";
 const SOURCE_BRAND_DIR = "assets/brand";
+const SOURCE_SNAPSHOT_FILE = "__source_snapshot.json";
 const EDITABLE_SITE_EXTENSIONS = new Set([
   ".html",
   ".css",
@@ -42,6 +43,16 @@ const EDITABLE_SITE_EXTENSIONS = new Set([
   ".svg",
   ".txt",
 ]);
+const REQUESTED_ROUTE_PATTERNS: Array<{
+  route: string;
+  pattern: RegExp;
+}> = [
+  { route: "/about-us/", pattern: /\babout(?:\s+us)?\b/i },
+  { route: "/contact/", pattern: /\bcontact(?:\s+us)?\b/i },
+  { route: "/gallery/", pattern: /\bgallery\b/i },
+  { route: "/menu/", pattern: /\bmenu\b/i },
+  { route: "/services/", pattern: /\bservices?\b/i },
+];
 
 export interface GenerateResult {
   businessId: number;
@@ -102,6 +113,37 @@ function inferImageExtension(
   }
 
   return null;
+}
+
+function inferImageMimeType(filePath: string): string | null {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === ".svg") return "image/svg+xml";
+  if (extension === ".png") return "image/png";
+  if (extension === ".webp") return "image/webp";
+  if (extension === ".gif") return "image/gif";
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg";
+  return null;
+}
+
+function extractRequestedRouteAliases(
+  modificationPrompt: string | undefined
+): string[] {
+  const normalizedPrompt = modificationPrompt?.trim();
+  if (!normalizedPrompt) {
+    return [];
+  }
+
+  if (
+    !/\b(page|pages|link|links|nav|navigation|route|routes|tab|tabs)\b/i.test(
+      normalizedPrompt
+    )
+  ) {
+    return [];
+  }
+
+  return REQUESTED_ROUTE_PATTERNS.filter(({ pattern }) =>
+    pattern.test(normalizedPrompt)
+  ).map(({ route }) => route);
 }
 
 type SourceLogoCandidate = {
@@ -421,6 +463,41 @@ function buildBundleIntegrityCorrectionPrompt(
     "Add the missing files or pages, or rewrite the references to existing bundle paths.",
     "Do not reference assets/style.css, contact/index.html, products/index.html, or any other local path unless that exact file exists in the returned bundle.",
     examples,
+  ].join(" ");
+}
+
+function findMissingRequestedPageRoutes(
+  files: GeneratedSiteFile[],
+  requestedRoutes: string[]
+): string[] {
+  if (requestedRoutes.length === 0) {
+    return [];
+  }
+
+  const exactRouteKeys = new Set(
+    files
+      .filter((file) => isHtmlFile(file.path))
+      .flatMap((file) => routeKeysForGeneratedFile(file.path))
+  );
+  const htmlAliasTargets = files
+    .filter((file) => isHtmlFile(file.path))
+    .map((file) => buildRouteAliasTarget(routePathFromFilePath(file.path), file.path));
+
+  return requestedRoutes.filter((route) => {
+    if (exactRouteKeys.has(route)) {
+      return false;
+    }
+
+    return !findBestRouteAliasTarget(route, htmlAliasTargets);
+  });
+}
+
+function buildRequestedPageCorrectionPrompt(routes: string[]): string {
+  return [
+    "Requested page correction:",
+    `The user explicitly asked for working top-level pages for: ${routes.join(", ")}.`,
+    "Return a real dedicated HTML page, or a clearly equivalent dedicated page, for each requested item and make sure navigation points to those pages.",
+    "Do not leave these requests as broken links or collapse them into a homepage-only section.",
   ].join(" ");
 }
 
@@ -784,12 +861,20 @@ function buildRouteAliasRedirectPage(targetHref: string): string {
 
 function synthesizeMissingRouteAliasPages(
   files: GeneratedSiteFile[],
-  sourceSiteSnapshot: GenerateSiteOptions["sourceSiteSnapshot"]
+  sourceSiteSnapshot: GenerateSiteOptions["sourceSiteSnapshot"],
+  preferredRoutes: string[] = []
 ): GeneratedSiteFile[] {
-  const missingRouteReferences = findMissingLocalBundleReferences(files).filter(
-    (issue) => issue.targetType === "route"
+  const routeKeys = new Set(files.flatMap((file) => routeKeysForGeneratedFile(file.path)));
+  const routesToCreate = Array.from(
+    new Set([
+      ...findMissingLocalBundleReferences(files)
+        .filter((issue) => issue.targetType === "route")
+        .map((issue) => issue.resolvedTarget),
+      ...preferredRoutes.filter((route) => !routeKeys.has(route)),
+    ])
   );
-  if (missingRouteReferences.length === 0) {
+
+  if (routesToCreate.length === 0) {
     return files;
   }
 
@@ -809,12 +894,11 @@ function synthesizeMissingRouteAliasPages(
       ) ?? [];
 
   let createdAliasCount = 0;
-  for (const issue of missingRouteReferences) {
+  for (const route of routesToCreate) {
     if (createdAliasCount >= 12) {
       break;
     }
 
-    const route = issue.resolvedTarget;
     if (
       route === "/" ||
       route.startsWith("/assets/") ||
@@ -1282,9 +1366,92 @@ function rewriteBundleLinks(
   });
 }
 
-function resetSiteDirectory(siteDir: string): void {
+function toSiteRelativePath(siteDir: string, fullPath: string): string {
+  return path.relative(siteDir, fullPath).split(path.sep).join("/");
+}
+
+function shouldPreserveSiteFile(relativePath: string): boolean {
+  return relativePath === SOURCE_SNAPSHOT_FILE || !isEditableSiteFile(relativePath);
+}
+
+function createWorkingSiteDirectory(siteDir: string): string {
+  const parentDir = path.dirname(siteDir);
+  fs.mkdirSync(parentDir, { recursive: true });
+  return fs.mkdtempSync(path.join(parentDir, `${path.basename(siteDir)}-staging-`));
+}
+
+function copyPreservedSiteFiles(sourceDir: string, targetDir: string): void {
+  if (!fs.existsSync(sourceDir)) {
+    return;
+  }
+
+  for (const fullPath of walkDirectoryFiles(sourceDir)) {
+    const relativePath = toSiteRelativePath(sourceDir, fullPath);
+    if (!shouldPreserveSiteFile(relativePath)) {
+      continue;
+    }
+
+    const outputPath = path.join(targetDir, ...relativePath.split("/"));
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.copyFileSync(fullPath, outputPath);
+  }
+}
+
+function promoteWorkingSiteDirectory(
+  siteDir: string,
+  workingSiteDir: string
+): void {
   fs.rmSync(siteDir, { recursive: true, force: true });
-  fs.mkdirSync(siteDir, { recursive: true });
+  fs.renameSync(workingSiteDir, siteDir);
+}
+
+function readCachedSourceSnapshot(siteDir: string): WebsiteSourceSnapshot | null {
+  const snapshotPath = path.join(siteDir, SOURCE_SNAPSHOT_FILE);
+  if (!fs.existsSync(snapshotPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(snapshotPath, "utf-8")) as WebsiteSourceSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+function writeSourceSnapshot(
+  siteDir: string,
+  snapshot: WebsiteSourceSnapshot
+): void {
+  const snapshotPath = path.join(siteDir, SOURCE_SNAPSHOT_FILE);
+  fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
+  fs.writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2), "utf-8");
+}
+
+function readCachedSourceLogoAsset(
+  siteDir: string,
+  sourceSiteSnapshot: WebsiteSourceSnapshot | null
+): SourceBrandAsset | null {
+  const brandDir = path.join(siteDir, ...SOURCE_BRAND_DIR.split("/"));
+  if (!fs.existsSync(brandDir)) {
+    return null;
+  }
+
+  const logoPath = walkDirectoryFiles(brandDir).find((fullPath) =>
+    /^source-logo\./i.test(path.basename(fullPath))
+  );
+  if (!logoPath) {
+    return null;
+  }
+
+  const relativePath = toSiteRelativePath(siteDir, logoPath);
+  return {
+    relativePath,
+    sourceUrl:
+      sourceSiteSnapshot?.brand.logoCandidates[0] ??
+      sourceSiteSnapshot?.finalUrl ??
+      relativePath,
+    mimeType: inferImageMimeType(logoPath),
+  };
 }
 
 function writeGeneratedSiteFiles(
@@ -1342,7 +1509,7 @@ function readExistingSiteFiles(siteDir: string): ExistingSiteFile[] {
 
       if (
         relativePath.startsWith("assets/photos/") ||
-        relativePath === "__source_snapshot.json"
+        relativePath === SOURCE_SNAPSHOT_FILE
       ) {
         return false;
       }
@@ -1750,7 +1917,8 @@ function businessRowToData(
 
 async function downloadPhotos(
   photosJson: string | null,
-  slug: string
+  slug: string,
+  siteDir: string
 ): Promise<string[]> {
   if (!photosJson) return [];
 
@@ -1768,7 +1936,7 @@ async function downloadPhotos(
 
   for (const ref of toDownload) {
     try {
-      const relativePath = await downloadPlacePhoto(ref, slug);
+      const relativePath = await downloadPlacePhoto(ref, slug, siteDir);
       downloadedPaths.push(relativePath);
     } catch (err) {
       console.error(
@@ -1800,12 +1968,11 @@ export async function generateSiteForBusiness(
   const photosJson = business.photos_json as string | null;
   const websiteUrl = business.website_url as string | null;
 
-  // Create directory structure
   const siteDir = path.join(SITES_DIR, slug);
   const existingSiteFiles = readExistingSiteFiles(siteDir);
-  resetSiteDirectory(siteDir);
+  const isModificationRequest = Boolean(modificationPrompt?.trim());
+  const requestedRouteAliases = extractRequestedRouteAliases(modificationPrompt);
 
-  // Prepare business data for the configured AI provider
   const businessData = businessRowToData(business);
 
   logActivity({
@@ -1813,77 +1980,92 @@ export async function generateSiteForBusiness(
     stage: "started",
     businessId,
     businessName: name,
-    message: `Started website generation for ${name}`,
+    message: isModificationRequest
+      ? `Started website update for ${name}`
+      : `Started website generation for ${name}`,
   });
+
+  let workingSiteDir: string | null = null;
+  let promotedWorkingSiteDir = false;
 
   try {
     const startTime = Date.now();
     const aiConfig = getConfig();
     const providerLabel = getConfiguredAiProviderLabel(aiConfig);
     const modelUsed = `${aiConfig.aiProvider}:${getConfiguredAiModel(aiConfig)}`;
-    const assetsDir = path.join(siteDir, "assets", "photos");
-    fs.mkdirSync(assetsDir, { recursive: true });
+    workingSiteDir = createWorkingSiteDirectory(siteDir);
+    const outputSiteDir = workingSiteDir;
 
-    logActivity({
-      kind: "generation",
-      stage: "assets",
-      businessId,
-      businessName: name,
-      message: `Downloading local business photos for ${name}`,
-    });
-    await downloadPhotos(photosJson, slug);
+    if (isModificationRequest) {
+      copyPreservedSiteFiles(siteDir, outputSiteDir);
+    }
 
-    logActivity({
-      kind: "generation",
-      stage: "crawl",
-      businessId,
-      businessName: name,
-      message: websiteUrl
-        ? `Capturing source-site content with Playwright from ${websiteUrl}`
-        : `No live website found for ${name}; generating from business data only`,
-    });
-    const sourceSiteSnapshot = websiteUrl
-      ? await captureWebsiteSourceSnapshot(websiteUrl, {
-          maxPages: SOURCE_SNAPSHOT_PAGE_LIMIT,
-        }).catch((err) => {
-          console.error(
-            `Failed to capture website snapshot for ${slug}: ${
-              err instanceof Error ? err.message : String(err)
-            }`
-          );
-          return null;
-        })
+    let sourceSiteSnapshot = isModificationRequest
+      ? readCachedSourceSnapshot(siteDir)
       : null;
 
-    if (sourceSiteSnapshot) {
-      const snapshotPath = path.join(siteDir, "__source_snapshot.json");
-      fs.writeFileSync(
-        snapshotPath,
-        JSON.stringify(sourceSiteSnapshot, null, 2),
-        "utf-8"
-      );
+    if (!isModificationRequest) {
+      const assetsDir = path.join(outputSiteDir, "assets", "photos");
+      fs.mkdirSync(assetsDir, { recursive: true });
 
       logActivity({
         kind: "generation",
-        stage: "crawl_complete",
+        stage: "assets",
         businessId,
         businessName: name,
-        message: `Captured ${sourceSiteSnapshot.pageCount} source pages for ${name} (estimated site size: ${
-          sourceSiteSnapshot.estimatedPageCountIsLowerBound
-            ? `at least ${sourceSiteSnapshot.estimatedPageCount}`
-            : sourceSiteSnapshot.estimatedPageCount
-        } pages)`,
+        message: `Downloading local business photos for ${name}`,
       });
+      await downloadPhotos(photosJson, slug, outputSiteDir);
+
+      logActivity({
+        kind: "generation",
+        stage: "crawl",
+        businessId,
+        businessName: name,
+        message: websiteUrl
+          ? `Capturing source-site content with Playwright from ${websiteUrl}`
+          : `No live website found for ${name}; generating from business data only`,
+      });
+      sourceSiteSnapshot = websiteUrl
+        ? await captureWebsiteSourceSnapshot(websiteUrl, {
+            maxPages: SOURCE_SNAPSHOT_PAGE_LIMIT,
+          }).catch((err) => {
+            console.error(
+              `Failed to capture website snapshot for ${slug}: ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            );
+            return null;
+          })
+        : null;
+
+      if (sourceSiteSnapshot) {
+        writeSourceSnapshot(outputSiteDir, sourceSiteSnapshot);
+
+        logActivity({
+          kind: "generation",
+          stage: "crawl_complete",
+          businessId,
+          businessName: name,
+          message: `Captured ${sourceSiteSnapshot.pageCount} source pages for ${name} (estimated site size: ${
+            sourceSiteSnapshot.estimatedPageCountIsLowerBound
+              ? `at least ${sourceSiteSnapshot.estimatedPageCount}`
+              : sourceSiteSnapshot.estimatedPageCount
+          } pages)`,
+        });
+      }
     }
 
-    const screenshotUrls = Array.from(
-      new Set(
-        (
-          sourceSiteSnapshot?.pages.map((page) => page.url) ??
-          (websiteUrl ? [websiteUrl] : [])
-        ).filter(Boolean)
-      )
-    ).slice(0, SOURCE_SCREENSHOT_LIMIT);
+    const screenshotUrls = isModificationRequest
+      ? []
+      : Array.from(
+          new Set(
+            (
+              sourceSiteSnapshot?.pages.map((page) => page.url) ??
+              (websiteUrl ? [websiteUrl] : [])
+            ).filter(Boolean)
+          )
+        ).slice(0, SOURCE_SCREENSHOT_LIMIT);
 
     const sourceSiteVisuals: NonNullable<
       GenerateSiteOptions["sourceSiteVisuals"]
@@ -1892,12 +2074,11 @@ export async function generateSiteForBusiness(
       GenerateSiteOptions["sourceBrandAssets"]
     > = {};
 
-    sourceBrandAssets.logo = await downloadSourceLogoAsset(
-      siteDir,
-      sourceSiteSnapshot
-    );
+    sourceBrandAssets.logo = isModificationRequest
+      ? readCachedSourceLogoAsset(siteDir, sourceSiteSnapshot)
+      : await downloadSourceLogoAsset(outputSiteDir, sourceSiteSnapshot);
 
-    if (sourceBrandAssets.logo) {
+    if (sourceBrandAssets.logo && !isModificationRequest) {
       logActivity({
         kind: "generation",
         stage: "assets",
@@ -1917,22 +2098,24 @@ export async function generateSiteForBusiness(
       });
     }
 
-    for (const sourceUrl of screenshotUrls) {
-      try {
-        const screenshot = await captureWebsiteScreenshot(sourceUrl, slug);
-        sourceSiteVisuals.push({
-          finalUrl: screenshot.finalUrl,
-          pageTitle: screenshot.pageTitle,
-          screenshotBase64: screenshot.base64,
-          screenshotMediaType: screenshot.mediaType,
-          pageSignals: screenshot.pageSignals,
-        });
-      } catch (err) {
-        console.error(
-          `Failed to capture screenshot for ${slug} (${sourceUrl}): ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        );
+    if (!isModificationRequest) {
+      for (const sourceUrl of screenshotUrls) {
+        try {
+          const screenshot = await captureWebsiteScreenshot(sourceUrl, slug);
+          sourceSiteVisuals.push({
+            finalUrl: screenshot.finalUrl,
+            pageTitle: screenshot.pageTitle,
+            screenshotBase64: screenshot.base64,
+            screenshotMediaType: screenshot.mediaType,
+            pageSignals: screenshot.pageSignals,
+          });
+        } catch (err) {
+          console.error(
+            `Failed to capture screenshot for ${slug} (${sourceUrl}): ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
       }
     }
 
@@ -1951,7 +2134,9 @@ export async function generateSiteForBusiness(
       stage: "model",
       businessId,
       businessName: name,
-      message: `Generating upgraded production site with ${providerLabel} for ${name}`,
+      message: isModificationRequest
+        ? `Applying requested site changes with ${providerLabel} for ${name}`
+        : `Generating upgraded production site with ${providerLabel} for ${name}`,
     });
     let payload = await generateSite(businessData, {
       modificationPrompt,
@@ -1966,15 +2151,20 @@ export async function generateSiteForBusiness(
       businessData
     );
     const generatedHtmlPageCount = countHtmlPages(normalizedFiles);
+    const missingRequestedPageRoutes = findMissingRequestedPageRoutes(
+      normalizedFiles,
+      requestedRouteAliases
+    );
     normalizedFiles = synthesizeMissingRouteAliasPages(
       normalizedFiles,
-      sourceSiteSnapshot
+      sourceSiteSnapshot,
+      requestedRouteAliases
     );
-    const availableStaticAssetPaths = walkDirectoryFiles(siteDir)
+    const availableStaticAssetPaths = walkDirectoryFiles(outputSiteDir)
       .map((fullPath) =>
-        path.relative(siteDir, fullPath).split(path.sep).join("/")
+        path.relative(outputSiteDir, fullPath).split(path.sep).join("/")
       )
-      .filter((relativePath) => relativePath !== "__source_snapshot.json");
+      .filter((relativePath) => relativePath !== SOURCE_SNAPSHOT_FILE);
 
     const correctionPrompts: string[] = [];
     if (
@@ -1992,6 +2182,12 @@ export async function generateSiteForBusiness(
     if (requiresMultiPageBundle && generatedHtmlPageCount < 2) {
       correctionPrompts.push(
         buildMultiPageCorrectionPrompt(architectureRecommendation)
+      );
+    }
+
+    if (missingRequestedPageRoutes.length > 0) {
+      correctionPrompts.push(
+        buildRequestedPageCorrectionPrompt(missingRequestedPageRoutes)
       );
     }
 
@@ -2033,9 +2229,14 @@ export async function generateSiteForBusiness(
         businessData
       );
       const revisedHtmlPageCount = countHtmlPages(normalizedFiles);
+      const remainingMissingRequestedPageRoutes = findMissingRequestedPageRoutes(
+        normalizedFiles,
+        requestedRouteAliases
+      );
       normalizedFiles = synthesizeMissingRouteAliasPages(
         normalizedFiles,
-        sourceSiteSnapshot
+        sourceSiteSnapshot,
+        requestedRouteAliases
       );
 
       if (
@@ -2072,6 +2273,16 @@ export async function generateSiteForBusiness(
             .join("; ")}`
         );
       }
+
+      if (remainingMissingRequestedPageRoutes.length > 0) {
+        logActivity({
+          kind: "generation",
+          stage: "validation",
+          businessId,
+          businessName: name,
+          message: `Generated bundle still omitted dedicated pages for ${remainingMissingRequestedPageRoutes.join(", ")}; keeping exact-route aliases so navigation still resolves for ${name}.`,
+        });
+      }
     }
 
     const finalHtmlPageCount = countHtmlPages(normalizedFiles);
@@ -2097,7 +2308,9 @@ export async function generateSiteForBusiness(
       businessName: name,
       message: `Writing ${normalizedFiles.length} generated file${normalizedFiles.length === 1 ? "" : "s"} for ${name}`,
     });
-    writeGeneratedSiteFiles(siteDir, normalizedFiles);
+    writeGeneratedSiteFiles(outputSiteDir, normalizedFiles);
+    promoteWorkingSiteDirectory(siteDir, outputSiteDir);
+    promotedWorkingSiteDir = true;
 
     const generationTimeMs = Date.now() - startTime;
 
@@ -2165,5 +2378,9 @@ export async function generateSiteForBusiness(
       }`,
     });
     throw error;
+  } finally {
+    if (workingSiteDir && !promotedWorkingSiteDir) {
+      fs.rmSync(workingSiteDir, { recursive: true, force: true });
+    }
   }
 }

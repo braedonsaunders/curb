@@ -1,6 +1,12 @@
 # curb
 
-> Cold outreach with receipts.
+<p align="center">
+  <img src="./docs/readme-hero.svg" alt="Curb hero showing the flow from weak websites to generated previews and proof-first outreach." width="100%" />
+</p>
+
+<p align="center"><strong>Cold outreach with receipts.</strong></p>
+
+<p align="center">Discover weak local-business sites, rebuild them locally, and send the finished preview in the first email.</p>
 
 Curb is a local-first, one-shot website generator for local businesses.
 
