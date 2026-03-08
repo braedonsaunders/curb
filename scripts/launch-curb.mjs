@@ -12,15 +12,29 @@ const ROOT_DIR = path.resolve(SCRIPT_DIR, "..");
 const APP_DIR = path.join(ROOT_DIR, "app");
 const RUNTIME_DIR = path.join(ROOT_DIR, ".curb-runtime");
 const LAUNCH_INFO_PATH = path.join(RUNTIME_DIR, "launch-info.json");
+const BUILD_INFO_PATH = path.join(RUNTIME_DIR, "build-info.json");
 const SERVER_LOG_PATH = path.join(RUNTIME_DIR, "server.log");
 const INSTALL_STAMP_PATH = path.join(APP_DIR, "node_modules", ".curb-lock-hash");
 const NEXT_BUILD_DIR = path.join(APP_DIR, ".next");
+const NEXT_BUILD_ID_PATH = path.join(NEXT_BUILD_DIR, "BUILD_ID");
 const DEFAULT_PORT = 3000;
 const MAX_PORT = 3010;
 const LOOPBACK_HOST = "127.0.0.1";
 const SERVER_START_TIMEOUT_MS = 90_000;
-const SERVER_MODE = "webpack-dev";
+const SERVER_MODE = "production";
 const IS_WINDOWS = process.platform === "win32";
+const BUILD_INPUT_DIRS = ["src"];
+const BUILD_INPUT_FILES = [
+  "components.json",
+  "eslint.config.mjs",
+  "next-env.d.ts",
+  "next.config.ts",
+  "package-lock.json",
+  "package.json",
+  "postcss.config.mjs",
+  "tsconfig.json",
+];
+const BUILD_ENV_FILE_PATTERN = /^\.env(?:\..+)?$/;
 
 let activeChild = null;
 let activeLogStream = null;
@@ -51,18 +65,41 @@ function sha256(filePath) {
     .digest("hex");
 }
 
-function readLaunchInfo() {
+function readJsonFile(filePath) {
   try {
-    return JSON.parse(fs.readFileSync(LAUNCH_INFO_PATH, "utf8"));
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
   } catch {
     return null;
   }
+}
+
+function readLaunchInfo() {
+  return readJsonFile(LAUNCH_INFO_PATH);
 }
 
 function writeLaunchInfo(info) {
   fs.mkdirSync(RUNTIME_DIR, { recursive: true });
   fs.writeFileSync(
     LAUNCH_INFO_PATH,
+    JSON.stringify(
+      {
+        ...info,
+        updatedAt: new Date().toISOString(),
+      },
+      null,
+      2
+    )
+  );
+}
+
+function readBuildInfo() {
+  return readJsonFile(BUILD_INFO_PATH);
+}
+
+function writeBuildInfo(info) {
+  fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+  fs.writeFileSync(
+    BUILD_INFO_PATH,
     JSON.stringify(
       {
         ...info,
@@ -217,6 +254,75 @@ function resetBuildOutput() {
   fs.rmSync(NEXT_BUILD_DIR, { recursive: true, force: true });
 }
 
+function hasProductionBuild() {
+  return fs.existsSync(NEXT_BUILD_ID_PATH);
+}
+
+function walkBuildInputFiles(dirPath, files = []) {
+  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+    if (entry.name === ".next" || entry.name === "node_modules") {
+      continue;
+    }
+
+    const entryPath = path.join(dirPath, entry.name);
+
+    if (entry.isDirectory()) {
+      walkBuildInputFiles(entryPath, files);
+      continue;
+    }
+
+    if (entry.isFile()) {
+      files.push(entryPath);
+    }
+  }
+
+  return files;
+}
+
+function collectBuildInputFiles() {
+  const files = [];
+
+  for (const relativeFile of BUILD_INPUT_FILES) {
+    const absoluteFile = path.join(APP_DIR, relativeFile);
+    if (fs.existsSync(absoluteFile)) {
+      files.push(absoluteFile);
+    }
+  }
+
+  for (const relativeDir of BUILD_INPUT_DIRS) {
+    const absoluteDir = path.join(APP_DIR, relativeDir);
+    if (fs.existsSync(absoluteDir)) {
+      walkBuildInputFiles(absoluteDir, files);
+    }
+  }
+
+  for (const entry of fs.readdirSync(APP_DIR, { withFileTypes: true })) {
+    if (entry.isFile() && BUILD_ENV_FILE_PATTERN.test(entry.name)) {
+      files.push(path.join(APP_DIR, entry.name));
+    }
+  }
+
+  files.sort((left, right) => left.localeCompare(right));
+  return files;
+}
+
+function createBuildSignature() {
+  const hash = crypto.createHash("sha256");
+  const files = collectBuildInputFiles();
+
+  for (const filePath of files) {
+    hash.update(path.relative(APP_DIR, filePath));
+    hash.update("\0");
+    hash.update(fs.readFileSync(filePath));
+    hash.update("\0");
+  }
+
+  return {
+    hash: hash.digest("hex"),
+    fileCount: files.length,
+  };
+}
+
 function readLogTail(maxBytes = 4000) {
   try {
     const buffer = fs.readFileSync(SERVER_LOG_PATH);
@@ -302,6 +408,33 @@ async function ensureDependencies() {
     fs.mkdirSync(path.dirname(INSTALL_STAMP_PATH), { recursive: true });
     fs.writeFileSync(INSTALL_STAMP_PATH, `${lockHash}\n`);
   }
+}
+
+async function ensureProductionBuild() {
+  const signature = createBuildSignature();
+  const buildInfo = readBuildInfo();
+
+  if (
+    hasProductionBuild() &&
+    buildInfo?.mode === SERVER_MODE &&
+    buildInfo?.hash === signature.hash
+  ) {
+    log("Production build is up to date.");
+    return;
+  }
+
+  log(
+    hasProductionBuild()
+      ? "App changed. Rebuilding production bundle..."
+      : "Building production bundle..."
+  );
+  resetBuildOutput();
+  await runCommand(getNpmCommand(), ["run", "build"]);
+  writeBuildInfo({
+    mode: SERVER_MODE,
+    hash: signature.hash,
+    fileCount: signature.fileCount,
+  });
 }
 
 async function isPortAvailable(port) {
@@ -391,14 +524,18 @@ async function choosePort() {
   if (runningServer) {
     if (runningServer.managed) {
       const launcherActive =
-        runningServer.launcherPid !== null && pidExists(runningServer.launcherPid);
+        runningServer.launcherPid !== null &&
+        pidExists(runningServer.launcherPid);
 
       if (!launcherActive || runningServer.mode !== SERVER_MODE) {
         log("Stopping stale managed Curb instance...");
         await stopProcess(runningServer.pid);
         clearLaunchInfo();
-        resetBuildOutput();
-        return { port: runningServer.port, running: false, supervisedElsewhere: false };
+        return {
+          port: runningServer.port,
+          running: false,
+          supervisedElsewhere: false,
+        };
       }
 
       return {
@@ -454,13 +591,20 @@ function pipeServerOutput(stream, destination) {
 
 function startServer(port) {
   fs.mkdirSync(RUNTIME_DIR, { recursive: true });
-  resetBuildOutput();
 
   activeLogStream = fs.createWriteStream(SERVER_LOG_PATH, { flags: "w" });
 
   const child = spawn(
     getNpmCommand(),
-    ["run", "dev", "--", "--port", String(port), "--hostname", LOOPBACK_HOST],
+    [
+      "run",
+      "start",
+      "--",
+      "--port",
+      String(port),
+      "--hostname",
+      LOOPBACK_HOST,
+    ],
     {
       cwd: APP_DIR,
       env: {
@@ -544,6 +688,7 @@ async function main() {
   const appUrl = `http://${LOOPBACK_HOST}:${port}`;
 
   if (!running) {
+    await ensureProductionBuild();
     log(`Starting Curb on port ${port}...`);
     const child = startServer(port);
 
@@ -569,7 +714,9 @@ async function main() {
   openBrowser(appUrl);
 
   if (supervisedElsewhere) {
-    log("Curb is already running under another launcher. Leaving that instance running.");
+    log(
+      "Curb is already running under another launcher. Leaving that instance running."
+    );
   } else {
     log("Curb is already running. Leaving that instance running.");
   }

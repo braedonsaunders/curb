@@ -87,7 +87,9 @@ Recommended:
 - Linux: `./launch-curb.sh`
 - Windows: `launch-curb.bat`
 
-Manual:
+The one-click launchers run a production build on first launch, then reuse that build on later launches until app code or config changes.
+
+Manual development:
 
 ```bash
 cd app
