@@ -1,0 +1,27 @@
+{
+  "businessName": "Hidden Beauty Hair Salon",
+  "capabilityProfile": {
+    "profileVersion": 1,
+    "operatingModel": "static-plus-cms-and-store",
+    "confidence": "high",
+    "cms": {
+      "need": "required",
+      "provider": "firebase-auth-firestore",
+      "editableAreas": [
+        "homepage",
+        "contact",
+        "products"
+      ]
+    },
+    "commerce": {
+      "need": "required",
+      "provider": "stripe-payment-links",
+      "productStrategy": "payment-links"
+    },
+    "reasons": [
+      "The current site appears to sell products online, so the replacement should keep a lightweight commerce layer.",
+      "If products need to be updated by the owner, the commerce pack should ship with the same lightweight admin layer."
+    ],
+    "packageSummary": "Keep the public site static for speed and handoff simplicity. Package the Firebase owner admin for content and product updates, and use Stripe Payment Links for lightweight checkout."
+  }
+}

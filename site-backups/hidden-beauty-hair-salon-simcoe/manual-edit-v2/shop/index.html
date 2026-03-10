@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hidden Beauty Hair Salon Shop</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --pack-bg: #f5f7fb;
+        --pack-text: #0f172a;
+        --pack-muted: #475569;
+        --pack-panel: #ffffff;
+        --pack-border: rgba(15, 23, 42, 0.08);
+        --pack-accent: #0f766e;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        background: linear-gradient(180deg, #f8fafc, var(--pack-bg));
+        color: var(--pack-text);
+      }
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 3rem 1.25rem 5rem;
+      }
+      .shop-shell {
+        display: grid;
+        gap: 2rem;
+      }
+      .shop-hero {
+        background: var(--pack-panel);
+        border: 1px solid var(--pack-border);
+        border-radius: 1.5rem;
+        padding: 2rem;
+        box-shadow: 0 20px 45px -32px rgba(15, 23, 42, 0.4);
+      }
+      .shop-hero p {
+        max-width: 40rem;
+        color: var(--pack-muted);
+        line-height: 1.6;
+      }
+      .shop-actions {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin-top: 1.25rem;
+      }
+      .shop-actions a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.75rem;
+        padding: 0.75rem 1rem;
+        border-radius: 999px;
+        border: 1px solid var(--pack-border);
+        text-decoration: none;
+        color: inherit;
+      }
+      .shop-actions a.primary {
+        background: var(--pack-accent);
+        color: #fff;
+        border-color: transparent;
+      }
+      .shop-grid {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+      .shop-card {
+        background: var(--pack-panel);
+        border: 1px solid var(--pack-border);
+        border-radius: 1.25rem;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        min-height: 100%;
+      }
+      .shop-card img {
+        width: 100%;
+        aspect-ratio: 4 / 3;
+        object-fit: cover;
+        background: #e2e8f0;
+      }
+      .shop-card-body {
+        padding: 1rem;
+        display: grid;
+        gap: 0.75rem;
+      }
+      .shop-card p {
+        color: var(--pack-muted);
+        line-height: 1.5;
+        margin: 0;
+      }
+      .shop-card-price {
+        font-weight: 700;
+      }
+      .shop-card a {
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.6rem;
+        border-radius: 999px;
+        background: var(--pack-accent);
+        color: #fff;
+        padding: 0.7rem 1rem;
+      }
+      .shop-empty {
+        padding: 1.5rem;
+        border: 1px dashed rgba(15, 23, 42, 0.18);
+        border-radius: 1rem;
+        color: var(--pack-muted);
+        background: rgba(255, 255, 255, 0.72);
+      }
+    </style>
+  </head>
+  <body data-curb-page-key="shop/index.html">
+    <main>
+      <div class="shop-shell">
+        <section class="shop-hero">
+          <p class="shop-brow">Customer-owned storefront</p>
+          <h1 data-curb-key="shop-heading" data-curb-type="text">Shop Hidden Beauty Hair Salon</h1>
+          <p data-curb-key="shop-intro" data-curb-type="textarea">
+            Products are managed from the built-in owner portal. Each item can point directly to a checkout link, so the public storefront stays static and cheap to host.
+          </p>
+          <div class="shop-actions">
+            <a class="primary" href="../index.html">Back to homepage</a>
+            <a href="../admin/">Open owner portal</a>
+          </div>
+        </section>
+        <section>
+          <div class="shop-grid" data-curb-products="true"></div>
+          <div class="shop-empty" data-curb-products-empty="true">
+            No live products have been published yet. Add products in the owner portal and they will appear here automatically.
+          </div>
+        </section>
+      </div>
+    </main>
+    <script src="../assets/curb-site-config.js"></script>
+  <script src="../assets/curb-contact.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore-compat.js"></script>
+  <script src="../assets/curb-public-pack.js" defer></script>
+</body>
+</html>

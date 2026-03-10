@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "businessName": "Hidden Beauty Hair Salon",
+  "siteSlug": "hidden-beauty-hair-salon-simcoe",
+  "pages": [
+    {
+      "pageKey": "contact/index.html",
+      "path": "contact/index.html",
+      "title": "Contact — Hidden Beauty Hair Salon | Simcoe, Ontario",
+      "fields": []
+    },
+    {
+      "pageKey": "index.html",
+      "path": "index.html",
+      "title": "Hidden Beauty Hair Salon — Simcoe, Ontario",
+      "fields": []
+    },
+    {
+      "pageKey": "shop/index.html",
+      "path": "shop/index.html",
+      "title": "Shop",
+      "fields": [
+        {
+          "key": "shop-heading",
+          "label": "Shop heading",
+          "type": "text",
+          "defaultValue": "Shop Hidden Beauty Hair Salon"
+        },
+        {
+          "key": "shop-intro",
+          "label": "Shop intro",
+          "type": "textarea",
+          "defaultValue": "Products are managed from the built-in owner portal. Each item can point directly to a checkout link, so the public storefront stays static and cheap to host."
+        }
+      ]
+    }
+  ],
+  "commerceProvider": "stripe-payment-links",
+  "storePagePath": "shop/index.html"
+}

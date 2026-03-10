@@ -53,6 +53,7 @@ export interface ManagedSiteBundle {
 }
 
 export const CMS_SCHEMA_PATH = "assets/curb-cms-schema.json";
+export const PRODUCTS_DATA_PATH = "assets/curb-products.json";
 export const PUBLIC_PACK_RUNTIME_PATH = "assets/curb-public-pack.js";
 export const ADMIN_PACK_RUNTIME_PATH = "assets/curb-admin-pack.js";
 export const ADMIN_PACK_STYLE_PATH = "assets/curb-admin-pack.css";
@@ -707,12 +708,35 @@ Default positioning: customer-owned stack, not agency-owned hosting.
 }
 
 function buildPublicPackRuntime(): string {
+  const productsRuntimeHref = relativeHrefBetweenFiles(
+    PUBLIC_PACK_RUNTIME_PATH,
+    PRODUCTS_DATA_PATH
+  );
+
   return `(function () {
   var siteConfig = window.CURB_SITE_CONFIG || {};
   var cmsConfig = siteConfig.cms || {};
   var commerceConfig = siteConfig.commerce || {};
   var firebaseConfig = cmsConfig.firebase || {};
   var previewConfig = cmsConfig.previewMode || {};
+  var runtimeBaseUrl = (function () {
+    try {
+      var currentScript = document.currentScript;
+      return currentScript && currentScript.src ? currentScript.src : window.location.href;
+    } catch (error) {
+      void error;
+      return window.location.href;
+    }
+  })();
+  var productsFilePath = "${productsRuntimeHref}";
+  var productsFileUrl = (function () {
+    try {
+      return new URL(productsFilePath, runtimeBaseUrl).toString();
+    } catch (error) {
+      void error;
+      return productsFilePath;
+    }
+  })();
   var firebaseReady = false;
 
   function text(value) {
@@ -944,6 +968,26 @@ function buildPublicPackRuntime(): string {
     });
   }
 
+  async function loadStaticProducts() {
+    try {
+      var response = await fetch(productsFileUrl, { cache: "no-store" });
+      if (!response.ok) {
+        return false;
+      }
+
+      var products = await response.json();
+      if (!Array.isArray(products)) {
+        return false;
+      }
+
+      renderProducts(products);
+      return true;
+    } catch (error) {
+      void error;
+      return false;
+    }
+  }
+
   function ensureShopLink() {
     if (!commerceConfig.enabled) {
       return;
@@ -1024,12 +1068,16 @@ function buildPublicPackRuntime(): string {
       return;
     }
 
-    if (!commerceConfig.enabled || !hasFirebaseConfig()) {
+    var container = document.querySelector("[data-curb-products]");
+    if (!container) {
       return;
     }
 
-    var container = document.querySelector("[data-curb-products]");
-    if (!container) {
+    if (await loadStaticProducts()) {
+      return;
+    }
+
+    if (!commerceConfig.enabled || !hasFirebaseConfig()) {
       return;
     }
 
@@ -1075,6 +1123,10 @@ function buildPublicPackRuntime(): string {
     boot();
   }
 })();`;
+}
+
+function buildProductsDataFile(): string {
+  return "[]\n";
 }
 
 function buildAdminVendorStyle(): string {
@@ -2905,6 +2957,10 @@ function buildManagedSupportFiles(
 
   if (includeStorePack(context.siteCapabilityProfile)) {
     supportFiles.push(
+      {
+        path: PRODUCTS_DATA_PATH,
+        content: buildProductsDataFile(),
+      },
       {
         path: STORE_PAGE_PATH,
         content: createStorePageMarkup(context.businessName, STORE_PAGE_PATH),

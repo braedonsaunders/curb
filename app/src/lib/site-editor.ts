@@ -101,6 +101,24 @@ function isWithinDirectory(targetPath: string, rootPath: string): boolean {
   );
 }
 
+function resolveSiteDirFromSlug(siteSlug: string): string {
+  const trimmedSlug = String(siteSlug).trim();
+  if (!trimmedSlug) {
+    throw new SiteEditorError("A site slug is required.", 400);
+  }
+
+  const siteDir = path.resolve(SITES_ROOT, trimmedSlug);
+  if (!isWithinDirectory(siteDir, SITES_ROOT)) {
+    throw new SiteEditorError("Invalid site slug.", 400);
+  }
+
+  if (!fs.existsSync(siteDir) || !fs.statSync(siteDir).isDirectory()) {
+    throw new SiteEditorError("Generated site directory is missing.", 404);
+  }
+
+  return siteDir;
+}
+
 function normalizeRelativePath(relativePath: string): string {
   const normalized = path.posix.normalize(
     relativePath.replaceAll("\\", "/").replace(/^\/+/, "")
@@ -207,6 +225,52 @@ export function getLatestGeneratedSiteForBusiness(
 
   return {
     ...site,
+    siteDir,
+  };
+}
+
+export function getLatestGeneratedSiteForSlug(
+  siteSlug: string
+): ResolvedGeneratedSite {
+  const normalizedSlug = String(siteSlug).trim();
+  if (!normalizedSlug) {
+    throw new SiteEditorError("A site slug is required.", 400);
+  }
+
+  initializeDatabase();
+  const db = getDb();
+
+  const site = db
+    .prepare(
+      "SELECT id, slug, version, site_path, created_at FROM generated_sites WHERE slug = ? ORDER BY version DESC LIMIT 1"
+    )
+    .get(normalizedSlug) as GeneratedSiteRow | undefined;
+
+  if (site) {
+    const siteDir = path.resolve(process.cwd(), "..", site.site_path);
+    if (
+      isWithinDirectory(siteDir, SITES_ROOT) &&
+      fs.existsSync(siteDir) &&
+      fs.statSync(siteDir).isDirectory()
+    ) {
+      return {
+        ...site,
+        siteDir,
+      };
+    }
+  }
+
+  const siteDir = resolveSiteDirFromSlug(normalizedSlug);
+  const stat = fs.statSync(siteDir);
+
+  return {
+    id: 0,
+    slug: normalizedSlug,
+    version: 0,
+    site_path: path
+      .relative(path.resolve(process.cwd(), ".."), siteDir)
+      .replaceAll("\\", "/"),
+    created_at: stat.mtime.toISOString(),
     siteDir,
   };
 }

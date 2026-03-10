@@ -1,0 +1,68 @@
+:root {
+  color-scheme: light;
+}
+
+body {
+  background: var(--tblr-bg-surface-secondary);
+}
+
+.page {
+  min-height: 100vh;
+}
+
+.navbar-vertical .navbar-brand > a {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-decoration: none;
+}
+
+#adminMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+#adminMeta .badge {
+  font-weight: 600;
+}
+
+.admin-page-list .list-group-item {
+  text-align: left;
+}
+
+.admin-page-list .list-group-item.active {
+  z-index: 1;
+}
+
+.admin-empty-state {
+  padding: 1rem;
+  border: 1px dashed var(--tblr-border-color);
+  border-radius: var(--tblr-border-radius-lg);
+  color: var(--tblr-secondary);
+  background: var(--tblr-bg-surface);
+}
+
+.page-header-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.admin-empty-state-cell {
+  padding: 1rem !important;
+}
+
+.admin-product-row-active td {
+  background: var(--tblr-primary-lt);
+}
+
+.btn-list.flex-nowrap {
+  flex-wrap: nowrap;
+}
+
+@media (max-width: 991.98px) {
+  .page-header .card {
+    margin-top: 0.5rem;
+  }
+}
+

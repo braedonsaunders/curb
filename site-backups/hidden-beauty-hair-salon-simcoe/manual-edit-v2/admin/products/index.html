@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Owner Portal</title>
+    <link rel="stylesheet" href="../../assets/vendor/tabler.min.css">
+    <link rel="stylesheet" href="../../assets/curb-admin-pack.css">
+  </head>
+  <body>
+    <div class="page">
+      <aside class="navbar navbar-vertical navbar-expand-lg navbar-dark" data-bs-theme="dark">
+        <div class="container-fluid">
+          <button
+            class="navbar-toggler"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#sidebar-menu"
+            aria-controls="sidebar-menu"
+            aria-expanded="false"
+            aria-label="Toggle navigation"
+          >
+            <span class="navbar-toggler-icon"></span>
+          </button>
+          <h1 class="navbar-brand navbar-brand-autodark pe-0">
+            <a href="../">
+              <span class="avatar avatar-sm bg-primary-lt text-primary fw-bold rounded-3">C</span>
+              <span class="d-flex flex-column lh-sm">
+                <span class="fw-bold text-white">Curb Owner</span>
+                <span class="small text-secondary">Static site admin</span>
+              </span>
+            </a>
+          </h1>
+          <div class="collapse navbar-collapse" id="sidebar-menu">
+            <ul class="navbar-nav pt-lg-3">
+
+              <li class="nav-item">
+                <a class="nav-link" href="../">
+                  <span class="nav-link-title">Overview</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="../access/">
+                  <span class="nav-link-title">Access</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="../content/">
+                  <span class="nav-link-title">Content</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link" href="../store/">
+                  <span class="nav-link-title">Store settings</span>
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link active" href=".">
+                  <span class="nav-link-title">Products</span>
+                </a>
+              </li>
+            </ul>
+            <div class="mt-auto pt-lg-4">
+              <div class="card card-sm bg-primary-lt">
+                <div class="card-body">
+                  <div class="text-uppercase small fw-bold text-secondary mb-2">
+                    Editable surface
+                  </div>
+                  <div class="text-secondary">
+                    Separate admin pages for access, content, store settings, and products.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+      <div class="page-wrapper">
+        <div class="page-header d-print-none">
+          <div class="container-xl">
+            <div class="row g-3 align-items-start">
+              <div class="col">
+                <div class="page-pretitle">Owner portal</div>
+                <h2 id="adminSiteTitle" class="page-title">Products</h2>
+                <div class="text-secondary mt-1">Manage products from a proper table and editor.</div>
+                <div id="adminMeta" class="mt-3"></div>
+              </div>
+              <div class="col-12 col-lg-auto">
+                
+              <div class="page-header-actions">
+                <button id="adminAddProduct" class="btn btn-primary" type="button">
+                  Add product
+                </button>
+              </div>
+                <div class="card card-sm mt-3 mt-lg-0">
+                  <div class="card-body">
+                    <div class="text-uppercase small fw-bold text-secondary">
+                      Portal status
+                    </div>
+                    <p id="adminStatus" class="text-secondary mb-0 mt-2">
+                      Loading owner portal...
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="page-body">
+          <div class="container-xl">
+
+            <div class="row row-cards">
+              <div class="col-12">
+                <div class="card">
+                  <div class="card-header">
+                    <h3 class="card-title">Catalog</h3>
+                  </div>
+                  <div class="table-responsive">
+                    <table class="table table-vcenter card-table">
+                      <thead>
+                        <tr>
+                          <th>Title</th>
+                          <th>Price</th>
+                          <th>Checkout</th>
+                          <th>Position</th>
+                          <th class="w-1"></th>
+                        </tr>
+                      </thead>
+                      <tbody id="adminProducts"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              <div class="col-12">
+                <div class="card">
+                  <div class="card-header">
+                    <h3 id="adminProductFormTitle" class="card-title">Product editor</h3>
+                  </div>
+                  <div class="card-body">
+                    <form id="adminProductForm"></form>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore-compat.js"></script>
+    <script src="../../assets/curb-site-config.js"></script>
+    <script src="../../assets/vendor/tabler.min.js"></script>
+    <script src="../../assets/curb-admin-pack.js"></script>
+  </body>
+</html>

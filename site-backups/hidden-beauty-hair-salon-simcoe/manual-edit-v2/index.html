@@ -1,0 +1,1491 @@
+<!DOCTYPE html>
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hidden Beauty Hair Salon — Simcoe, Ontario</title>
+<meta name="description" content="Hidden Beauty Hair Salon in Simcoe, Ontario. 30 years of experience in haircuts, colouring, perms, wigs and women's hair systems. Book your appointment today.">
+<link rel="preconnect" href="./index.html">
+<link rel="preconnect" href="./index.html" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&amp;family=Manrope:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+:root {
+  --color-cream: #F5F0EB;
+  --color-warm-white: #FDFBF9;
+  --color-charcoal: #2A2A2A;
+  --color-deep: #1A1714;
+  --color-rose: #C4907A;
+  --color-rose-light: #D4A894;
+  --color-rose-dark: #A67460;
+  --color-taupe: #8C7E74;
+  --color-sage: #9BA894;
+  --color-gold: #C4A86A;
+  --color-muted: #7A7168;
+  --color-light-border: rgba(42,42,42,0.08);
+  --font-display: 'Cormorant Garamond', Georgia, serif;
+  --font-body: 'Manrope', system-ui, sans-serif;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --shadow-soft: 0 4px 24px rgba(26,23,20,0.06);
+  --shadow-medium: 0 8px 40px rgba(26,23,20,0.10);
+  --shadow-strong: 0 16px 64px rgba(26,23,20,0.14);
+  --transition-smooth: 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --transition-spring: 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-charcoal);
+  background: var(--color-warm-white);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 5vw, 48px);
+}
+
+/* ─── NAVIGATION ─── */
+.nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: 16px 0;
+  transition: background var(--transition-smooth), box-shadow var(--transition-smooth), padding var(--transition-smooth);
+}
+
+.nav.scrolled {
+  background: rgba(253,251,249,0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 1px 0 var(--color-light-border);
+  padding: 10px 0;
+}
+
+.nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 5vw, 48px);
+}
+
+.nav-logo {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--color-deep);
+  letter-spacing: -0.02em;
+}
+
+.nav-logo span {
+  color: var(--color-rose);
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  list-style: none;
+}
+
+.nav-links a {
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-charcoal);
+  position: relative;
+  transition: color var(--transition-smooth);
+}
+
+.nav-links a::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  width: 0;
+  height: 1.5px;
+  background: var(--color-rose);
+  transition: width var(--transition-smooth);
+}
+
+.nav-links a:hover {
+  color: var(--color-rose-dark);
+}
+
+.nav-links a:hover::after {
+  width: 100%;
+}
+
+.nav-cta {
+  background: var(--color-charcoal);
+  color: var(--color-cream) !important;
+  padding: 10px 24px;
+  border-radius: 100px;
+  font-size: 0.82rem !important;
+  letter-spacing: 0.06em !important;
+  transition: background var(--transition-smooth), transform 0.2s ease !important;
+}
+
+.nav-cta::after {
+  display: none !important;
+}
+
+.nav-cta:hover {
+  background: var(--color-rose-dark) !important;
+  color: white !important;
+  transform: translateY(-1px);
+}
+
+.nav-toggle {
+  display: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 32px;
+  height: 24px;
+  position: relative;
+  z-index: 110;
+}
+
+.nav-toggle span {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background: var(--color-charcoal);
+  position: absolute;
+  left: 0;
+  transition: all 0.3s ease;
+}
+
+.nav-toggle span:nth-child(1) { top: 0; }
+.nav-toggle span:nth-child(2) { top: 50%; transform: translateY(-50%); }
+.nav-toggle span:nth-child(3) { bottom: 0; }
+
+.nav-toggle.active span:nth-child(1) {
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+}
+.nav-toggle.active span:nth-child(2) { opacity: 0; }
+.nav-toggle.active span:nth-child(3) {
+  bottom: 50%;
+  transform: translateY(50%) rotate(-45deg);
+}
+
+/* ─── HERO ─── */
+.hero {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  position: relative;
+  overflow: hidden;
+  background: var(--color-cream);
+}
+
+.hero-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(100px, 12vh, 160px) clamp(32px, 6vw, 80px) clamp(60px, 8vh, 100px);
+  position: relative;
+  z-index: 2;
+}
+
+.hero-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-rose-dark);
+  margin-bottom: 24px;
+  opacity: 0;
+  transform: translateY(20px);
+  animation: fadeUp 0.8s 0.3s ease forwards;
+}
+
+.hero-tag::before {
+  content: '';
+  display: block;
+  width: 24px;
+  height: 1.5px;
+  background: var(--color-rose);
+}
+
+.hero-title {
+  font-family: var(--font-display);
+  font-size: clamp(3rem, 5.5vw, 5rem);
+  font-weight: 400;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  color: var(--color-deep);
+  margin-bottom: 28px;
+  opacity: 0;
+  transform: translateY(30px);
+  animation: fadeUp 0.8s 0.5s ease forwards;
+}
+
+.hero-title em {
+  font-style: italic;
+  color: var(--color-rose);
+}
+
+.hero-subtitle {
+  font-size: 1.05rem;
+  font-weight: 400;
+  line-height: 1.7;
+  color: var(--color-muted);
+  max-width: 440px;
+  margin-bottom: 40px;
+  opacity: 0;
+  transform: translateY(20px);
+  animation: fadeUp 0.8s 0.7s ease forwards;
+}
+
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  opacity: 0;
+  transform: translateY(20px);
+  animation: fadeUp 0.8s 0.9s ease forwards;
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--color-charcoal);
+  color: var(--color-cream);
+  padding: 16px 36px;
+  border-radius: 100px;
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-smooth);
+  text-decoration: none;
+}
+
+.btn-primary:hover {
+  background: var(--color-rose-dark);
+  color: white;
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-medium);
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-charcoal);
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  position: relative;
+  transition: color var(--transition-smooth);
+}
+
+.btn-secondary::after {
+  content: '→';
+  transition: transform 0.3s ease;
+}
+
+.btn-secondary:hover {
+  color: var(--color-rose-dark);
+}
+
+.btn-secondary:hover::after {
+  transform: translateX(4px);
+}
+
+.hero-imagery {
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-image-main {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  animation: heroReveal 1.2s 0.2s ease forwards;
+}
+
+.hero-image-main img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hero-image-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(196,144,122,0.15) 0%, transparent 60%);
+  z-index: 1;
+}
+
+.hero-badge {
+  position: absolute;
+  bottom: 40px;
+  left: -30px;
+  background: white;
+  border-radius: var(--radius-lg);
+  padding: 20px 28px;
+  box-shadow: var(--shadow-strong);
+  z-index: 2;
+  opacity: 0;
+  transform: translateY(20px) translateX(-10px);
+  animation: fadeUp 0.8s 1.2s ease forwards;
+}
+
+.hero-badge-stars {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.hero-badge-stars svg {
+  width: 16px;
+  height: 16px;
+  fill: var(--color-gold);
+}
+
+.hero-badge-text {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--color-charcoal);
+}
+
+.hero-badge-sub {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  margin-top: 2px;
+}
+
+/* ─── MARQUEE ─── */
+.marquee-section {
+  background: var(--color-deep);
+  padding: 18px 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.marquee-track {
+  display: flex;
+  gap: 48px;
+  animation: marquee 20s linear infinite;
+  width: max-content;
+}
+
+.marquee-item {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: rgba(245,240,235,0.5);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 48px;
+}
+
+.marquee-item::after {
+  content: '✦';
+  color: var(--color-rose);
+  font-size: 0.7rem;
+}
+
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* ─── SERVICES ─── */
+.services {
+  padding: clamp(80px, 10vh, 140px) 0;
+  background: var(--color-warm-white);
+}
+
+.section-header {
+  text-align: center;
+  margin-bottom: clamp(48px, 6vh, 80px);
+}
+
+.section-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-rose-dark);
+  margin-bottom: 16px;
+}
+
+.section-tag::before,
+.section-tag::after {
+  content: '';
+  display: block;
+  width: 20px;
+  height: 1px;
+  background: var(--color-rose);
+}
+
+.section-title {
+  font-family: var(--font-display);
+  font-size: clamp(2.2rem, 4vw, 3.2rem);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--color-deep);
+}
+
+.section-title em {
+  font-style: italic;
+  color: var(--color-rose);
+}
+
+.services-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.service-card {
+  background: white;
+  border-radius: var(--radius-lg);
+  padding: clamp(32px, 4vw, 48px);
+  position: relative;
+  overflow: hidden;
+  transition: transform var(--transition-smooth), box-shadow var(--transition-smooth);
+  border: 1px solid var(--color-light-border);
+}
+
+.service-card:hover {
+  transform: translateY(-6px);
+  box-shadow: var(--shadow-medium);
+}
+
+.service-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--color-rose), var(--color-rose-light));
+  opacity: 0;
+  transition: opacity var(--transition-smooth);
+}
+
+.service-card:hover::before {
+  opacity: 1;
+}
+
+.service-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-cream);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 24px;
+  transition: background var(--transition-smooth);
+}
+
+.service-card:hover .service-icon {
+  background: var(--color-rose);
+}
+
+.service-icon svg {
+  width: 24px;
+  height: 24px;
+  color: var(--color-rose);
+  transition: color var(--transition-smooth);
+}
+
+.service-card:hover .service-icon svg {
+  color: white;
+}
+
+.service-name {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 500;
+  margin-bottom: 12px;
+  color: var(--color-deep);
+}
+
+.service-desc {
+  font-size: 0.92rem;
+  line-height: 1.65;
+  color: var(--color-muted);
+}
+
+/* ─── ABOUT / STYLIST ─── */
+.about {
+  padding: clamp(80px, 10vh, 140px) 0;
+  background: var(--color-cream);
+  position: relative;
+  overflow: hidden;
+}
+
+.about::before {
+  content: '';
+  position: absolute;
+  top: -100px;
+  right: -100px;
+  width: 400px;
+  height: 400px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(196,144,122,0.08) 0%, transparent 70%);
+}
+
+.about-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  gap: clamp(48px, 6vw, 100px);
+  align-items: center;
+}
+
+.about-image-wrap {
+  position: relative;
+}
+
+.about-image-frame {
+  position: relative;
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-strong);
+}
+
+.about-image-frame img {
+  width: 100%;
+  aspect-ratio: 3/4;
+  object-fit: cover;
+}
+
+.about-image-accent {
+  position: absolute;
+  top: -16px;
+  left: -16px;
+  width: 120px;
+  height: 120px;
+  border: 2px solid var(--color-rose-light);
+  border-radius: var(--radius-xl);
+  z-index: -1;
+}
+
+.about-experience {
+  position: absolute;
+  bottom: -20px;
+  right: -20px;
+  background: var(--color-deep);
+  color: var(--color-cream);
+  padding: 24px 32px;
+  border-radius: var(--radius-lg);
+  text-align: center;
+  box-shadow: var(--shadow-strong);
+}
+
+.about-exp-number {
+  font-family: var(--font-display);
+  font-size: 2.8rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-rose-light);
+}
+
+.about-exp-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.about-content .section-tag {
+  justify-content: flex-start;
+}
+
+.about-content .section-tag::before {
+  display: block;
+}
+
+.about-content .section-tag::after {
+  display: none;
+}
+
+.about-content .section-header {
+  text-align: left;
+  margin-bottom: 24px;
+}
+
+.about-text {
+  font-size: 1rem;
+  line-height: 1.8;
+  color: var(--color-muted);
+  margin-bottom: 20px;
+}
+
+.about-highlight {
+  background: white;
+  border-left: 3px solid var(--color-rose);
+  padding: 20px 24px;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  margin: 28px 0;
+}
+
+.about-highlight p {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-style: italic;
+  color: var(--color-charcoal);
+  line-height: 1.6;
+}
+
+/* ─── GALLERY PREVIEW ─── */
+.gallery-preview {
+  padding: clamp(80px, 10vh, 140px) 0;
+  background: var(--color-warm-white);
+}
+
+.gallery-mosaic {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(2, 240px);
+  gap: 16px;
+  margin-top: 48px;
+}
+
+.gallery-mosaic-item {
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  position: relative;
+  cursor: pointer;
+}
+
+.gallery-mosaic-item img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.6s ease;
+}
+
+.gallery-mosaic-item:hover img {
+  transform: scale(1.06);
+}
+
+.gallery-mosaic-item::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, transparent 50%, rgba(26,23,20,0.3) 100%);
+  opacity: 0;
+  transition: opacity var(--transition-smooth);
+}
+
+.gallery-mosaic-item:hover::after {
+  opacity: 1;
+}
+
+.gallery-mosaic-item:nth-child(1) {
+  grid-column: 1 / 3;
+  grid-row: 1 / 3;
+}
+
+.gallery-link {
+  text-align: center;
+  margin-top: 40px;
+}
+
+/* ─── TESTIMONIALS ─── */
+.testimonials {
+  padding: clamp(80px, 10vh, 140px) 0;
+  background: var(--color-deep);
+  color: var(--color-cream);
+  position: relative;
+  overflow: hidden;
+}
+
+.testimonials::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: radial-gradient(ellipse at 20% 50%, rgba(196,144,122,0.08) 0%, transparent 60%);
+}
+
+.testimonials .section-tag {
+  color: var(--color-rose-light);
+}
+
+.testimonials .section-tag::before,
+.testimonials .section-tag::after {
+  background: var(--color-rose-light);
+}
+
+.testimonials .section-title {
+  color: var(--color-cream);
+}
+
+.testimonials-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  position: relative;
+  z-index: 1;
+}
+
+.testimonial-card {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: var(--radius-lg);
+  padding: 36px;
+  transition: background var(--transition-smooth), transform var(--transition-smooth);
+}
+
+.testimonial-card:hover {
+  background: rgba(255,255,255,0.08);
+  transform: translateY(-4px);
+}
+
+.testimonial-quote-icon {
+  width: 36px;
+  height: 36px;
+  color: var(--color-rose);
+  margin-bottom: 20px;
+  opacity: 0.6;
+}
+
+.testimonial-text {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-style: italic;
+  line-height: 1.6;
+  color: rgba(245,240,235,0.9);
+  margin-bottom: 24px;
+}
+
+.testimonial-author {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.testimonial-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--color-rose);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: white;
+}
+
+.testimonial-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.testimonial-stars {
+  display: flex;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.testimonial-stars svg {
+  width: 12px;
+  height: 12px;
+  fill: var(--color-gold);
+}
+
+/* ─── CONTACT STRIP ─── */
+.contact-strip {
+  padding: clamp(60px, 8vh, 100px) 0;
+  background: var(--color-cream);
+}
+
+.contact-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 32px;
+}
+
+.contact-card {
+  text-align: center;
+  padding: 40px 24px;
+  border-radius: var(--radius-lg);
+  background: white;
+  border: 1px solid var(--color-light-border);
+  transition: transform var(--transition-smooth), box-shadow var(--transition-smooth);
+}
+
+.contact-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-soft);
+}
+
+.contact-card-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--color-cream);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px;
+}
+
+.contact-card-icon svg {
+  width: 22px;
+  height: 22px;
+  color: var(--color-rose);
+}
+
+.contact-card h3 {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 500;
+  margin-bottom: 10px;
+  color: var(--color-deep);
+}
+
+.contact-card p,
+.contact-card a {
+  font-size: 0.92rem;
+  color: var(--color-muted);
+  line-height: 1.6;
+}
+
+.contact-card a:hover {
+  color: var(--color-rose-dark);
+}
+
+/* ─── FOOTER ─── */
+.footer {
+  background: var(--color-deep);
+  color: rgba(245,240,235,0.6);
+  padding: 60px 0 32px;
+}
+
+.footer-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+
+.footer-brand {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--color-cream);
+}
+
+.footer-brand span {
+  color: var(--color-rose);
+}
+
+.footer-links {
+  display: flex;
+  gap: 28px;
+  list-style: none;
+}
+
+.footer-links a {
+  font-size: 0.85rem;
+  transition: color var(--transition-smooth);
+}
+
+.footer-links a:hover {
+  color: var(--color-rose-light);
+}
+
+.footer-bottom {
+  text-align: center;
+  margin-top: 40px;
+  padding-top: 24px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+  font-size: 0.78rem;
+}
+
+/* ─── ANIMATIONS ─── */
+@keyframes fadeUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes heroReveal {
+  0% {
+    opacity: 0;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(40px);
+  transition: opacity 0.8s ease, transform 0.8s ease;
+}
+
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ─── RESPONSIVE ─── */
+@media (max-width: 1024px) {
+  .services-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .testimonials-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .testimonials-grid .testimonial-card:last-child {
+    grid-column: 1 / -1;
+    max-width: 500px;
+    margin: 0 auto;
+  }
+  .gallery-mosaic {
+    grid-template-rows: repeat(2, 200px);
+  }
+}
+
+@media (max-width: 768px) {
+  .nav-links {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 280px;
+    background: var(--color-warm-white);
+    flex-direction: column;
+    padding: 100px 32px 40px;
+    gap: 24px;
+    transform: translateX(100%);
+    transition: transform 0.4s ease;
+    box-shadow: -8px 0 40px rgba(0,0,0,0.1);
+    z-index: 105;
+  }
+
+  .nav-links.open {
+    transform: translateX(0);
+  }
+
+  .nav-toggle {
+    display: block;
+  }
+
+  .hero {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .hero-content {
+    padding: 140px 24px 60px;
+    order: 2;
+  }
+
+  .hero-imagery {
+    order: 1;
+    height: 50vh;
+    min-height: 300px;
+  }
+
+  .hero-badge {
+    left: 20px;
+    bottom: 20px;
+  }
+
+  .about-grid {
+    grid-template-columns: 1fr;
+    gap: 48px;
+  }
+
+  .about-content {
+    order: 2;
+  }
+
+  .about-image-wrap {
+    max-width: 400px;
+    margin: 0 auto;
+  }
+
+  .services-grid {
+    grid-template-columns: 1fr;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  .gallery-mosaic {
+    grid-template-columns: repeat(2, 1fr);
+    grid-template-rows: repeat(3, 180px);
+  }
+
+  .gallery-mosaic-item:nth-child(1) {
+    grid-column: 1 / -1;
+    grid-row: 1 / 2;
+  }
+
+  .testimonials-grid {
+    grid-template-columns: 1fr;
+    max-width: 480px;
+    margin: 0 auto;
+  }
+
+  .testimonials-grid .testimonial-card:last-child {
+    max-width: none;
+  }
+
+  .contact-grid {
+    grid-template-columns: 1fr;
+    max-width: 400px;
+    margin: 0 auto;
+  }
+
+  .footer-inner {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .hero-title {
+    font-size: 2.4rem;
+  }
+
+  .hero-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .gallery-mosaic {
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(5, 200px);
+  }
+
+  .gallery-mosaic-item:nth-child(1) {
+    grid-column: 1;
+    grid-row: 1 / 2;
+  }
+}
+</style>
+</head>
+<body data-curb-page-key="index.html" data-curb-shop-path="shop/index.html">
+
+<!-- NAVIGATION -->
+<nav class="nav" id="nav">
+  <div class="nav-inner">
+    <a href="./index.html" class="nav-logo" data-curb-key="link-1" data-curb-type="link">Hidden <span>Beauty</span></a>
+    <button class="nav-toggle" id="navToggle" aria-label="Toggle navigation">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+    <ul class="nav-links" id="navLinks">
+      <li data-curb-key="text-1" data-curb-type="textarea"><a href="#services">Services</a></li>
+      <li data-curb-key="text-2" data-curb-type="textarea"><a href="#about">About</a></li>
+      <li data-curb-key="text-3" data-curb-type="textarea"><a href="#gallery">Gallery</a></li>
+      <li data-curb-key="text-4" data-curb-type="textarea"><a href="#testimonials">Reviews</a></li>
+      <li data-curb-key="text-5" data-curb-type="textarea"><a href="./contact/" data-curb-key="link-2" data-curb-type="link">Contact</a></li>
+      <li data-curb-key="text-6" data-curb-type="textarea"><a href="tel:2264402849" class="nav-cta">Call Now</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-content">
+    <span class="hero-tag">Simcoe, Ontario</span>
+    <h1 class="hero-title" data-curb-key="text-7" data-curb-type="text">Where <em>Beauty</em><br>Finds You</h1>
+    <p class="hero-subtitle" data-curb-key="text-8" data-curb-type="textarea">A private, personalized hair experience with 30&nbsp;years of artistry behind every cut, colour, and transformation.</p>
+    <div class="hero-actions">
+      <a href="tel:2264402849" class="btn-primary">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+        Book an Appointment
+      </a>
+      <a href="#services" class="btn-secondary">Explore Services</a>
+    </div>
+  </div>
+  <div class="hero-imagery">
+    <div class="hero-image-main">
+      <img src="./assets/photos/1773114561144-1cj0x2.jpg" alt="Hidden Beauty Hair Salon interior — styling chair and professional products" data-curb-key="image-1" data-curb-type="image">
+      <div class="hero-image-overlay"></div>
+    </div>
+    <div class="hero-badge">
+      <div class="hero-badge-stars">
+        <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+        <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+        <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+        <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+        <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+      </div>
+      <div class="hero-badge-text">4.7 out of 5</div>
+      <div class="hero-badge-sub">Google Reviews</div>
+    </div>
+  </div>
+</section>
+
+<!-- MARQUEE -->
+<div class="marquee-section">
+  <div class="marquee-track">
+    <span class="marquee-item">Haircuts</span>
+    <span class="marquee-item">Colouring</span>
+    <span class="marquee-item">Perms</span>
+    <span class="marquee-item">Wigs</span>
+    <span class="marquee-item">Women's Hair Systems</span>
+    <span class="marquee-item">Shampooing</span>
+    <span class="marquee-item">Haircuts</span>
+    <span class="marquee-item">Colouring</span>
+    <span class="marquee-item">Perms</span>
+    <span class="marquee-item">Wigs</span>
+    <span class="marquee-item">Women's Hair Systems</span>
+    <span class="marquee-item">Shampooing</span>
+  </div>
+</div>
+
+<!-- SERVICES -->
+<section class="services" id="services">
+  <div class="container">
+    <div class="section-header reveal">
+      <div class="section-tag">What We Offer</div>
+      <h2 class="section-title" data-curb-key="text-9" data-curb-type="text">Expert Hair <em>Services</em></h2>
+    </div>
+    <div class="services-grid">
+      <div class="service-card reveal">
+        <div class="service-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"></circle><path d="M6 9v12"></path><circle cx="18" cy="18" r="3"></circle><path d="M18 15V3"></path></svg>
+        </div>
+        <h3 class="service-name" data-curb-key="text-10" data-curb-type="text">Haircuts</h3>
+        <p class="service-desc" data-curb-key="text-11" data-curb-type="textarea">Precision cuts tailored to your face shape, lifestyle, and personal style. From classic bobs to modern layers and textured crops.</p>
+      </div>
+      <div class="service-card reveal">
+        <div class="service-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path></svg>
+        </div>
+        <h3 class="service-name" data-curb-key="text-12" data-curb-type="text">Colouring</h3>
+        <p class="service-desc" data-curb-key="text-13" data-curb-type="textarea">Full colour, highlights, balayage, and corrective colour services using professional Milkshake products for vibrant, lasting results.</p>
+      </div>
+      <div class="service-card reveal">
+        <div class="service-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+        </div>
+        <h3 class="service-name" data-curb-key="text-14" data-curb-type="text">Perms</h3>
+        <p class="service-desc" data-curb-key="text-15" data-curb-type="textarea">Beautiful, natural-looking curls and waves with modern perm techniques that protect hair health and add lasting volume.</p>
+      </div>
+      <div class="service-card reveal">
+        <div class="service-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+        </div>
+        <h3 class="service-name" data-curb-key="text-16" data-curb-type="text">Wigs &amp; Hair Systems</h3>
+        <p class="service-desc" data-curb-key="text-17" data-curb-type="textarea">Discreet, compassionate women's wig fitting and hair system consultations in a private, comfortable salon environment.</p>
+      </div>
+      <div class="service-card reveal">
+        <div class="service-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"></path></svg>
+        </div>
+        <h3 class="service-name" data-curb-key="text-18" data-curb-type="text">Shampooing &amp; Treatments</h3>
+        <p class="service-desc" data-curb-key="text-19" data-curb-type="textarea">Relaxing professional shampoo services and conditioning treatments to restore shine, strength, and manageability.</p>
+      </div>
+      <div class="service-card reveal">
+        <div class="service-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+        </div>
+        <h3 class="service-name" data-curb-key="text-20" data-curb-type="text">Consultations</h3>
+        <p class="service-desc" data-curb-key="text-21" data-curb-type="textarea">Not sure what you need? Book a free consultation to discuss your hair goals, colour options, or hair system needs.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ABOUT / STYLIST -->
+<section class="about" id="about">
+  <div class="container">
+    <div class="about-grid">
+      <div class="about-image-wrap reveal">
+        <div class="about-image-frame">
+          <img src="assets/brand/source-logo.png" alt="Sherri — Owner and stylist at Hidden Beauty Hair Salon" data-curb-key="image-2" data-curb-type="image">
+        </div>
+        <div class="about-image-accent"></div>
+        <div class="about-experience">
+          <div class="about-exp-number">30+</div>
+          <div class="about-exp-label">Years Experience</div>
+        </div>
+      </div>
+      <div class="about-content reveal">
+        <div class="section-header">
+          <div class="section-tag">Meet Your Stylist</div>
+          <h2 class="section-title" data-curb-key="text-22" data-curb-type="text">Hello, I'm <em>Sherri</em></h2>
+        </div>
+        <p class="about-text" data-curb-key="text-23" data-curb-type="textarea">With over 30 years in the hair industry, I bring a lifetime of passion and skill to every client who sits in my chair. I believe everyone deserves to feel beautiful, and I take the time to truly listen to what you want.</p>
+        <div class="about-highlight">
+          <p data-curb-key="text-24" data-curb-type="textarea">"I recently attended a class on Hair Cutting and Colouring in Italy with Milkshake products — because learning never stops."</p>
+        </div>
+        <p class="about-text" data-curb-key="text-1" data-curb-type="textarea">Hidden Beauty is more than a salon — it's a private, welcoming space where you can relax, be yourself, and leave feeling like the best version of you. Whether it's a fresh cut, a bold new colour, or a discreet wig consultation, you're in experienced and caring hands.</p>
+        <a href="tel:2264402849" class="btn-primary" style="margin-top:16px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+          Book With Sherri
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- GALLERY PREVIEW -->
+<section class="gallery-preview" id="gallery">
+  <div class="container">
+    <div class="section-header reveal">
+      <div class="section-tag">Our Work</div>
+      <h2 class="section-title" data-curb-key="text-2" data-curb-type="text">Inside the <em>Salon</em></h2>
+    </div>
+    <div class="gallery-mosaic reveal">
+      <div class="gallery-mosaic-item">
+        <img src="./assets/photos/1773114560858-ws5cr8.jpg" alt="Salon interior with styling chair and Audrey Hepburn art" data-curb-key="image-3" data-curb-type="image">
+      </div>
+      <div class="gallery-mosaic-item">
+        <img src="./assets/photos/1773114561014-1ffqef.jpg" alt="Client receiving hair styling" data-curb-key="image-4" data-curb-type="image">
+      </div>
+      <div class="gallery-mosaic-item">
+        <img src="./assets/photos/1773114561326-938fkv.jpg" alt="Full salon view with wash station" data-curb-key="image-5" data-curb-type="image">
+      </div>
+      <div class="gallery-mosaic-item">
+        <img src="./assets/photos/1773114561144-1cj0x2.jpg" alt="Salon station with professional products" data-curb-key="image-6" data-curb-type="image">
+      </div>
+      <div class="gallery-mosaic-item">
+        <img src="./assets/photos/1773114560858-ws5cr8.jpg" alt="Salon details and products" data-curb-key="image-7" data-curb-type="image">
+      </div>
+    </div>
+    <div class="gallery-link reveal">
+      <a href="./contact/" class="btn-secondary" data-curb-key="link-3" data-curb-type="link">Visit the Salon</a>
+    </div>
+  </div>
+</section>
+
+<!-- TESTIMONIALS -->
+<section class="testimonials" id="testimonials">
+  <div class="container">
+    <div class="section-header reveal">
+      <div class="section-tag">Client Love</div>
+      <h2 class="section-title" data-curb-key="text-3" data-curb-type="text">What People Are <em>Saying</em></h2>
+    </div>
+    <div class="testimonials-grid">
+      <div class="testimonial-card reveal">
+        <svg class="testimonial-quote-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z"></path></svg>
+        <p class="testimonial-text" data-curb-key="text-4" data-curb-type="textarea">"OMG my hair looks great!"</p>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">T</div>
+          <div>
+            <div class="testimonial-name">Tricia H.</div>
+            <div class="testimonial-stars">
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="testimonial-card reveal">
+        <svg class="testimonial-quote-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z"></path></svg>
+        <p class="testimonial-text" data-curb-key="text-5" data-curb-type="textarea">"Been going here for years — thanks for taking good care of me."</p>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">B</div>
+          <div>
+            <div class="testimonial-name">Barb V.</div>
+            <div class="testimonial-stars">
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="testimonial-card reveal">
+        <svg class="testimonial-quote-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z"></path></svg>
+        <p class="testimonial-text" data-curb-key="text-6" data-curb-type="textarea">"Thanks for making me look as fabulous as possible!"</p>
+        <div class="testimonial-author">
+          <div class="testimonial-avatar">D</div>
+          <div>
+            <div class="testimonial-name">Doug H.</div>
+            <div class="testimonial-stars">
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+              <svg viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CONTACT STRIP -->
+<section class="contact-strip">
+  <div class="container">
+    <div class="section-header reveal">
+      <div class="section-tag">Get in Touch</div>
+      <h2 class="section-title" data-curb-key="text-7" data-curb-type="text">Visit <em>Hidden Beauty</em></h2>
+    </div>
+    <div class="contact-grid">
+      <div class="contact-card reveal">
+        <div class="contact-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        </div>
+        <h3 data-curb-key="text-8" data-curb-type="text">Hours</h3>
+        <p data-curb-key="text-9" data-curb-type="textarea">
+          Wed &amp; Thu: 8 AM – 8 PM<br>
+          Fri &amp; Sat: 8 AM – 12 PM<br>
+          Sun – Tue: Closed
+        </p>
+      </div>
+      <div class="contact-card reveal">
+        <div class="contact-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+        </div>
+        <h3 data-curb-key="text-10" data-curb-type="text">Phone &amp; Email</h3>
+        <p data-curb-key="text-11" data-curb-type="textarea">
+          <a href="tel:2264402849">(226) 440-2849</a><br>
+          <a href="mailto:sherri@hiddenbeautyhairsalon.ca">sherri@hiddenbeautyhairsalon.ca</a>
+        </p>
+      </div>
+      <div class="contact-card reveal">
+        <div class="contact-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+        </div>
+        <h3 data-curb-key="text-12" data-curb-type="text">Location</h3>
+        <p data-curb-key="text-13" data-curb-type="textarea">
+          10 Hiawatha St<br>
+          Simcoe, ON N3Y 4A4<br>
+          <a href="./index.html" target="_blank" rel="noopener" data-curb-key="link-4" data-curb-type="link">Open in Maps →</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-inner">
+      <div class="footer-brand">Hidden <span>Beauty</span></div>
+      <ul class="footer-links">
+        <li data-curb-key="text-14" data-curb-type="textarea"><a href="#services">Services</a></li>
+        <li data-curb-key="text-15" data-curb-type="textarea"><a href="#about">About</a></li>
+        <li data-curb-key="text-16" data-curb-type="textarea"><a href="#gallery">Gallery</a></li>
+        <li data-curb-key="text-17" data-curb-type="textarea"><a href="./contact/" data-curb-key="link-5" data-curb-type="link">Contact</a></li>
+      </ul>
+    </div>
+    <div class="footer-bottom">
+      <p data-curb-key="text-18" data-curb-type="textarea">© 2025 Hidden Beauty Hair Salon. All rights reserved.</p>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Nav scroll
+const nav = document.getElementById('nav');
+let lastScroll = 0;
+window.addEventListener('scroll', () => {
+  if (window.scrollY > 60) {
+    nav.classList.add('scrolled');
+  } else {
+    nav.classList.remove('scrolled');
+  }
+});
+
+// Mobile nav toggle
+const toggle = document.getElementById('navToggle');
+const links = document.getElementById('navLinks');
+toggle.addEventListener('click', () => {
+  toggle.classList.toggle('active');
+  links.classList.toggle('open');
+});
+
+// Close mobile nav on link click
+links.querySelectorAll('a').forEach(a => {
+  a.addEventListener('click', () => {
+    toggle.classList.remove('active');
+    links.classList.remove('open');
+  });
+});
+
+// Scroll reveal
+const reveals = document.querySelectorAll('.reveal');
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach((entry, i) => {
+    if (entry.isIntersecting) {
+      setTimeout(() => {
+        entry.target.classList.add('visible');
+      }, i * 80);
+      observer.unobserve(entry.target);
+    }
+  });
+}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+
+reveals.forEach(el => observer.observe(el));
+</script>
+
+  <script src="./assets/curb-site-config.js"></script>
+  <script src="./assets/curb-contact.js" defer=""></script>
+  <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore-compat.js"></script>
+  <script src="./assets/curb-public-pack.js" defer=""></script>
+</body></html>

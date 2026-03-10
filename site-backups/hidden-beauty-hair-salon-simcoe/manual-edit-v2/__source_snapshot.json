@@ -1,0 +1,197 @@
+{
+  "requestedUrl": "http://hiddenbeautyhairsalon.ca/",
+  "finalUrl": "http://hiddenbeautyhairsalon.ca/",
+  "pageCount": 2,
+  "estimatedPageCount": 2,
+  "estimatedPageCountIsLowerBound": false,
+  "captureLimitReached": false,
+  "pages": [
+    {
+      "url": "http://hiddenbeautyhairsalon.ca/",
+      "localPath": "index.html",
+      "title": "Hidden Beauty Hair Salon",
+      "description": "Hidden Beauty Hair Salon is a new hair salon that is open in Simcoe, Ontario it offers haircuts, colouring, perms, shampooing, wigs as well as woman hair systems.",
+      "headings": [
+        "Hidden Beauty Hair Salon",
+        "Hours",
+        "Contact",
+        "Located at",
+        "The Stylist",
+        "What People Are Saying...",
+        "Pictures From the Salon"
+      ],
+      "navLinks": [],
+      "callToActions": [
+        "Sean Higgins"
+      ],
+      "forms": [],
+      "images": [
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/sherri.png",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/testimonials-1.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/testimonials-2.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/testimonials-3.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon29.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon2.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon3.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon4.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon23.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon24.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon25.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon26.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon27.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon28.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon30.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon5.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon6.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon7.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon8.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon9.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon10.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon11.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon12.jpg",
+          "alt": ""
+        },
+        {
+          "src": "http://hiddenbeautyhairsalon.ca/img/gallery/salon13.jpg",
+          "alt": ""
+        }
+      ],
+      "detectedFeatures": [
+        "online store",
+        "appointment booking",
+        "embedded map"
+      ],
+      "textContent": "Hidden Beauty Hair Salon Hours Monday - Closed Tuesday - Closed Wednesday - 8am to 8pm Thursday - 8am to 8pm Friday - 8am to 12pm Saturday - 8am to 12 pm Sunday - Closed Contact Phone Number: 226-440-2849 Email: sherri@hiddenbeautyhairsalon.ca Located at The Stylist Hello, my name is Sherri. I have 30 years of experience in the hair industry. I also have two children and I am married to my loving husband. I do haircuts, colouring and, perms. In my contiued effort to learn new things and staying connected. Like recently attending a class on Hair Cutting and Colouring in Italy with Milkshake products. What People Are Saying... Tricia H. \"OMG my hair looks great!\" Barb V. \"Been going here for years thanks for taking good care of me.\" Doug H. \"Thanks for making me look as fabulous as possible\" Pictures From the Salon © Hidden Beauty Hair Salon 2026. All Rights Reserved. | Website By: Sean Higgins",
+      "colorPalette": [
+        "rgb(0, 123, 255)",
+        "rgb(33, 37, 41)",
+        "rgb(245, 245, 245)",
+        "rgb(255, 255, 255)",
+        "rgb(108, 117, 125)",
+        "rgb(204, 204, 204)"
+      ],
+      "backgroundPalette": [
+        "rgb(52, 58, 64)",
+        "rgb(248, 249, 250)",
+        "rgb(255, 255, 255)"
+      ],
+      "fontFamilies": [
+        "Lato, \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+        "Satisfy, cursive"
+      ],
+      "logoCandidates": []
+    },
+    {
+      "url": "http://hiddenbeautyhairsalon.ca/img/gallery/salon7jpg",
+      "localPath": "img/gallery/salon7jpg/index.html",
+      "title": "404 Not Found",
+      "description": null,
+      "headings": [
+        "Not Found"
+      ],
+      "navLinks": [],
+      "callToActions": [],
+      "forms": [],
+      "images": [],
+      "detectedFeatures": [],
+      "textContent": "Not Found The requested URL was not found on this server. Additionally, a 404 Not Found error was encountered while trying to use an ErrorDocument to handle the request.",
+      "colorPalette": [
+        "rgb(0, 0, 0)"
+      ],
+      "backgroundPalette": [],
+      "fontFamilies": [
+        "Times"
+      ],
+      "logoCandidates": []
+    }
+  ],
+  "brand": {
+    "colorPalette": [
+      "rgb(0, 123, 255)",
+      "rgb(33, 37, 41)",
+      "rgb(245, 245, 245)",
+      "rgb(255, 255, 255)",
+      "rgb(108, 117, 125)",
+      "rgb(204, 204, 204)",
+      "rgb(0, 0, 0)"
+    ],
+    "backgroundPalette": [
+      "rgb(52, 58, 64)",
+      "rgb(248, 249, 250)",
+      "rgb(255, 255, 255)"
+    ],
+    "fontFamilies": [
+      "Lato, \"Helvetica Neue\", Helvetica, Arial, sans-serif",
+      "Satisfy, cursive",
+      "Times"
+    ],
+    "logoCandidates": []
+  }
+}

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Contact — Hidden Beauty Hair Salon | Simcoe, Ontario</title>
+<meta name="description" content="Book your appointment at Hidden Beauty Hair Salon in Simcoe, Ontario. Call (226) 440-2849 or fill out our contact form.">
+<link rel="preconnect" href="../index.html">
+<link rel="preconnect" href="../index.html" crossorigin="">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&amp;family=Manrope:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+:root {
+  --color-cream: #F5F0EB;
+  --color-warm-white: #FDFBF9;
+  --color-charcoal: #2A2A2A;
+  --color-deep: #1A1714;
+  --color-rose: #C4907A;
+  --color-rose-light: #D4A894;
+  --color-rose-dark: #A67460;
+  --color-taupe: #8C7E74;
+  --color-sage: #9BA894;
+  --color-gold: #C4A86A;
+  --color-muted: #7A7168;
+  --color-light-border: rgba(42,42,42,0.08);
+  --font-display: 'Cormorant Garamond', Georgia, serif;
+  --font-body: 'Manrope', system-ui, sans-serif;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --shadow-soft: 0 4px 24px rgba(26,23,20,0.06);
+  --shadow-medium: 0 8px 40px rgba(26,23,20,0.10);
+  --shadow-strong: 0 16px 64px rgba(26,23,20,0.14);
+  --transition-smooth: 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-charcoal);
+  background: var(--color-warm-white);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+img { max-width: 100%; height: auto; display: block; }
+a { color: inherit; text-decoration: none; }
+
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 5vw, 48px);
+}
+
+/* NAV */
+.nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+  padding: 16px 0;
+  background: rgba(253,251,249,0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 1px 0 var(--color-light-border);
+}
+
+.nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 5vw, 48px);
+}
+
+.nav-logo {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--color-deep);
+}
+
+.nav-logo span { color: var(--color-rose); }
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  list-style: none;
+}
+
+.nav-links a {
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-charcoal);
+  position: relative;
+  transition: color var(--transition-smooth);
+}
+
+.nav-links a::after {
+  content: '';
+  position: absolute;
+  bottom: -4px; left: 0;
+  width: 0; height: 1.5px;
+  background: var(--color-rose);
+  transition: width var(--transition-smooth);
+}
+
+.nav-links a:hover { color: var(--color-rose-dark); }
+.nav-links a:hover::after { width: 100%; }
+
+.nav-cta {
+  background: var(--color-charcoal);
+  color: var(--color-cream) !important;
+  padding: 10px 24px;
+  border-radius: 100px;
+  font-size: 0.82rem !important;
+  letter-spacing: 0.06em !important;
+  transition: background var(--transition-smooth), transform 0.2s ease !important;
+}
+
+.nav-cta::after { display: none !important; }
+
+.nav-cta:hover {
+  background: var(--color-rose-dark) !important;
+  color: white !important;
+  transform: translateY(-1px);
+}
+
+.nav-toggle {
+  display: none;
+  background: none; border: none; cursor: pointer;
+  width: 32px; height: 24px; position: relative; z-index: 110;
+}
+
+.nav-toggle span {
+  display: block; width: 100%; height: 2px;
+  background: var(--color-charcoal);
+  position: absolute; left: 0;
+  transition: all 0.3s ease;
+}
+
+.nav-toggle span:nth-child(1) { top: 0; }
+.nav-toggle span:nth-child(2) { top: 50%; transform: translateY(-50%); }
+.nav-toggle span:nth-child(3) { bottom: 0; }
+
+.nav-toggle.active span:nth-child(1) { top: 50%; transform: translateY(-50%) rotate(45deg); }
+.nav-toggle.active span:nth-child(2) { opacity: 0; }
+.nav-toggle.active span:nth-child(3) { bottom: 50%; transform: translateY(50%) rotate(-45deg); }
+
+/* PAGE HEADER */
+.page-header {
+  padding: clamp(140px, 16vh, 200px) 0 clamp(60px, 8vh, 100px);
+  background: var(--color-cream);
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.page-header::before {
+  content: '';
+  position: absolute;
+  top: -200px; right: -200px;
+  width: 600px; height: 600px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(196,144,122,0.06) 0%, transparent 70%);
+}
+
+.page-header::after {
+  content: '';
+  position: absolute;
+  bottom: -200px; left: -200px;
+  width: 500px; height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(196,144,122,0.04) 0%, transparent 70%);
+}
+
+.page-header .section-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-rose-dark);
+  margin-bottom: 16px;
+}
+
+.page-header .section-tag::before,
+.page-header .section-tag::after {
+  content: '';
+  display: block;
+  width: 20px; height: 1px;
+  background: var(--color-rose);
+}
+
+.page-header h1 {
+  font-family: var(--font-display);
+  font-size: clamp(2.4rem, 4.5vw, 3.6rem);
+  font-weight: 400;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--color-deep);
+  position: relative;
+  z-index: 1;
+}
+
+.page-header h1 em {
+  font-style: italic;
+  color: var(--color-rose);
+}
+
+.page-header p {
+  max-width: 520px;
+  margin: 16px auto 0;
+  font-size: 1.05rem;
+  color: var(--color-muted);
+  line-height: 1.7;
+  position: relative;
+  z-index: 1;
+}
+
+/* CONTACT LAYOUT */
+.contact-section {
+  padding: clamp(60px, 8vh, 100px) 0;
+}
+
+.contact-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: clamp(40px, 5vw, 80px);
+  align-items: start;
+}
+
+/* FORM */
+.contact-form-wrap {
+  background: white;
+  border-radius: var(--radius-xl);
+  padding: clamp(32px, 4vw, 48px);
+  box-shadow: var(--shadow-medium);
+  border: 1px solid var(--color-light-border);
+}
+
+.contact-form-wrap h2 {
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  font-weight: 500;
+  margin-bottom: 8px;
+  color: var(--color-deep);
+}
+
+.contact-form-wrap .form-subtitle {
+  font-size: 0.92rem;
+  color: var(--color-muted);
+  margin-bottom: 32px;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-charcoal);
+  margin-bottom: 8px;
+}
+
+.form-group input,
+.form-group textarea,
+.form-group select {
+  width: 100%;
+  padding: 14px 18px;
+  border: 1.5px solid rgba(42,42,42,0.12);
+  border-radius: var(--radius-md);
+  background: var(--color-cream);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  color: var(--color-charcoal);
+  transition: border-color var(--transition-smooth), box-shadow var(--transition-smooth);
+  outline: none;
+}
+
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  border-color: var(--color-rose);
+  box-shadow: 0 0 0 3px rgba(196,144,122,0.12);
+}
+
+.form-group textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.btn-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--color-charcoal);
+  color: var(--color-cream);
+  padding: 16px 40px;
+  border-radius:</style></head><body data-curb-page-key="contact/index.html" data-curb-shop-path="../shop/index.html">  <script src="../assets/curb-site-config.js"></script>
+  <script src="../assets/curb-contact.js" defer=""></script>
+  <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore-compat.js"></script>
+  <script src="../assets/curb-public-pack.js" defer=""></script>
+</body></html>

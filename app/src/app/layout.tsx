@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, Manrope } from "next/font/google";
-import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
-import { Sidebar } from "./sidebar";
+import { AppFrame } from "./app-frame";
 
 const sansFont = Manrope({
   subsets: ["latin"],
@@ -28,15 +27,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${sansFont.variable} ${monoFont.variable} font-sans antialiased`}>
-        <div className="flex h-screen overflow-hidden">
-          <Sidebar />
-          <main className="flex-1 overflow-y-auto bg-background">
-            <div className="mx-auto max-w-7xl px-6 py-8">
-              {children}
-            </div>
-          </main>
-        </div>
-        <Toaster position="bottom-right" richColors />
+        <AppFrame>{children}</AppFrame>
       </body>
     </html>
   );
