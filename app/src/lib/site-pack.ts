@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 import { load } from "cheerio";
 
 import {
@@ -53,7 +56,13 @@ export const CMS_SCHEMA_PATH = "assets/curb-cms-schema.json";
 export const PUBLIC_PACK_RUNTIME_PATH = "assets/curb-public-pack.js";
 export const ADMIN_PACK_RUNTIME_PATH = "assets/curb-admin-pack.js";
 export const ADMIN_PACK_STYLE_PATH = "assets/curb-admin-pack.css";
+export const ADMIN_VENDOR_STYLE_PATH = "assets/vendor/tabler.min.css";
+export const ADMIN_VENDOR_SCRIPT_PATH = "assets/vendor/tabler.min.js";
 export const ADMIN_PAGE_PATH = "admin/index.html";
+export const ADMIN_ACCESS_PAGE_PATH = "admin/access/index.html";
+export const ADMIN_CONTENT_PAGE_PATH = "admin/content/index.html";
+export const ADMIN_STORE_PAGE_PATH = "admin/store/index.html";
+export const ADMIN_PRODUCTS_PAGE_PATH = "admin/products/index.html";
 export const STORE_PAGE_PATH = "shop/index.html";
 export const STORE_ALIAS_PATH = "products/index.html";
 export const HANDOFF_README_PATH = "handoff/README.md";
@@ -66,6 +75,41 @@ export const HANDOFF_OWNERSHIP_PATH = "handoff/OWNER_SETUP.md";
 const MAX_TEXT_FIELDS_PER_PAGE = 24;
 const MAX_LINK_FIELDS_PER_PAGE = 12;
 const MAX_IMAGE_FIELDS_PER_PAGE = 12;
+const TABLER_DIST_DIR = path.resolve(
+  process.cwd(),
+  "node_modules",
+  "@tabler",
+  "core",
+  "dist"
+);
+const vendorAssetCache = new Map<string, string>();
+type AdminView = "overview" | "access" | "content" | "store" | "products";
+
+function readVendorAsset(relativePath: string): string {
+  const cached = vendorAssetCache.get(relativePath);
+  if (cached) {
+    return cached;
+  }
+
+  const assetPath = path.resolve(TABLER_DIST_DIR, relativePath);
+  const content = fs.readFileSync(assetPath, "utf8");
+  vendorAssetCache.set(relativePath, content);
+  return content;
+}
+
+function relativeHrefForIndexPage(fromFilePath: string, toFilePath: string): string {
+  const href = relativeHrefBetweenFiles(fromFilePath, toFilePath);
+
+  if (href === "index.html") {
+    return ".";
+  }
+
+  if (href.endsWith("/index.html")) {
+    return href.slice(0, -"index.html".length);
+  }
+
+  return href;
+}
 
 function normalizeText(value: string | null | undefined): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
@@ -1033,261 +1077,495 @@ function buildPublicPackRuntime(): string {
 })();`;
 }
 
+function buildAdminVendorStyle(): string {
+  return `${readVendorAsset("css/tabler.min.css")}\n`;
+}
+
+function buildAdminVendorScript(): string {
+  return `${readVendorAsset("js/tabler.min.js")}\n`;
+}
+
 function buildAdminPackStyles(): string {
   return `:root {
   color-scheme: light;
-  --admin-bg: #f4f7fb;
-  --admin-panel: #ffffff;
-  --admin-border: rgba(15, 23, 42, 0.08);
-  --admin-text: #0f172a;
-  --admin-muted: #475569;
-  --admin-accent: #0f766e;
-  --admin-danger: #b42318;
 }
 
-* { box-sizing: border-box; }
 body {
-  margin: 0;
-  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-  color: var(--admin-text);
-  background: linear-gradient(180deg, #f8fafc, var(--admin-bg));
+  background: var(--tblr-bg-surface-secondary);
 }
-a { color: inherit; }
-button, input, textarea, select {
-  font: inherit;
-}
-.admin-shell {
+
+.page {
   min-height: 100vh;
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
 }
-.admin-sidebar {
-  background: #0f172a;
-  color: #fff;
-  padding: 1.5rem;
-  display: grid;
-  gap: 1.5rem;
-}
-.admin-sidebar p {
-  color: rgba(255, 255, 255, 0.72);
-  line-height: 1.6;
-  margin: 0;
-}
-.admin-main {
-  padding: 1.5rem;
-  display: grid;
-  gap: 1rem;
-}
-.admin-card {
-  background: var(--admin-panel);
-  border: 1px solid var(--admin-border);
-  border-radius: 1.25rem;
-  padding: 1.25rem;
-  box-shadow: 0 16px 40px -30px rgba(15, 23, 42, 0.35);
-}
-.admin-row {
+
+.navbar-vertical .navbar-brand > a {
   display: flex;
-  gap: 1rem;
+  align-items: center;
+  gap: 0.75rem;
+  text-decoration: none;
+}
+
+#adminMeta {
+  display: flex;
   flex-wrap: wrap;
-}
-.admin-row > * {
-  flex: 1 1 240px;
-}
-.admin-list {
-  display: grid;
   gap: 0.5rem;
 }
-.admin-list button,
-.admin-button {
-  border: 1px solid var(--admin-border);
-  background: var(--admin-panel);
-  color: inherit;
-  padding: 0.8rem 1rem;
-  border-radius: 0.9rem;
-  cursor: pointer;
-}
-.admin-button.primary {
-  background: var(--admin-accent);
-  color: #fff;
-  border-color: transparent;
-}
-.admin-button.danger {
-  background: #fff5f5;
-  color: var(--admin-danger);
-}
-.admin-list button.active {
-  background: rgba(15, 118, 110, 0.1);
-  border-color: rgba(15, 118, 110, 0.3);
-}
-.admin-field {
-  display: grid;
-  gap: 0.4rem;
-  margin-bottom: 1rem;
-}
-.admin-field label {
+
+#adminMeta .badge {
   font-weight: 600;
 }
-.admin-field input,
-.admin-field textarea {
-  width: 100%;
-  border: 1px solid var(--admin-border);
-  border-radius: 0.85rem;
-  padding: 0.85rem 0.95rem;
-  background: #fff;
+
+.admin-page-list .list-group-item {
+  text-align: left;
 }
-.admin-field textarea {
-  min-height: 120px;
-  resize: vertical;
+
+.admin-page-list .list-group-item.active {
+  z-index: 1;
 }
-.admin-settings-form {
-  display: grid;
-  gap: 0.75rem;
-  min-width: min(24rem, 100%);
-}
-.admin-meta {
-  display: flex;
-  gap: 0.6rem;
-  flex-wrap: wrap;
-}
-.admin-meta span {
-  display: inline-flex;
-  align-items: center;
-  min-height: 2rem;
-  padding: 0.35rem 0.7rem;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--admin-muted);
-  font-size: 0.92rem;
-}
-.admin-status {
-  color: var(--admin-muted);
-  line-height: 1.6;
-}
-.admin-status.error {
-  color: var(--admin-danger);
-}
-.admin-products {
-  display: grid;
-  gap: 1rem;
-}
-.admin-product-card {
-  border: 1px solid var(--admin-border);
-  border-radius: 1rem;
+
+.admin-empty-state {
   padding: 1rem;
-  display: grid;
-  gap: 0.75rem;
+  border: 1px dashed var(--tblr-border-color);
+  border-radius: var(--tblr-border-radius-lg);
+  color: var(--tblr-secondary);
+  background: var(--tblr-bg-surface);
 }
-@media (max-width: 960px) {
-  .admin-shell {
-    grid-template-columns: 1fr;
+
+.page-header-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.admin-empty-state-cell {
+  padding: 1rem !important;
+}
+
+.admin-product-row-active td {
+  background: var(--tblr-primary-lt);
+}
+
+.btn-list.flex-nowrap {
+  flex-wrap: nowrap;
+}
+
+@media (max-width: 991.98px) {
+  .page-header .card {
+    margin-top: 0.5rem;
   }
 }
 `;
 }
 
-function buildAdminPage(): string {
+function buildAdminPage(pagePath: string, view: AdminView): string {
+  const navLinks = {
+    overview: relativeHrefForIndexPage(pagePath, ADMIN_PAGE_PATH),
+    access: relativeHrefForIndexPage(pagePath, ADMIN_ACCESS_PAGE_PATH),
+    content: relativeHrefForIndexPage(pagePath, ADMIN_CONTENT_PAGE_PATH),
+    store: relativeHrefForIndexPage(pagePath, ADMIN_STORE_PAGE_PATH),
+    products: relativeHrefForIndexPage(pagePath, ADMIN_PRODUCTS_PAGE_PATH),
+  };
+
+  const navItems: Array<{ key: AdminView; label: string }> = [
+    { key: "overview", label: "Overview" },
+    { key: "access", label: "Access" },
+    { key: "content", label: "Content" },
+    { key: "store", label: "Store settings" },
+    { key: "products", label: "Products" },
+  ];
+
+  const navMarkup = navItems
+    .map((item) => {
+      const activeClass = item.key === view ? " active" : "";
+      return `
+              <li class="nav-item">
+                <a class="nav-link${activeClass}" href="${navLinks[item.key]}">
+                  <span class="nav-link-title">${item.label}</span>
+                </a>
+              </li>`;
+    })
+    .join("");
+
+  const pageTitle =
+    view === "overview"
+      ? "Overview"
+      : view === "access"
+        ? "Access"
+        : view === "content"
+          ? "Content"
+          : view === "store"
+            ? "Store settings"
+            : "Products";
+
+  const pageSubtitle =
+    view === "overview"
+      ? "Serious admin workspace for the generated owner portal."
+      : view === "access"
+        ? "Preview access and owner sign-in controls."
+        : view === "content"
+          ? "Edit generated page content one page at a time."
+          : view === "store"
+            ? "Control checkout provider and store behavior."
+            : "Manage products from a proper table and editor.";
+
+  const primaryAction =
+    view === "products"
+      ? `
+              <div class="page-header-actions">
+                <button id="adminAddProduct" class="btn btn-primary" type="button">
+                  Add product
+                </button>
+              </div>`
+      : "";
+
+  const overviewBody = `
+            <div class="row row-cards">
+              <div class="col-sm-6 col-xl-4">
+                <div class="card">
+                  <div class="card-body">
+                    <div class="text-uppercase small fw-bold text-secondary">Pages</div>
+                    <div class="mt-2 display-6" id="adminPageCount">-</div>
+                    <div class="text-secondary">Editable generated pages detected.</div>
+                  </div>
+                  <div class="card-footer">
+                    <a class="btn btn-outline-primary w-100" href="${navLinks.content}">
+                      Open content editor
+                    </a>
+                  </div>
+                </div>
+              </div>
+              <div class="col-sm-6 col-xl-4">
+                <div class="card">
+                  <div class="card-body">
+                    <div class="text-uppercase small fw-bold text-secondary">Store mode</div>
+                    <div class="mt-2 h2 mb-1" id="adminStoreProvider">Loading...</div>
+                    <div class="text-secondary">Checkout configuration for lightweight commerce.</div>
+                  </div>
+                  <div class="card-footer">
+                    <a class="btn btn-outline-primary w-100" href="${navLinks.store}">
+                      Open store settings
+                    </a>
+                  </div>
+                </div>
+              </div>
+              <div class="col-sm-6 col-xl-4">
+                <div class="card">
+                  <div class="card-body">
+                    <div class="text-uppercase small fw-bold text-secondary">Products</div>
+                    <div class="mt-2 display-6" id="adminProductCount">-</div>
+                    <div class="text-secondary">Products available in the owner-managed catalog.</div>
+                  </div>
+                  <div class="card-footer">
+                    <a class="btn btn-outline-primary w-100" href="${navLinks.products}">
+                      Open products
+                    </a>
+                  </div>
+                </div>
+              </div>
+              <div class="col-12 col-xl-5">
+                <div class="card h-100">
+                  <div class="card-header">
+                    <h3 class="card-title">Access</h3>
+                  </div>
+                  <div class="card-body">
+                    <p class="text-secondary mb-3">
+                      Preview mode stays local. Firebase mode lets the owner sign
+                      in and edit live content safely.
+                    </p>
+                    <div id="adminAuthPanel"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-12 col-xl-7">
+                <div class="card h-100">
+                  <div class="card-header">
+                    <h3 class="card-title">Admin sections</h3>
+                  </div>
+                  <div class="list-group list-group-flush">
+                    <a class="list-group-item list-group-item-action" href="${navLinks.access}">
+                      <div class="fw-medium">Access</div>
+                      <div class="text-secondary">Preview session controls and owner sign-in.</div>
+                    </a>
+                    <a class="list-group-item list-group-item-action" href="${navLinks.content}">
+                      <div class="fw-medium">Content</div>
+                      <div class="text-secondary">Page-by-page editing for generated content fields.</div>
+                    </a>
+                    <a class="list-group-item list-group-item-action" href="${navLinks.store}">
+                      <div class="fw-medium">Store settings</div>
+                      <div class="text-secondary">Stripe vs Shopify checkout configuration.</div>
+                    </a>
+                    <a class="list-group-item list-group-item-action" href="${navLinks.products}">
+                      <div class="fw-medium">Products</div>
+                      <div class="text-secondary">Product table and dedicated editor.</div>
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>`;
+
+  const accessBody = `
+            <div class="row row-cards">
+              <div class="col-12 col-xl-6">
+                <div class="card h-100">
+                  <div class="card-header">
+                    <h3 class="card-title">Portal access</h3>
+                  </div>
+                  <div class="card-body">
+                    <p class="text-secondary mb-3">
+                      Use preview mode for browser-only demos, or send a
+                      passwordless sign-in link to the owner when Firebase is configured.
+                    </p>
+                    <div id="adminAuthPanel"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-12 col-xl-6">
+                <div class="card h-100">
+                  <div class="card-header">
+                    <h3 class="card-title">How this works</h3>
+                  </div>
+                  <div class="list-group list-group-flush">
+                    <div class="list-group-item">
+                      <div class="fw-medium">Preview mode</div>
+                      <div class="text-secondary">Use the Curb preview admin URL to unlock a browser-only demo session.</div>
+                    </div>
+                    <div class="list-group-item">
+                      <div class="fw-medium">Live owner mode</div>
+                      <div class="text-secondary">Add Firebase config and send the owner a sign-in link.</div>
+                    </div>
+                    <div class="list-group-item">
+                      <div class="fw-medium">Security boundary</div>
+                      <div class="text-secondary">Preview data stays in the browser. Live edits write to the configured customer project.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>`;
+
+  const contentBody = `
+            <div class="row row-cards">
+              <div class="col-12 col-xl-4">
+                <div class="card h-100">
+                  <div class="card-header">
+                    <h3 class="card-title">Pages</h3>
+                  </div>
+                  <div class="card-body">
+                    <div id="adminPageList" class="list-group list-group-flush admin-page-list"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-12 col-xl-8">
+                <div class="card h-100">
+                  <div class="card-header">
+                    <h3 id="adminPageTitle" class="card-title">Page content</h3>
+                  </div>
+                  <div class="card-body">
+                    <form id="adminPageForm"></form>
+                  </div>
+                </div>
+              </div>
+            </div>`;
+
+  const storeBody = `
+            <div class="row row-cards">
+              <div class="col-12 col-xl-6">
+                <div class="card h-100">
+                  <div class="card-header">
+                    <h3 class="card-title">Checkout provider</h3>
+                  </div>
+                  <div class="card-body">
+                    <p class="text-secondary mb-3">
+                      Choose whether product checkout URLs point to Stripe Payment Links or Shopify.
+                    </p>
+                    <form id="adminCommerceForm">
+                      <div class="row g-3 align-items-end">
+                        <div class="col-sm-8">
+                          <label for="adminCommerceProvider" class="form-label">Checkout provider</label>
+                          <select id="adminCommerceProvider" name="commerceProvider" class="form-select">
+                            <option value="stripe-payment-links">Stripe Payment Links</option>
+                            <option value="shopify">Shopify checkout links</option>
+                          </select>
+                        </div>
+                        <div class="col-sm-4">
+                          <button class="btn btn-primary w-100" type="submit">Save settings</button>
+                        </div>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              </div>
+              <div class="col-12 col-xl-6">
+                <div class="card h-100">
+                  <div class="card-header">
+                    <h3 class="card-title">Current configuration</h3>
+                  </div>
+                  <div class="list-group list-group-flush">
+                    <div class="list-group-item">
+                      <div class="text-uppercase small fw-bold text-secondary">Active provider</div>
+                      <div class="mt-1 fw-medium" id="adminStoreProvider">Loading...</div>
+                    </div>
+                    <div class="list-group-item">
+                      <div class="fw-medium">Intent</div>
+                      <div class="text-secondary">This setting changes how product checkout links are treated across the generated site.</div>
+                    </div>
+                    <div class="list-group-item">
+                      <div class="fw-medium">Next step</div>
+                      <div class="text-secondary">Use the products page to manage catalog rows and checkout URLs.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>`;
+
+  const productsBody = `
+            <div class="row row-cards">
+              <div class="col-12">
+                <div class="card">
+                  <div class="card-header">
+                    <h3 class="card-title">Catalog</h3>
+                  </div>
+                  <div class="table-responsive">
+                    <table class="table table-vcenter card-table">
+                      <thead>
+                        <tr>
+                          <th>Title</th>
+                          <th>Price</th>
+                          <th>Checkout</th>
+                          <th>Position</th>
+                          <th class="w-1"></th>
+                        </tr>
+                      </thead>
+                      <tbody id="adminProducts"></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              <div class="col-12">
+                <div class="card">
+                  <div class="card-header">
+                    <h3 id="adminProductFormTitle" class="card-title">Product editor</h3>
+                  </div>
+                  <div class="card-body">
+                    <form id="adminProductForm"></form>
+                  </div>
+                </div>
+              </div>
+            </div>`;
+
+  const bodyContent =
+    view === "overview"
+      ? overviewBody
+      : view === "access"
+        ? accessBody
+        : view === "content"
+          ? contentBody
+          : view === "store"
+            ? storeBody
+            : productsBody;
+
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Owner Portal</title>
-    <link rel="stylesheet" href="../${ADMIN_PACK_STYLE_PATH}">
+    <link rel="stylesheet" href="${relativeHrefBetweenFiles(pagePath, ADMIN_VENDOR_STYLE_PATH)}">
+    <link rel="stylesheet" href="${relativeHrefBetweenFiles(pagePath, ADMIN_PACK_STYLE_PATH)}">
   </head>
   <body>
-    <div class="admin-shell">
-      <aside class="admin-sidebar">
-        <div>
-          <p class="admin-eyebrow">Customer-owned editor</p>
-          <h1>Owner Portal</h1>
-          <p>
-            Sign in with the owner email. This portal edits the live Firebase
-            content store without rebuilding the static site.
-          </p>
-        </div>
-        <div class="admin-card">
-          <div id="adminAuthPanel"></div>
-        </div>
-        <div class="admin-card">
-          <p><strong>What this controls</strong></p>
-          <p>Page copy, links, images, and product cards connected to direct checkout links.</p>
+    <div class="page">
+      <aside class="navbar navbar-vertical navbar-expand-lg navbar-dark" data-bs-theme="dark">
+        <div class="container-fluid">
+          <button
+            class="navbar-toggler"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#sidebar-menu"
+            aria-controls="sidebar-menu"
+            aria-expanded="false"
+            aria-label="Toggle navigation"
+          >
+            <span class="navbar-toggler-icon"></span>
+          </button>
+          <h1 class="navbar-brand navbar-brand-autodark pe-0">
+            <a href="${navLinks.overview}">
+              <span class="avatar avatar-sm bg-primary-lt text-primary fw-bold rounded-3">C</span>
+              <span class="d-flex flex-column lh-sm">
+                <span class="fw-bold text-white">Curb Owner</span>
+                <span class="small text-secondary">Static site admin</span>
+              </span>
+            </a>
+          </h1>
+          <div class="collapse navbar-collapse" id="sidebar-menu">
+            <ul class="navbar-nav pt-lg-3">
+${navMarkup}
+            </ul>
+            <div class="mt-auto pt-lg-4">
+              <div class="card card-sm bg-primary-lt">
+                <div class="card-body">
+                  <div class="text-uppercase small fw-bold text-secondary mb-2">
+                    Editable surface
+                  </div>
+                  <div class="text-secondary">
+                    Separate admin pages for access, content, store settings, and products.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </aside>
-      <main class="admin-main">
-        <section class="admin-card">
-          <div class="admin-row">
-            <div>
-              <h2 id="adminSiteTitle">Owner Portal</h2>
-              <div id="adminMeta" class="admin-meta"></div>
-            </div>
-            <div>
-              <p id="adminStatus" class="admin-status">Loading owner portal...</p>
-            </div>
-          </div>
-        </section>
-
-        <section class="admin-card">
-          <div class="admin-row">
-            <div>
-              <h2>Store settings</h2>
-              <p class="admin-status">
-                Choose whether product checkout URLs point to Stripe or Shopify.
-              </p>
-            </div>
-            <form id="adminCommerceForm" class="admin-settings-form">
-              <div class="admin-field">
-                <label for="adminCommerceProvider">Checkout provider</label>
-                <select id="adminCommerceProvider" name="commerceProvider">
-                  <option value="stripe-payment-links">Stripe Payment Links</option>
-                  <option value="shopify">Shopify checkout links</option>
-                </select>
+      <div class="page-wrapper">
+        <div class="page-header d-print-none">
+          <div class="container-xl">
+            <div class="row g-3 align-items-start">
+              <div class="col">
+                <div class="page-pretitle">Owner portal</div>
+                <h2 id="adminSiteTitle" class="page-title">${pageTitle}</h2>
+                <div class="text-secondary mt-1">${pageSubtitle}</div>
+                <div id="adminMeta" class="mt-3"></div>
               </div>
-              <button class="admin-button primary" type="submit">Save store settings</button>
-            </form>
+              <div class="col-12 col-lg-auto">
+                ${primaryAction}
+                <div class="card card-sm mt-3 mt-lg-0">
+                  <div class="card-body">
+                    <div class="text-uppercase small fw-bold text-secondary">
+                      Portal status
+                    </div>
+                    <p id="adminStatus" class="text-secondary mb-0 mt-2">
+                      Loading owner portal...
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-        </section>
+        </div>
 
-        <section class="admin-card">
-          <div class="admin-row">
-            <div>
-              <h2>Pages</h2>
-              <div id="adminPageList" class="admin-list"></div>
-            </div>
-            <div>
-              <h2 id="adminPageTitle">Page content</h2>
-              <form id="adminPageForm"></form>
-            </div>
+        <div class="page-body">
+          <div class="container-xl">
+${bodyContent}
           </div>
-        </section>
-
-        <section class="admin-card">
-          <div class="admin-row">
-            <div>
-              <h2>Products</h2>
-              <p class="admin-status">
-                Use this only when the site includes the lightweight store pack.
-              </p>
-            </div>
-            <div>
-              <button id="adminAddProduct" class="admin-button primary" type="button">Add product</button>
-            </div>
-          </div>
-          <div id="adminProducts" class="admin-products"></div>
-        </section>
-      </main>
+        </div>
+      </div>
     </div>
 
     <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore-compat.js"></script>
-    <script src="../assets/curb-site-config.js"></script>
-    <script src="../${ADMIN_PACK_RUNTIME_PATH}"></script>
+    <script src="${relativeHrefBetweenFiles(pagePath, "assets/curb-site-config.js")}"></script>
+    <script src="${relativeHrefBetweenFiles(pagePath, ADMIN_VENDOR_SCRIPT_PATH)}"></script>
+    <script src="${relativeHrefBetweenFiles(pagePath, ADMIN_PACK_RUNTIME_PATH)}"></script>
   </body>
 </html>
 `;
 }
 
-function buildAdminPackRuntime(schemaPath: string): string {
+function buildAdminPackRuntime(): string {
+  const schemaRuntimeHref = relativeHrefBetweenFiles(
+    ADMIN_PACK_RUNTIME_PATH,
+    CMS_SCHEMA_PATH
+  );
+
   return `(function () {
   var siteConfig = window.CURB_SITE_CONFIG || {};
   var cmsConfig = siteConfig.cms || {};
@@ -1297,20 +1575,45 @@ function buildAdminPackRuntime(schemaPath: string): string {
   var authPanel = document.getElementById("adminAuthPanel");
   var statusNode = document.getElementById("adminStatus");
   var metaNode = document.getElementById("adminMeta");
-  var siteTitleNode = document.getElementById("adminSiteTitle");
   var pageListNode = document.getElementById("adminPageList");
   var pageTitleNode = document.getElementById("adminPageTitle");
   var pageFormNode = document.getElementById("adminPageForm");
   var commerceFormNode = document.getElementById("adminCommerceForm");
   var commerceProviderInput = document.getElementById("adminCommerceProvider");
   var productsNode = document.getElementById("adminProducts");
+  var productFormNode = document.getElementById("adminProductForm");
+  var productFormTitleNode = document.getElementById("adminProductFormTitle");
   var addProductButton = document.getElementById("adminAddProduct");
+  var pageCountNode = document.getElementById("adminPageCount");
+  var productCountNode = document.getElementById("adminProductCount");
+  var storeProviderNode = document.getElementById("adminStoreProvider");
+  var NEW_PRODUCT_ID = "__new__";
+  var runtimeBaseUrl = (function () {
+    try {
+      var currentScript = document.currentScript;
+      return currentScript && currentScript.src ? currentScript.src : window.location.href;
+    } catch (error) {
+      void error;
+      return window.location.href;
+    }
+  })();
+  var schemaPath = "${schemaRuntimeHref}";
+  var schemaUrl = (function () {
+    try {
+      return new URL(schemaPath, runtimeBaseUrl).toString();
+    } catch (error) {
+      void error;
+      return schemaPath;
+    }
+  })();
   var schema = null;
   var db = null;
   var auth = null;
   var currentUser = null;
   var currentCommerceProvider = "none";
   var selectedPageKey = null;
+  var selectedProductId = null;
+  var loadedProducts = [];
   var previewSession = false;
 
   function text(value) {
@@ -1405,7 +1708,19 @@ function buildAdminPackRuntime(schemaPath: string): string {
     }
 
     statusNode.textContent = message;
-    statusNode.className = isError ? "admin-status error" : "admin-status";
+    statusNode.className = isError ? "text-danger mb-0 mt-2" : "text-secondary mb-0 mt-2";
+  }
+
+  function badgeMarkup(label, tone) {
+    return '<span class="badge bg-' + tone + '-lt text-' + tone + '">' + escapeHtml(label) + "</span>";
+  }
+
+  function emptyStateMarkup(message) {
+    return '<div class="admin-empty-state">' + escapeHtml(message) + "</div>";
+  }
+
+  function emptyStateRowMarkup(message, colspan) {
+    return '<tr><td class="admin-empty-state-cell" colspan="' + String(colspan) + '">' + emptyStateMarkup(message) + "</td></tr>";
   }
 
   function hasFirebaseConfig() {
@@ -1544,13 +1859,24 @@ function buildAdminPackRuntime(schemaPath: string): string {
     writeStoredJson(previewPageStorageKey(pageKey), fields);
   }
 
+  function sortProducts(products) {
+    return products.slice().sort(function (left, right) {
+      var positionDelta = Number(left && left.position || 0) - Number(right && right.position || 0);
+      if (positionDelta !== 0) {
+        return positionDelta;
+      }
+
+      return text(left && left.title).localeCompare(text(right && right.title));
+    });
+  }
+
   function readPreviewProducts() {
     var products = readStoredJson(getPreviewStorageKey("products"), []);
-    return Array.isArray(products) ? products : [];
+    return Array.isArray(products) ? sortProducts(products) : [];
   }
 
   function writePreviewProducts(products) {
-    writeStoredJson(getPreviewStorageKey("products"), products);
+    writeStoredJson(getPreviewStorageKey("products"), sortProducts(products));
   }
 
   function readPreviewCommerceProvider() {
@@ -1572,9 +1898,6 @@ function buildAdminPackRuntime(schemaPath: string): string {
       return entry && entry.id !== product.id;
     });
     products.push(product);
-    products.sort(function (left, right) {
-      return Number(left.position || 0) - Number(right.position || 0);
-    });
     writePreviewProducts(products);
   }
 
@@ -1617,10 +1940,10 @@ function buildAdminPackRuntime(schemaPath: string): string {
 
     if (previewSession) {
       authPanel.innerHTML =
-        '<p class="admin-status">Preview session active. Changes stay in this browser and never touch customer data.</p>' +
-        '<div class="admin-row">' +
-        '<button id="exitPreviewButton" class="admin-button primary" type="button">Exit preview</button>' +
-        '<button id="resetPreviewButton" class="admin-button" type="button">Reset preview data</button>' +
+        '<div class="alert alert-azure" role="alert">Preview session active. Changes stay in this browser and never touch customer data.</div>' +
+        '<div class="d-grid gap-2">' +
+        '<button id="exitPreviewButton" class="btn btn-primary" type="button">Exit preview</button>' +
+        '<button id="resetPreviewButton" class="btn btn-outline-secondary" type="button">Reset preview data</button>' +
         "</div>";
 
       var exitPreviewButton = document.getElementById("exitPreviewButton");
@@ -1645,18 +1968,18 @@ function buildAdminPackRuntime(schemaPath: string): string {
 
     var previewHint =
       !hasFirebaseConfig() && isPreviewConfigured()
-        ? '<p class="admin-status">Open the dedicated Curb admin preview URL to unlock a browser-only demo session, or add Firebase config for live owner editing.</p>'
+        ? '<div class="alert alert-warning" role="alert">Open the dedicated Curb admin preview URL to unlock a browser-only demo session, or add Firebase config for live owner editing.</div>'
         : "";
 
     authPanel.innerHTML =
       previewHint +
-      '<div class="admin-field">' +
-      '<label for="ownerEmailInput">Owner email</label>' +
-      '<input id="ownerEmailInput" type="email" placeholder="owner@example.com" value="' + escapeHtml(getOwnerEmail() || "") + '">' +
+      '<div class="mb-3">' +
+      '<label for="ownerEmailInput" class="form-label">Owner email</label>' +
+      '<input id="ownerEmailInput" class="form-control" type="email" placeholder="owner@example.com" value="' + escapeHtml(getOwnerEmail() || "") + '">' +
       "</div>" +
-      '<div class="admin-row">' +
-      '<button id="sendMagicLink" class="admin-button primary" type="button">Send sign-in link</button>' +
-      '<button id="signOutButton" class="admin-button" type="button">Sign out</button>' +
+      '<div class="d-grid gap-2">' +
+      '<button id="sendMagicLink" class="btn btn-primary" type="button">Send sign-in link</button>' +
+      '<button id="signOutButton" class="btn btn-outline-secondary" type="button">Sign out</button>' +
       "</div>";
 
     var emailInput = document.getElementById("ownerEmailInput");
@@ -1745,19 +2068,54 @@ function buildAdminPackRuntime(schemaPath: string): string {
 
     if (previewSession) {
       metaNode.innerHTML =
-        '<span>Preview session</span>' +
-        '<span>Browser-only demo data</span>' +
-        '<span>' + (commerceConfig.enabled ? commerceProviderLabel(currentCommerceProvider) : "CMS preview enabled") + '</span>';
+        badgeMarkup("Preview session", "azure") +
+        badgeMarkup("Browser-only demo data", "blue") +
+        badgeMarkup(
+          commerceConfig.enabled
+            ? commerceProviderLabel(currentCommerceProvider)
+            : "CMS preview enabled",
+          "green"
+        );
       return;
     }
 
     metaNode.innerHTML =
-      '<span>' + (currentUser && currentUser.email ? currentUser.email : "Signed out") + '</span>' +
-      '<span>' + (cmsConfig.provider || "Firebase content pack") + '</span>' +
-      '<span>' + (commerceConfig.enabled ? commerceProviderLabel(currentCommerceProvider) : "No store") + '</span>';
+      badgeMarkup(currentUser && currentUser.email ? currentUser.email : "Signed out", "blue") +
+      badgeMarkup(cmsConfig.provider || "Firebase content pack", "purple") +
+      badgeMarkup(
+        commerceConfig.enabled ? commerceProviderLabel(currentCommerceProvider) : "No store",
+        "green"
+      );
+  }
+
+  function renderStoreProviderSummary() {
+    if (!storeProviderNode) {
+      return;
+    }
+
+    storeProviderNode.textContent = commerceProviderLabel(currentCommerceProvider);
+  }
+
+  function setPageCountSummary() {
+    if (!pageCountNode) {
+      return;
+    }
+
+    pageCountNode.textContent =
+      schema && Array.isArray(schema.pages) ? String(schema.pages.length) : "0";
+  }
+
+  function setProductCountSummary(count) {
+    if (!productCountNode) {
+      return;
+    }
+
+    productCountNode.textContent = String(count);
   }
 
   function renderCommerceForm() {
+    renderStoreProviderSummary();
+
     if (!commerceFormNode || !commerceProviderInput) {
       return;
     }
@@ -1825,15 +2183,14 @@ function buildAdminPackRuntime(schemaPath: string): string {
   }
 
   async function loadSchema() {
-    var response = await fetch("${schemaPath}", { cache: "no-store" });
+    var response = await fetch(schemaUrl, { cache: "no-store" });
     if (!response.ok) {
       throw new Error("Failed to load the CMS schema manifest.");
     }
 
     schema = await response.json();
-    if (siteTitleNode) {
-      siteTitleNode.textContent = schema.businessName + " Owner Portal";
-    }
+    document.title = schema.businessName + " Owner Portal";
+    setPageCountSummary();
   }
 
   function renderPageList() {
@@ -1841,10 +2198,16 @@ function buildAdminPackRuntime(schemaPath: string): string {
       return;
     }
 
+    if (!schema.pages.length) {
+      pageListNode.innerHTML = emptyStateMarkup("No editable pages were discovered.");
+      return;
+    }
+
     pageListNode.innerHTML = "";
     schema.pages.forEach(function (page) {
       var button = document.createElement("button");
       button.type = "button";
+      button.className = "list-group-item list-group-item-action";
       button.textContent = page.title;
       if (page.pageKey === selectedPageKey) {
         button.classList.add("active");
@@ -1860,13 +2223,16 @@ function buildAdminPackRuntime(schemaPath: string): string {
 
   function buildFieldInput(field, value) {
     var wrapper = document.createElement("div");
-    wrapper.className = "admin-field";
+    wrapper.className = "mb-3";
     var label = document.createElement("label");
+    label.className = "form-label";
     label.textContent = field.label;
     wrapper.appendChild(label);
 
     if (field.type === "textarea") {
       var textarea = document.createElement("textarea");
+      textarea.className = "form-control";
+      textarea.rows = 5;
       textarea.name = field.key;
       textarea.value = value && typeof value.value === "string" ? value.value : (field.defaultValue || "");
       wrapper.appendChild(textarea);
@@ -1875,10 +2241,12 @@ function buildAdminPackRuntime(schemaPath: string): string {
 
     if (field.type === "link") {
       var textInput = document.createElement("input");
+      textInput.className = "form-control";
       textInput.name = field.key + "__text";
       textInput.value = value && typeof value.text === "string" ? value.text : (field.defaultValue || "");
       textInput.placeholder = "Link label";
       var hrefInput = document.createElement("input");
+      hrefInput.className = "form-control mt-2";
       hrefInput.name = field.key + "__href";
       hrefInput.value = value && typeof value.href === "string" ? value.href : (field.defaultHref || "");
       hrefInput.placeholder = "https://example.com";
@@ -1889,10 +2257,12 @@ function buildAdminPackRuntime(schemaPath: string): string {
 
     if (field.type === "image") {
       var srcInput = document.createElement("input");
+      srcInput.className = "form-control";
       srcInput.name = field.key + "__src";
       srcInput.value = value && typeof value.src === "string" ? value.src : (field.defaultValue || "");
       srcInput.placeholder = "Image URL or local path";
       var altInput = document.createElement("input");
+      altInput.className = "form-control mt-2";
       altInput.name = field.key + "__alt";
       altInput.value = value && typeof value.alt === "string" ? value.alt : (field.defaultAlt || "");
       altInput.placeholder = "Alt text";
@@ -1902,6 +2272,7 @@ function buildAdminPackRuntime(schemaPath: string): string {
     }
 
     var input = document.createElement("input");
+    input.className = "form-control";
     input.name = field.key;
     input.value = value && typeof value.value === "string" ? value.value : (field.defaultValue || "");
     wrapper.appendChild(input);
@@ -1918,7 +2289,10 @@ function buildAdminPackRuntime(schemaPath: string): string {
       return;
     }
 
-    pageTitleNode.textContent = page.title + " content";
+    if (pageTitleNode) {
+      pageTitleNode.textContent = page.title + " content";
+    }
+
     var values = {};
     if (previewSession) {
       values = readPreviewPageFields(pageKey);
@@ -1934,7 +2308,7 @@ function buildAdminPackRuntime(schemaPath: string): string {
 
     var saveButton = document.createElement("button");
     saveButton.type = "submit";
-    saveButton.className = "admin-button primary";
+    saveButton.className = "btn btn-primary";
     saveButton.textContent = "Save page changes";
     pageFormNode.appendChild(saveButton);
 
@@ -1982,55 +2356,254 @@ function buildAdminPackRuntime(schemaPath: string): string {
     };
   }
 
+  function normalizePosition(value, fallback) {
+    var parsed = Number(value);
+    if (!isFinite(parsed) || parsed < 1) {
+      return fallback;
+    }
+
+    return Math.max(1, Math.round(parsed));
+  }
+
+  function nextProductPosition() {
+    var highestPosition = 0;
+    loadedProducts.forEach(function (product) {
+      highestPosition = Math.max(
+        highestPosition,
+        normalizePosition(product && product.position, 0)
+      );
+    });
+    return highestPosition + 1;
+  }
+
   function makeProductId(title) {
     var base = text(title).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     return base || "product-" + Date.now().toString(36);
   }
 
-  function buildProductCard(product) {
-    var card = document.createElement("form");
-    card.className = "admin-product-card";
-    var checkoutLabel = checkoutUrlLabel(currentCommerceProvider);
-    var checkoutPlaceholder = checkoutUrlPlaceholder(currentCommerceProvider);
-    card.innerHTML =
-      '<div class="admin-row">' +
-      '<div class="admin-field"><label>Title</label><input name="title" value="' + escapeHtml(product.title || "") + '"></div>' +
-      '<div class="admin-field"><label>Price label</label><input name="priceLabel" value="' + escapeHtml(product.priceLabel || "") + '" placeholder="$49"></div>' +
-      '<div class="admin-field"><label>Position</label><input name="position" type="number" value="' + escapeHtml(product.position || 1) + '"></div>' +
+  function makeUniqueProductId(baseId, existingId) {
+    var candidate = baseId || "product-" + Date.now().toString(36);
+    var suffix = 2;
+    while (loadedProducts.some(function (product) {
+      return product && product.id === candidate && product.id !== existingId;
+    })) {
+      candidate = baseId + "-" + String(suffix);
+      suffix += 1;
+    }
+    return candidate;
+  }
+
+  function buildProductDraft(product) {
+    return {
+      id: product && product.id ? product.id : "",
+      title: product && typeof product.title === "string" ? product.title : "",
+      priceLabel: product && typeof product.priceLabel === "string" ? product.priceLabel : "",
+      position: normalizePosition(
+        product && product.position,
+        nextProductPosition()
+      ),
+      description: product && typeof product.description === "string" ? product.description : "",
+      imageUrl: product && typeof product.imageUrl === "string" ? product.imageUrl : "",
+      imageAlt: product && typeof product.imageAlt === "string" ? product.imageAlt : "",
+      actionLabel: product && typeof product.actionLabel === "string" && product.actionLabel
+        ? product.actionLabel
+        : "Buy now",
+      checkoutUrl: product && typeof product.checkoutUrl === "string" ? product.checkoutUrl : ""
+    };
+  }
+
+  function findSelectedProduct() {
+    if (!selectedProductId || selectedProductId === NEW_PRODUCT_ID) {
+      return null;
+    }
+
+    return loadedProducts.find(function (product) {
+      return product && product.id === selectedProductId;
+    }) || null;
+  }
+
+  function syncSelectedProduct() {
+    if (!commerceConfig.enabled) {
+      selectedProductId = null;
+      return;
+    }
+
+    if (!loadedProducts.length) {
+      selectedProductId = NEW_PRODUCT_ID;
+      return;
+    }
+
+    if (selectedProductId === NEW_PRODUCT_ID) {
+      return;
+    }
+
+    var selectedProduct = findSelectedProduct();
+    if (!selectedProduct) {
+      selectedProductId = loadedProducts[0].id;
+    }
+  }
+
+  function renderProductTable() {
+    if (!productsNode) {
+      return;
+    }
+
+    if (!commerceConfig.enabled) {
+      productsNode.innerHTML = emptyStateRowMarkup(
+        "This site does not include the lightweight store pack.",
+        5
+      );
+      return;
+    }
+
+    if (!loadedProducts.length) {
+      productsNode.innerHTML = emptyStateRowMarkup(
+        previewSession
+          ? "No preview products have been added yet."
+          : "No products have been added yet.",
+        5
+      );
+      return;
+    }
+
+    productsNode.innerHTML = "";
+    loadedProducts.forEach(function (product) {
+      var row = document.createElement("tr");
+      if (selectedProductId === product.id) {
+        row.className = "admin-product-row-active table-active";
+      }
+
+      row.innerHTML =
+        '<td><div class="fw-medium">' + escapeHtml(product.title || "Untitled product") + '</div><div class="text-secondary small">' + escapeHtml(product.id || "") + "</div></td>" +
+        '<td>' + (product.priceLabel ? escapeHtml(product.priceLabel) : '<span class="text-secondary">Not set</span>') + "</td>" +
+        '<td>' +
+        (product.checkoutUrl
+          ? '<a href="' + escapeHtml(product.checkoutUrl) + '" target="_blank" rel="noopener noreferrer">Configured</a>'
+          : '<span class="text-secondary">Missing URL</span>') +
+        "</td>" +
+        '<td>' + escapeHtml(String(normalizePosition(product.position, 1))) + "</td>" +
+        '<td><div class="btn-list justify-content-end flex-nowrap">' +
+        '<button class="btn btn-outline-primary btn-sm" type="button" data-edit-product="' + escapeHtml(product.id || "") + '">Edit</button>' +
+        '<button class="btn btn-outline-danger btn-sm" type="button" data-delete-product="' + escapeHtml(product.id || "") + '">Delete</button>' +
+        "</div></td>";
+
+      var editButton = row.querySelector("[data-edit-product]");
+      var deleteButton = row.querySelector("[data-delete-product]");
+
+      if (editButton) {
+        editButton.addEventListener("click", function () {
+          selectedProductId = product.id;
+          renderProductTable();
+          renderProductEditor(findSelectedProduct());
+        });
+      }
+
+      if (deleteButton) {
+        deleteButton.addEventListener("click", async function () {
+          await deleteProduct(product.id);
+        });
+      }
+
+      productsNode.appendChild(row);
+    });
+  }
+
+  function renderProductEditor(product) {
+    if (!productFormNode || !productFormTitleNode) {
+      return;
+    }
+
+    if (!commerceConfig.enabled) {
+      productFormTitleNode.textContent = "Product editor";
+      productFormNode.innerHTML = emptyStateMarkup(
+        "This site does not include the lightweight store pack."
+      );
+      productFormNode.onsubmit = null;
+      return;
+    }
+
+    var draft = buildProductDraft(product);
+    var isExistingProduct = !!(product && product.id);
+    productFormTitleNode.textContent = isExistingProduct
+      ? "Editing " + (draft.title || draft.id)
+      : "New product";
+    productFormNode.innerHTML =
+      '<div class="row g-3">' +
+      '<div class="col-md-5"><label class="form-label">Title</label><input class="form-control" name="title" value="' + escapeHtml(draft.title) + '" placeholder="Signature service"></div>' +
+      '<div class="col-md-4"><label class="form-label">Price label</label><input class="form-control" name="priceLabel" value="' + escapeHtml(draft.priceLabel) + '" placeholder="$49"></div>' +
+      '<div class="col-md-3"><label class="form-label">Position</label><input class="form-control" name="position" type="number" min="1" value="' + escapeHtml(String(draft.position)) + '"></div>' +
+      '<div class="col-12"><label class="form-label">Description</label><textarea class="form-control" name="description" rows="4">' + escapeHtml(draft.description) + "</textarea></div>" +
+      '<div class="col-md-6"><label class="form-label">Image URL</label><input class="form-control" name="imageUrl" value="' + escapeHtml(draft.imageUrl) + '" placeholder="https://..."></div>' +
+      '<div class="col-md-6"><label class="form-label">Image alt</label><input class="form-control" name="imageAlt" value="' + escapeHtml(draft.imageAlt) + '" placeholder="Product image description"></div>' +
+      '<div class="col-md-5"><label class="form-label">Button label</label><input class="form-control" name="actionLabel" value="' + escapeHtml(draft.actionLabel) + '" placeholder="Buy now"></div>' +
+      '<div class="col-md-7"><label class="form-label">' + escapeHtml(checkoutUrlLabel(currentCommerceProvider)) + '</label><input class="form-control" name="checkoutUrl" value="' + escapeHtml(draft.checkoutUrl) + '" placeholder="' + escapeHtml(checkoutUrlPlaceholder(currentCommerceProvider)) + '"></div>' +
+      '<div class="col-12 text-secondary small">Product checkout links currently use ' + escapeHtml(commerceProviderLabel(currentCommerceProvider)) + ".</div>" +
+      '<div class="col-12"><div class="d-flex flex-column flex-sm-row gap-2 justify-content-between">' +
+      '<div class="d-flex flex-wrap gap-2">' +
+      '<button class="btn btn-primary" type="submit">Save product</button>' +
+      (isExistingProduct
+        ? '<button class="btn btn-outline-danger" type="button" data-delete-current="true">Delete product</button>'
+        : "") +
       "</div>" +
-      '<div class="admin-field"><label>Description</label><textarea name="description">' + escapeHtml(product.description || "") + '</textarea></div>' +
-      '<div class="admin-row">' +
-      '<div class="admin-field"><label>Image URL</label><input name="imageUrl" value="' + escapeHtml(product.imageUrl || "") + '"></div>' +
-      '<div class="admin-field"><label>Image alt</label><input name="imageAlt" value="' + escapeHtml(product.imageAlt || "") + '"></div>' +
-      "</div>" +
-      '<div class="admin-row">' +
-      '<div class="admin-field"><label>Button label</label><input name="actionLabel" value="' + escapeHtml(product.actionLabel || "Buy now") + '"></div>' +
-      '<div class="admin-field"><label>' + escapeHtml(checkoutLabel) + '</label><input name="checkoutUrl" value="' + escapeHtml(product.checkoutUrl || "") + '" placeholder="' + escapeHtml(checkoutPlaceholder) + '"></div>' +
-      "</div>" +
-      '<div class="admin-row">' +
-      '<button class="admin-button primary" type="submit">Save product</button>' +
-      '<button class="admin-button danger" type="button" data-delete="true">Delete</button>' +
+      (isExistingProduct
+        ? '<div class="text-secondary small align-self-center">Editing product id ' + escapeHtml(draft.id) + "</div>"
+        : '<div class="text-secondary small align-self-center">New products appear in the table after saving.</div>') +
+      "</div></div>" +
       "</div>";
 
-    card.addEventListener("submit", async function (event) {
+    productFormNode.onsubmit = async function (event) {
       event.preventDefault();
-      var formData = new FormData(card);
-      var title = String(formData.get("title") || "").trim();
-      var id = product.id || makeProductId(title);
-      var payload = {
-        title: title,
-        priceLabel: String(formData.get("priceLabel") || "").trim(),
-        position: Number(formData.get("position") || 1),
-        description: String(formData.get("description") || "").trim(),
-        imageUrl: String(formData.get("imageUrl") || "").trim(),
-        imageAlt: String(formData.get("imageAlt") || "").trim(),
-        actionLabel: String(formData.get("actionLabel") || "").trim(),
-        checkoutUrl: String(formData.get("checkoutUrl") || "").trim()
-      };
+      await saveProduct(isExistingProduct ? draft.id : "", new FormData(productFormNode));
+    };
 
+    var deleteButton = productFormNode.querySelector("[data-delete-current]");
+    if (deleteButton && draft.id) {
+      deleteButton.addEventListener("click", async function () {
+        await deleteProduct(draft.id);
+      });
+    }
+  }
+
+  function renderProductsView() {
+    renderProductTable();
+    renderProductEditor(findSelectedProduct());
+  }
+
+  async function saveProduct(existingProductId, formData) {
+    if (!commerceConfig.enabled) {
+      setStatus("This site does not include the lightweight store pack.", true);
+      return;
+    }
+
+    var title = String(formData.get("title") || "").trim();
+    if (!title) {
+      setStatus("Enter a product title before saving.", true);
+      return;
+    }
+
+    var baseProductId = existingProductId || makeProductId(title);
+    var productId = existingProductId || makeUniqueProductId(baseProductId, "");
+    var existingProduct = loadedProducts.find(function (product) {
+      return product && product.id === existingProductId;
+    }) || null;
+    var payload = {
+      title: title,
+      priceLabel: String(formData.get("priceLabel") || "").trim(),
+      position: normalizePosition(
+        formData.get("position"),
+        existingProduct ? normalizePosition(existingProduct.position, 1) : nextProductPosition()
+      ),
+      description: String(formData.get("description") || "").trim(),
+      imageUrl: String(formData.get("imageUrl") || "").trim(),
+      imageAlt: String(formData.get("imageAlt") || "").trim(),
+      actionLabel: String(formData.get("actionLabel") || "").trim() || "Buy now",
+      checkoutUrl: String(formData.get("checkoutUrl") || "").trim()
+    };
+
+    try {
       if (previewSession) {
         upsertPreviewProduct({
-          id: id,
+          id: productId,
           title: payload.title,
           priceLabel: payload.priceLabel,
           position: payload.position,
@@ -2040,91 +2613,98 @@ function buildAdminPackRuntime(schemaPath: string): string {
           actionLabel: payload.actionLabel,
           checkoutUrl: payload.checkoutUrl
         });
-        setStatus("Saved preview product " + (title || id) + ".", false);
-        loadProducts();
-        return;
+      } else {
+        await productsCollection().doc(productId).set({
+          title: payload.title,
+          priceLabel: payload.priceLabel,
+          position: payload.position,
+          description: payload.description,
+          imageUrl: payload.imageUrl,
+          imageAlt: payload.imageAlt,
+          actionLabel: payload.actionLabel,
+          checkoutUrl: payload.checkoutUrl,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
       }
 
-      await productsCollection().doc(id).set({
-        ...payload,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      }, { merge: true });
-      setStatus("Saved product " + (title || id) + ".", false);
-      loadProducts();
-    });
+      selectedProductId = productId;
+      await loadProducts();
+      setStatus(
+        (previewSession ? "Saved preview product " : "Saved product ") + (title || productId) + ".",
+        false
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to save product.", true);
+    }
+  }
 
-    card.querySelector("[data-delete]").addEventListener("click", async function () {
-      if (!product.id) {
-        card.remove();
-        return;
-      }
+  async function deleteProduct(productId) {
+    if (!productId) {
+      selectedProductId = NEW_PRODUCT_ID;
+      renderProductsView();
+      return;
+    }
 
+    try {
       if (previewSession) {
-        deletePreviewProduct(product.id);
-        setStatus("Deleted preview product " + product.id + ".", false);
-        loadProducts();
-        return;
+        deletePreviewProduct(productId);
+      } else {
+        await productsCollection().doc(productId).delete();
       }
 
-      await productsCollection().doc(product.id).delete();
-      setStatus("Deleted product " + product.id + ".", false);
-      loadProducts();
-    });
-
-    return card;
+      selectedProductId = null;
+      await loadProducts();
+      setStatus(
+        (previewSession ? "Deleted preview product " : "Deleted product ") + productId + ".",
+        false
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Failed to delete product.", true);
+    }
   }
 
   async function loadProducts() {
-    if (!productsNode) {
-      return;
+    if (addProductButton) {
+      addProductButton.hidden = !commerceConfig.enabled;
     }
 
     if (!commerceConfig.enabled) {
-      if (addProductButton) {
-        addProductButton.hidden = true;
-      }
-      productsNode.innerHTML = '<p class="admin-status">This site does not include the lightweight store pack.</p>';
+      loadedProducts = [];
+      selectedProductId = null;
+      setProductCountSummary(0);
+      renderProductsView();
       return;
     }
-
-    if (addProductButton) {
-      addProductButton.hidden = false;
-    }
-
-    productsNode.innerHTML = "";
 
     if (previewSession) {
-      var previewProducts = readPreviewProducts();
-      if (!previewProducts.length) {
-        productsNode.innerHTML = '<p class="admin-status">No preview products have been added yet.</p>';
-        return;
-      }
-
-      previewProducts.forEach(function (product) {
-        productsNode.appendChild(buildProductCard(product));
+      loadedProducts = readPreviewProducts();
+    } else {
+      var snapshot = await productsCollection().orderBy("position").get();
+      var products = [];
+      snapshot.forEach(function (doc) {
+        var data = doc.data() || {};
+        data.id = doc.id;
+        products.push(data);
       });
-      return;
+      loadedProducts = sortProducts(products);
     }
 
-    var snapshot = await productsCollection().orderBy("position").get();
-    if (snapshot.empty) {
-      productsNode.innerHTML = '<p class="admin-status">No products have been added yet.</p>';
-    }
-
-    snapshot.forEach(function (doc) {
-      var data = doc.data() || {};
-      data.id = doc.id;
-      productsNode.appendChild(buildProductCard(data));
-    });
+    syncSelectedProduct();
+    setProductCountSummary(loadedProducts.length);
+    renderProductsView();
   }
 
   function bindAddProduct() {
-    if (!addProductButton || !productsNode) {
+    if (!addProductButton) {
       return;
     }
 
     addProductButton.addEventListener("click", function () {
-      productsNode.appendChild(buildProductCard({ title: "", priceLabel: "", actionLabel: "Buy now", position: 1 }));
+      selectedProductId = NEW_PRODUCT_ID;
+      renderProductsView();
+      if (productFormNode) {
+        productFormNode.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
     });
   }
 
@@ -2152,7 +2732,7 @@ function buildAdminPackRuntime(schemaPath: string): string {
         writePreviewCommerceProvider(nextProvider);
         renderCommerceForm();
         renderMeta();
-        await loadProducts();
+        renderProductsView();
         setStatus("Saved preview store settings.", false);
         return;
       }
@@ -2169,7 +2749,7 @@ function buildAdminPackRuntime(schemaPath: string): string {
       currentCommerceProvider = nextProvider;
       renderCommerceForm();
       renderMeta();
-      await loadProducts();
+      renderProductsView();
       setStatus("Saved store settings.", false);
     });
   }
@@ -2182,7 +2762,7 @@ function buildAdminPackRuntime(schemaPath: string): string {
     if (selectedPageKey) {
       await loadPageForm(selectedPageKey);
     } else if (pageFormNode) {
-      pageFormNode.innerHTML = '<p class="admin-status">No editable fields were discovered in the generated pages.</p>';
+      pageFormNode.innerHTML = emptyStateMarkup("No editable fields were discovered in the generated pages.");
     }
     await loadProducts();
     setStatus(previewSession ? "Preview owner portal ready." : "Owner portal ready.", false);
@@ -2196,6 +2776,7 @@ function buildAdminPackRuntime(schemaPath: string): string {
         : configuredCommerceProvider();
       renderAuthPanel();
       renderCommerceForm();
+      renderMeta();
       bindAddProduct();
       bindCommerceForm();
 
@@ -2220,6 +2801,7 @@ function buildAdminPackRuntime(schemaPath: string): string {
       await finishEmailLinkSignIn();
       auth.onAuthStateChanged(async function (user) {
         currentUser = user || null;
+        renderMeta();
         if (!user) {
           setStatus("Send a sign-in link to the owner email to begin editing.", false);
           return;
@@ -2283,8 +2865,16 @@ function buildManagedSupportFiles(
   if (includeCmsPack(context.siteCapabilityProfile)) {
     supportFiles.push(
       {
+        path: ADMIN_VENDOR_STYLE_PATH,
+        content: buildAdminVendorStyle(),
+      },
+      {
+        path: ADMIN_VENDOR_SCRIPT_PATH,
+        content: buildAdminVendorScript(),
+      },
+      {
         path: ADMIN_PACK_RUNTIME_PATH,
-        content: `${buildAdminPackRuntime(relativeHrefBetweenFiles(ADMIN_PAGE_PATH, CMS_SCHEMA_PATH))}\n`,
+        content: `${buildAdminPackRuntime()}\n`,
       },
       {
         path: ADMIN_PACK_STYLE_PATH,
@@ -2292,7 +2882,23 @@ function buildManagedSupportFiles(
       },
       {
         path: ADMIN_PAGE_PATH,
-        content: buildAdminPage(),
+        content: buildAdminPage(ADMIN_PAGE_PATH, "overview"),
+      },
+      {
+        path: ADMIN_ACCESS_PAGE_PATH,
+        content: buildAdminPage(ADMIN_ACCESS_PAGE_PATH, "access"),
+      },
+      {
+        path: ADMIN_CONTENT_PAGE_PATH,
+        content: buildAdminPage(ADMIN_CONTENT_PAGE_PATH, "content"),
+      },
+      {
+        path: ADMIN_STORE_PAGE_PATH,
+        content: buildAdminPage(ADMIN_STORE_PAGE_PATH, "store"),
+      },
+      {
+        path: ADMIN_PRODUCTS_PAGE_PATH,
+        content: buildAdminPage(ADMIN_PRODUCTS_PAGE_PATH, "products"),
       }
     );
   }
