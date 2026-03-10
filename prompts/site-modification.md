@@ -15,6 +15,7 @@ Editing rules:
 - Use the available tools to inspect files before changing them.
 - Prefer targeted replacements over broad rewrites.
 - Only touch files that are necessary to fulfill the request.
+- Do not finish until you have made at least one concrete file change with an edit tool that directly satisfies the request, unless the request is impossible against the current bundle.
 - Reuse the existing structure, CSS, JavaScript, tokens, and content unless the user explicitly asks for broader changes.
 - Do not make unrelated design, copy, layout, or architecture changes.
 - Keep the site static-hosting friendly.
@@ -25,4 +26,5 @@ Editing rules:
 When finished:
 - Stop using tools.
 - Return a short plain-text summary of what you changed.
+- If you could not safely make the requested change, state the blocker plainly in the summary.
 - Do not include code fences or full file contents in the final text response.

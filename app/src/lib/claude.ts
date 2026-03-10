@@ -1602,6 +1602,7 @@ export async function generateSite(
     "- If multi-page, return a static site bundle with one file per page and keep all internal navigation relative to the site bundle.",
     "- The output must be a static site bundle with no build step and no framework runtime requirement.",
     "- Never leave bundler placeholders such as assets/main.js, assets/index.js, assets/index.css, /src/main.jsx, or rel=\"modulepreload\" unless you also return those exact files.",
+    "- Every local asset reference you emit in HTML or CSS must resolve inside the returned bundle. If you reference assets/site.css or assets/site.js, you must return those exact files too.",
     "- Never emit broken root-relative internal links such as /about-us/ or /specials/.",
     "- Contact, quote, and booking-request forms must use standard HTML form markup and remain compatible with static hosting. Prefer leaving action blank and adding data-curb-contact-form=\"true\" when you include a lead form.",
     "- Remove obsolete admin, CMS, webmaster login, and old vendor-credit links unless the user explicitly needs them."
@@ -1614,6 +1615,7 @@ export async function generateSite(
     "<!DOCTYPE html>...",
     "<<<END FILE>>>",
     "- Add more files the same way, for example <<<FILE:about-us/index.html>>> or <<<FILE:assets/site.css>>>.",
+    "- Do not reference a local CSS, JS, image, font, or other asset unless you also include that file in the response.",
     "- If the best solution is a single page, return only one file: index.html.",
     "- Do not wrap the response in markdown fences."
   );
@@ -1682,6 +1684,7 @@ export async function modifySiteWithTools(
       "Use the available tools to inspect the current site, then make the smallest precise file edits needed to satisfy the user request.",
       "Do not regenerate or rewrite the whole site unless the user explicitly asks for a wholesale redesign.",
       "Prefer targeted replacements over broad rewrites. Preserve untouched files exactly.",
+      "Do not stop until you have made at least one concrete file edit that satisfies the request, unless the request is impossible against the current bundle.",
       "When you are done, reply with a short plain-text summary of the edits you made.",
     ].join("\n\n");
 
@@ -1699,6 +1702,7 @@ export async function modifySiteWithTools(
       "- Prefer `replace_in_file` for localized edits.",
       "- Use `write_site_file` when creating a new file or when a file needs substantial restructuring.",
       "- Only touch files that are necessary to fulfill the request.",
+      "- Finish only after you have made at least one concrete file change with `replace_in_file`, `write_site_file`, or `delete_site_file` that directly satisfies the request, unless the request is impossible against this bundle.",
       "- Reuse the existing CSS, JS, tokens, structure, and copy unless the user explicitly asks for broader changes.",
       "- Do not make unrelated design, layout, copy, or architecture changes.",
       "- Keep the site static-hosting friendly and preserve working internal links and local asset references.",

@@ -1756,6 +1756,54 @@ function writeGeneratedSiteFiles(
   }
 }
 
+function buildAvailableStaticAssetPaths(
+  siteDir: string,
+  files: GeneratedSiteFile[]
+): string[] {
+  return Array.from(
+    new Set(
+      [
+        ...walkDirectoryFiles(siteDir).map((fullPath) =>
+          path.relative(siteDir, fullPath).split(path.sep).join("/")
+        ),
+        ...files.map((file) => file.path),
+      ].filter((relativePath) => relativePath !== SOURCE_SNAPSHOT_FILE)
+    )
+  );
+}
+
+function formatBrokenBundleReferences(
+  issues: MissingBundleReference[]
+): string {
+  return issues
+    .slice(0, 6)
+    .map(
+      (issue) =>
+        `${issue.fromFilePath} -> ${issue.rawReference} (${issue.resolvedTarget})`
+    )
+    .join("; ");
+}
+
+function assertWrittenBundleHasNoMissingLocalFiles(
+  siteDir: string,
+  requestedRouteAliases: string[]
+): void {
+  const writtenFiles = readGeneratedSiteFilesFromDirectory(siteDir);
+  const writtenBundleValidation = analyzeGeneratedBundle(
+    writtenFiles,
+    requestedRouteAliases,
+    buildAvailableStaticAssetPaths(siteDir, writtenFiles)
+  );
+
+  if (writtenBundleValidation.missingNonPageBundleReferences.length > 0) {
+    throw new Error(
+      `Written site bundle still contains broken local bundle references: ${formatBrokenBundleReferences(
+        writtenBundleValidation.missingNonPageBundleReferences
+      )}`
+    );
+  }
+}
+
 function walkDirectoryFiles(rootDir: string): string[] {
   if (!fs.existsSync(rootDir)) {
     return [];
@@ -2512,12 +2560,42 @@ export async function generateSiteForBusiness(
         message: `Applying targeted site edits with ${providerLabel} for ${name}`,
       });
 
-      await modifySiteWithTools(businessData, {
-        siteDir: outputSiteDir,
-        modificationPrompt: promptText,
-        sourceSiteSnapshot,
-        sourceBrandAssets,
-      });
+      const modelChangedPaths = new Set<string>();
+      let latestModificationSummary = "";
+      const applyModificationPass = async (
+        additionalInstructions?: string[]
+      ) => {
+        const result = await modifySiteWithTools(businessData, {
+          siteDir: outputSiteDir,
+          modificationPrompt: promptText,
+          additionalInstructions,
+          sourceSiteSnapshot,
+          sourceBrandAssets,
+        });
+
+        latestModificationSummary = result.summary;
+        for (const changedPath of result.changedPaths) {
+          modelChangedPaths.add(changedPath);
+        }
+
+        return result;
+      };
+
+      let modificationResult = await applyModificationPass();
+      if (modificationResult.changedPaths.length === 0) {
+        logActivity({
+          kind: "generation",
+          stage: "model",
+          businessId,
+          businessName: name,
+          message: `Initial targeted site edit pass for ${name} returned no file edits; retrying with stricter edit instructions`,
+        });
+
+        modificationResult = await applyModificationPass([
+          "You must make at least one concrete file edit with replace_in_file, write_site_file, or delete_site_file before finishing.",
+          "Do not stop after inspection only. If the requested change truly cannot be made safely in this bundle, explain the blocker plainly in your final summary.",
+        ]);
+      }
 
       let managedBundle = prepareManagedSiteBundle(
         readGeneratedSiteFilesFromDirectory(outputSiteDir),
@@ -2535,20 +2613,10 @@ export async function generateSiteForBusiness(
           siteCapabilityProfile
         )
       );
-      const availableStaticAssetPaths = Array.from(
-        new Set(
-          [
-            ...walkDirectoryFiles(outputSiteDir).map((fullPath) =>
-              path.relative(outputSiteDir, fullPath).split(path.sep).join("/")
-            ),
-            ...normalizedFiles.map((file) => file.path),
-          ].filter((relativePath) => relativePath !== SOURCE_SNAPSHOT_FILE)
-        )
-      );
       let bundleValidation = analyzeGeneratedBundle(
         normalizedFiles,
         requestedRouteAliases,
-        availableStaticAssetPaths
+        buildAvailableStaticAssetPaths(outputSiteDir, normalizedFiles)
       );
       let generationWarnings: SiteGenerationWarning[] = [];
 
@@ -2596,13 +2664,7 @@ export async function generateSiteForBusiness(
           message: `Revising targeted site edits to resolve bundle issues for ${name}`,
         });
 
-        await modifySiteWithTools(businessData, {
-          siteDir: outputSiteDir,
-          modificationPrompt: promptText,
-          additionalInstructions: correctionPrompts,
-          sourceSiteSnapshot,
-          sourceBrandAssets,
-        });
+        modificationResult = await applyModificationPass(correctionPrompts);
 
         managedBundle = prepareManagedSiteBundle(
           readGeneratedSiteFilesFromDirectory(outputSiteDir),
@@ -2623,7 +2685,7 @@ export async function generateSiteForBusiness(
         bundleValidation = analyzeGeneratedBundle(
           normalizedFiles,
           requestedRouteAliases,
-          availableStaticAssetPaths
+          buildAvailableStaticAssetPaths(outputSiteDir, normalizedFiles)
         );
 
         if (
@@ -2655,13 +2717,9 @@ export async function generateSiteForBusiness(
 
         if (bundleValidation.missingNonPageBundleReferences.length > 0) {
           throw new Error(
-            `Updated site still contains broken local bundle references: ${bundleValidation.missingNonPageBundleReferences
-              .slice(0, 6)
-              .map(
-                (issue) =>
-                  `${issue.fromFilePath} -> ${issue.rawReference} (${issue.resolvedTarget})`
-              )
-              .join("; ")}`
+            `Updated site still contains broken local bundle references: ${formatBrokenBundleReferences(
+              bundleValidation.missingNonPageBundleReferences
+            )}`
           );
         }
 
@@ -2690,11 +2748,24 @@ export async function generateSiteForBusiness(
         message: `Writing ${normalizedFiles.length} site file${normalizedFiles.length === 1 ? "" : "s"} for ${name}`,
       });
       writeGeneratedSiteFiles(outputSiteDir, normalizedFiles);
+      assertWrittenBundleHasNoMissingLocalFiles(
+        outputSiteDir,
+        requestedRouteAliases
+      );
 
       const changedPaths = listDirectoryDifferences(siteDir, outputSiteDir);
       if (changedPaths.length === 0) {
+        const modelWriteSummary =
+          modelChangedPaths.size > 0
+            ? `Model reported file edits (${Array.from(modelChangedPaths)
+                .slice(0, 8)
+                .join(", ")}), but the final staged bundle still matched the original site.`
+            : "The model completed the modification pass without writing any site files.";
+        const modificationSummarySuffix = latestModificationSummary
+          ? ` Last model summary: ${latestModificationSummary}`
+          : "";
         throw new Error(
-          "Requested site modification produced no file changes."
+          `Requested site modification produced no file changes. ${modelWriteSummary}${modificationSummarySuffix}`
         );
       }
 
@@ -2950,20 +3021,10 @@ export async function generateSiteForBusiness(
         siteCapabilityProfile
       )
     );
-    const availableStaticAssetPaths = Array.from(
-      new Set(
-        [
-          ...walkDirectoryFiles(outputSiteDir).map((fullPath) =>
-            path.relative(outputSiteDir, fullPath).split(path.sep).join("/")
-          ),
-          ...normalizedFiles.map((file) => file.path),
-        ].filter((relativePath) => relativePath !== SOURCE_SNAPSHOT_FILE)
-      )
-    );
     let bundleValidation = analyzeGeneratedBundle(
       normalizedFiles,
       requestedRouteAliases,
-      availableStaticAssetPaths
+      buildAvailableStaticAssetPaths(outputSiteDir, normalizedFiles)
     );
     let generationWarnings: SiteGenerationWarning[] = [];
 
@@ -3051,7 +3112,7 @@ export async function generateSiteForBusiness(
       bundleValidation = analyzeGeneratedBundle(
         normalizedFiles,
         requestedRouteAliases,
-        availableStaticAssetPaths
+        buildAvailableStaticAssetPaths(outputSiteDir, normalizedFiles)
       );
 
       if (
@@ -3089,13 +3150,9 @@ export async function generateSiteForBusiness(
 
       if (bundleValidation.missingNonPageBundleReferences.length > 0) {
         throw new Error(
-          `Generated site still contains broken local bundle references: ${bundleValidation.missingNonPageBundleReferences
-            .slice(0, 6)
-            .map(
-              (issue) =>
-                `${issue.fromFilePath} -> ${issue.rawReference} (${issue.resolvedTarget})`
-            )
-            .join("; ")}`
+          `Generated site still contains broken local bundle references: ${formatBrokenBundleReferences(
+            bundleValidation.missingNonPageBundleReferences
+          )}`
         );
       }
 
@@ -3139,6 +3196,10 @@ export async function generateSiteForBusiness(
       message: `Writing ${normalizedFiles.length} generated file${normalizedFiles.length === 1 ? "" : "s"} for ${name}`,
     });
     writeGeneratedSiteFiles(outputSiteDir, normalizedFiles);
+    assertWrittenBundleHasNoMissingLocalFiles(
+      outputSiteDir,
+      requestedRouteAliases
+    );
     promoteWorkingSiteDirectory(siteDir, outputSiteDir);
     promotedWorkingSiteDir = true;
 
