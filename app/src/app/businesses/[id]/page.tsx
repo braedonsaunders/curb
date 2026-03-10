@@ -64,6 +64,12 @@ import {
   formatStoredTime,
 } from "@/lib/datetime";
 import { buildMailtoUrl } from "@/lib/mailto";
+import {
+  resolveStoreCommerceProvider,
+  type SiteCapabilityProfile,
+  type StoreCommerceProvider,
+} from "@/lib/site-capabilities";
+import type { DeploymentProvider } from "@/lib/config";
 
 const STATUS_OPTIONS = BUSINESS_STATUSES;
 
@@ -89,6 +95,7 @@ interface AuditData {
   replacementDifficulty: string | null;
   advanced_features_json: string | null;
   advancedFeatures: string[];
+  capabilityProfile: SiteCapabilityProfile | null;
   strengths: string[];
   issues: string[];
   created_at: string;
@@ -103,6 +110,20 @@ interface SiteData {
   created_at: string;
   prompt_used: string;
   site_path: string;
+  generationWarnings: SiteGenerationWarning[];
+}
+
+interface SiteGenerationWarningDetail {
+  fromFilePath: string;
+  rawReference: string;
+  resolvedTarget: string;
+}
+
+interface SiteGenerationWarning {
+  code: string;
+  title: string;
+  message: string;
+  details: SiteGenerationWarningDetail[];
 }
 
 interface DomainVerificationChallenge {
@@ -116,16 +137,18 @@ interface SiteDeploymentData {
   id: number;
   generatedSiteId: number;
   deploymentKind: "preview" | "customer";
-  vercelProjectId: string;
-  vercelProjectName: string | null;
-  vercelDeploymentId: string;
-  vercelDeploymentUrl: string;
+  deploymentProvider: DeploymentProvider;
+  projectId: string;
+  projectName: string | null;
+  deploymentId: string;
+  deploymentUrl: string;
   aliasUrl: string | null;
   aliasHost: string | null;
   target: string;
   readyState: string | null;
   active: boolean;
   errorMessage: string | null;
+  metadata: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -159,10 +182,17 @@ interface BusinessDetail {
   customerDomain: string | null;
   customerDomainVerified: boolean;
   customerDomainVerification: DomainVerificationChallenge[];
-  customerVercelProjectId: string | null;
-  customerVercelProjectName: string | null;
+  customerProjectId: string | null;
+  customerProjectMetadata: Record<string, unknown> | null;
+  customerProjectName: string | null;
+  customerProjectProvider: DeploymentProvider | null;
+  configuredCustomerDeploymentProvider: DeploymentProvider;
+  configuredPreviewDeploymentProvider: DeploymentProvider;
   publicPreviewUrl: string | null;
-  publicPreviewUrlSource: "vercel-alias" | "vercel-deployment" | "local";
+  publicPreviewAdminUrl: string | null;
+  publicPreviewUrlProvider: DeploymentProvider | null;
+  publicPreviewUrlSource: "alias" | "deployment" | "local";
+  capabilityProfile: SiteCapabilityProfile | null;
   hours_json: string | null;
   photos_json: string | null;
   audits: AuditData[];
@@ -197,6 +227,8 @@ const GENERATION_STAGE_LABELS: Record<string, string> = {
   crawl_complete: "Content Ready",
   screenshots: "Screenshots",
   model: "AI Generation",
+  validation: "Validation",
+  warning: "Warning",
   write: "Writing Files",
   completed: "Done",
   failed: "Failed",
@@ -204,6 +236,11 @@ const GENERATION_STAGE_LABELS: Record<string, string> = {
 
 const TERMINAL_GENERATION_STAGES = new Set(["completed", "failed"]);
 type SiteDialogMode = "generate" | "modify" | "regenerate";
+type SiteCapabilityOverrideState = {
+  includeCmsPack: boolean;
+  includeStorePack: boolean;
+  commerceProvider: StoreCommerceProvider;
+};
 
 function isTerminalGenerationStage(stage: string): boolean {
   return TERMINAL_GENERATION_STAGES.has(stage);
@@ -236,6 +273,48 @@ function getBusinessesReturnHref(returnTo: string | null) {
   }
 
   return "/businesses";
+}
+
+function buildSiteCapabilityOverrideState(
+  profile: SiteCapabilityProfile | null
+): SiteCapabilityOverrideState {
+  return {
+    includeCmsPack:
+      profile?.operatingModel === "static-plus-cms" ||
+      profile?.operatingModel === "static-plus-cms-and-store",
+    includeStorePack:
+      profile?.operatingModel === "static-plus-cms-and-store",
+    commerceProvider: resolveStoreCommerceProvider(profile?.commerce.provider),
+  };
+}
+
+function formatGenerationWarningDetail(
+  detail: SiteGenerationWarningDetail
+): string {
+  return `${detail.fromFilePath} -> ${detail.rawReference} (${detail.resolvedTarget})`;
+}
+
+function buildGenerationWarningFixPrompt(
+  warnings: SiteGenerationWarning[]
+): string {
+  const missingPageLinks = warnings
+    .filter((warning) => warning.code === "missing-page-links")
+    .flatMap((warning) => warning.details)
+    .slice(0, 8);
+
+  if (missingPageLinks.length === 0) {
+    return "Fix the generated site's broken internal links so every page navigation item resolves to an existing HTML page in the bundle.";
+  }
+
+  return [
+    "Fix the generated site's broken internal page links.",
+    "Every internal <a href> must resolve to a real HTML page in the bundle.",
+    ...missingPageLinks.map(
+      (issue) =>
+        `${issue.fromFilePath} links to "${issue.rawReference}" but no HTML page exists for ${issue.resolvedTarget}.`
+    ),
+    "Add the missing destination pages or change those links to pages that already exist.",
+  ].join("\n");
 }
 
 const MIN_SITE_PREVIEW_LOADER_MS = 900;
@@ -419,7 +498,26 @@ export default function BusinessDetailPage() {
   const [siteEditorOpen, setSiteEditorOpen] = useState(false);
   const [sitePreviewNonce, setSitePreviewNonce] = useState(0);
   const [customerDomainDraft, setCustomerDomainDraft] = useState("");
+  const [siteCapabilityOverride, setSiteCapabilityOverride] =
+    useState<SiteCapabilityOverrideState>({
+      includeCmsPack: false,
+      includeStorePack: false,
+      commerceProvider: "stripe-payment-links",
+    });
   const siteDialogOpen = siteDialogMode !== null;
+  const audit = biz?.audits?.[0] ?? null;
+  const capabilityProfile =
+    audit?.capabilityProfile ?? biz?.capabilityProfile ?? null;
+  const recommendedSiteCapabilityOverride =
+    buildSiteCapabilityOverrideState(capabilityProfile);
+
+  useEffect(() => {
+    if (!siteDialogOpen) {
+      return;
+    }
+
+    setSiteCapabilityOverride(buildSiteCapabilityOverrideState(capabilityProfile));
+  }, [siteDialogOpen, capabilityProfile]);
 
   const fetchBusiness = useCallback(async () => {
     setLoading(true);
@@ -678,6 +776,16 @@ export default function BusinessDetailPage() {
         requestedMode === "modify" || requestedMode === "generate"
           ? regeneratePrompt || undefined
           : undefined;
+      const shouldSendSiteCapabilityOverride = capabilityProfile
+        ? siteCapabilityOverride.includeCmsPack !==
+            recommendedSiteCapabilityOverride.includeCmsPack ||
+          siteCapabilityOverride.includeStorePack !==
+            recommendedSiteCapabilityOverride.includeStorePack ||
+          (siteCapabilityOverride.includeStorePack &&
+            siteCapabilityOverride.commerceProvider !==
+              recommendedSiteCapabilityOverride.commerceProvider)
+        : siteCapabilityOverride.includeCmsPack ||
+          siteCapabilityOverride.includeStorePack;
 
       const res = await fetch(`/api/businesses/${id}/generate`, {
         method: "POST",
@@ -685,10 +793,14 @@ export default function BusinessDetailPage() {
         body: JSON.stringify({
           mode: requestedMode,
           prompt: promptForRequest,
+          siteCapabilityOverride: shouldSendSiteCapabilityOverride
+            ? siteCapabilityOverride
+            : undefined,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
+        warnings?: SiteGenerationWarning[];
         previewDeploymentError?: string | null;
         previewDeployment?: {
           aliasUrl?: string | null;
@@ -706,6 +818,11 @@ export default function BusinessDetailPage() {
             ? "Site regenerated"
             : "Site generated"
       );
+      if ((data.warnings?.length ?? 0) > 0) {
+        toast.warning(
+          "Site generated with warnings. Review the Site tab warning card to repair unresolved internal links."
+        );
+      }
       if (data.previewDeploymentError) {
         toast.error(`Public preview deploy failed: ${data.previewDeploymentError}`);
       } else if (data.previewDeployment) {
@@ -719,6 +836,7 @@ export default function BusinessDetailPage() {
       }
       setSiteDialogMode(null);
       setRegeneratePrompt("");
+      setSiteCapabilityOverride(recommendedSiteCapabilityOverride);
       setGenerationActivity([]);
       setGenerationActive(false);
       setGenerationBaselineId(null);
@@ -736,8 +854,8 @@ export default function BusinessDetailPage() {
   }
 
   // Derived data from arrays
-  const audit = biz?.audits?.[0] ?? null;
   const site = biz?.generatedSites?.[0] ?? null;
+  const siteGenerationWarnings = site?.generationWarnings ?? [];
   const sitePreviewUrl = site
     ? `/sites/${site.slug}?v=${encodeURIComponent(
         `${site.version}-${site.generatedAt ?? site.created_at ?? ""}-${sitePreviewNonce}`
@@ -754,6 +872,7 @@ export default function BusinessDetailPage() {
         deployment.deploymentKind === "customer" && deployment.active
     ) ?? null;
   const publicPreviewUrl = biz?.publicPreviewUrl ?? null;
+  const publicPreviewAdminUrl = biz?.publicPreviewAdminUrl ?? null;
   const hours: Record<string, string> = (() => {
     try {
       return biz?.hours_json ? JSON.parse(biz.hours_json) : {};
@@ -777,7 +896,11 @@ export default function BusinessDetailPage() {
             reference.startsWith("http://") ||
             reference.startsWith("https://")
               ? reference
-              : `/api/place-photo?reference=${encodeURIComponent(reference)}&maxWidth=800`,
+              : `/api/place-photo?reference=${encodeURIComponent(reference)}${
+                  biz?.place_id
+                    ? `&placeId=${encodeURIComponent(biz.place_id)}`
+                    : ""
+                }&maxWidth=800`,
         }));
     } catch {
       return [];
@@ -1092,6 +1215,96 @@ export default function BusinessDetailPage() {
     if (difficulty === "medium") return "Moderate effort";
     if (difficulty === "easy") return "Easy to replace";
     return "Unknown effort";
+  }
+
+  function capabilityModelBadge(
+    operatingModel: SiteCapabilityProfile["operatingModel"]
+  ) {
+    if (operatingModel === "static-plus-cms-and-store") {
+      return "bg-blue-100 text-blue-700";
+    }
+    if (operatingModel === "static-plus-cms") {
+      return "bg-emerald-100 text-emerald-700";
+    }
+    if (operatingModel === "custom-app") {
+      return "bg-red-100 text-red-700";
+    }
+    return "bg-slate-100 text-slate-600";
+  }
+
+  function capabilityModelLabel(
+    operatingModel: SiteCapabilityProfile["operatingModel"]
+  ) {
+    if (operatingModel === "static-plus-cms-and-store") {
+      return "Static + CMS + Store";
+    }
+    if (operatingModel === "static-plus-cms") {
+      return "Static + CMS";
+    }
+    if (operatingModel === "custom-app") {
+      return "Custom App";
+    }
+    return "Static Only";
+  }
+
+  function capabilityNeedBadge(
+    need: SiteCapabilityProfile["cms"]["need"]
+  ) {
+    if (need === "required") {
+      return "bg-red-100 text-red-700";
+    }
+    if (need === "recommended") {
+      return "bg-blue-100 text-blue-700";
+    }
+    if (need === "optional") {
+      return "bg-amber-100 text-amber-700";
+    }
+    return "bg-slate-100 text-slate-600";
+  }
+
+  function providerLabel(
+    provider:
+      | SiteCapabilityProfile["cms"]["provider"]
+      | SiteCapabilityProfile["commerce"]["provider"]
+  ) {
+    if (provider === "firebase-auth-firestore") {
+      return "Firebase content pack";
+    }
+    if (provider === "stripe-payment-links") {
+      return "Stripe Payment Links";
+    }
+    if (provider === "shopify") {
+      return "Shopify checkout links";
+    }
+    if (provider === "snipcart") {
+      return "Snipcart";
+    }
+    return "None";
+  }
+
+  function deploymentProviderLabel(provider: DeploymentProvider | null) {
+    if (provider === null) {
+      return "Unknown provider";
+    }
+    if (provider === "cloudflare-pages") {
+      return "Cloudflare Pages";
+    }
+    if (provider === "ssh-static") {
+      return "Shared Server";
+    }
+    return "Vercel";
+  }
+
+  function strategyLabel(
+    strategy: SiteCapabilityProfile["commerce"]["productStrategy"]
+  ) {
+    if (strategy === "payment-links") {
+      return "Direct checkout links";
+    }
+    if (strategy === "snipcart-cart") {
+      return "Snipcart cart";
+    }
+    return "None";
   }
 
   const generationProgressPanel =
@@ -1543,6 +1756,86 @@ export default function BusinessDetailPage() {
                   </CardContent>
                 </Card>
 
+                {capabilityProfile ? (
+                  <Card className="lg:col-span-4">
+                    <CardHeader>
+                      <CardTitle>Capability Pack Recommendation</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex flex-wrap gap-2">
+                        <Badge
+                          className={capabilityModelBadge(
+                            capabilityProfile.operatingModel
+                          )}
+                        >
+                          {capabilityModelLabel(
+                            capabilityProfile.operatingModel
+                          )}
+                        </Badge>
+                        <Badge variant="secondary">
+                          Confidence {capabilityProfile.confidence}
+                        </Badge>
+                        <Badge
+                          className={capabilityNeedBadge(
+                            capabilityProfile.cms.need
+                          )}
+                        >
+                          CMS {capabilityProfile.cms.need}
+                        </Badge>
+                        <Badge
+                          className={capabilityNeedBadge(
+                            capabilityProfile.commerce.need
+                          )}
+                        >
+                          Store {capabilityProfile.commerce.need}
+                        </Badge>
+                      </div>
+
+                      <p className="text-sm leading-6 text-muted-foreground">
+                        {capabilityProfile.packageSummary}
+                      </p>
+
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+                          <p className="text-sm font-medium">Owner CMS</p>
+                          <p className="text-sm text-muted-foreground">
+                            Provider: {providerLabel(capabilityProfile.cms.provider)}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            Editable areas:{" "}
+                            {capabilityProfile.cms.editableAreas.length > 0
+                              ? capabilityProfile.cms.editableAreas.join(", ")
+                              : "None recommended"}
+                          </p>
+                        </div>
+
+                        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+                          <p className="text-sm font-medium">Store</p>
+                          <p className="text-sm text-muted-foreground">
+                            Provider: {providerLabel(
+                              capabilityProfile.commerce.provider
+                            )}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            Strategy:{" "}
+                            {strategyLabel(
+                              capabilityProfile.commerce.productStrategy
+                            )}
+                          </p>
+                        </div>
+                      </div>
+
+                      {capabilityProfile.reasons.length > 0 ? (
+                        <ul className="space-y-2 text-sm text-muted-foreground">
+                          {capabilityProfile.reasons.map((reason, index) => (
+                            <li key={`${reason}-${index}`}>{reason}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </CardContent>
+                  </Card>
+                ) : null}
+
                 <Card className="lg:col-span-3">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
@@ -1632,6 +1925,11 @@ export default function BusinessDetailPage() {
               <>
                 <div className="flex flex-wrap items-center gap-4">
                   <Badge variant="secondary">Version {site.version}</Badge>
+                  {siteGenerationWarnings.length > 0 ? (
+                    <Badge className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-50">
+                      Warning
+                    </Badge>
+                  ) : null}
                   <span className="text-sm text-muted-foreground">
                     Generated {formatStoredDateTime(site.generatedAt)}
                   </span>
@@ -1645,6 +1943,18 @@ export default function BusinessDetailPage() {
                         <Button variant="outline" size="sm">
                           <ExternalLink className="size-4" />
                           Open Public Preview
+                        </Button>
+                      </a>
+                    ) : null}
+                    {publicPreviewAdminUrl ? (
+                      <a
+                        href={publicPreviewAdminUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <Button variant="outline" size="sm">
+                          <ExternalLink className="size-4" />
+                          Open Admin Preview
                         </Button>
                       </a>
                     ) : null}
@@ -1713,6 +2023,74 @@ export default function BusinessDetailPage() {
                   </div>
                 </div>
 
+                {siteGenerationWarnings.length > 0 ? (
+                  <Card className="border-amber-300 bg-amber-50/60">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2 text-base text-amber-950">
+                        <CircleAlert className="size-4" />
+                        Generation warnings
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4 text-sm text-amber-900">
+                      {siteGenerationWarnings.map((warning) => (
+                        <div
+                          key={`${warning.code}-${warning.title}`}
+                          className="space-y-2"
+                        >
+                          <div className="space-y-1">
+                            <p className="font-medium">{warning.title}</p>
+                            <p>{warning.message}</p>
+                          </div>
+                          {warning.details.length > 0 ? (
+                            <div className="rounded-lg border border-amber-200 bg-white/70 p-3 text-xs text-amber-950">
+                              {warning.details.slice(0, 6).map((detail) => (
+                                <p
+                                  key={`${detail.fromFilePath}-${detail.rawReference}-${detail.resolvedTarget}`}
+                                  className="break-words"
+                                >
+                                  {formatGenerationWarningDetail(detail)}
+                                </p>
+                              ))}
+                              {warning.details.length > 6 ? (
+                                <p className="mt-2 text-amber-700">
+                                  +{warning.details.length - 6} more unresolved
+                                  links
+                                </p>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                      ))}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setRegeneratePrompt(
+                              buildGenerationWarningFixPrompt(
+                                siteGenerationWarnings
+                              )
+                            );
+                            setSiteDialogMode("modify");
+                          }}
+                          disabled={generationRunning}
+                        >
+                          <RefreshCw className="size-4" />
+                          Modify To Fix
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setSiteEditorOpen(true)}
+                          disabled={generationRunning}
+                        >
+                          <FileCode2 className="size-4" />
+                          Edit Files
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : null}
+
                 <div className="grid gap-4 lg:grid-cols-2">
                   <Card>
                     <CardHeader>
@@ -1725,20 +2103,45 @@ export default function BusinessDetailPage() {
                           {publicPreviewUrl ?? "Not deployed yet"}
                         </p>
                       </div>
+                      {publicPreviewAdminUrl ? (
+                        <div className="space-y-1">
+                          <p className="font-medium">Internal admin preview</p>
+                          <p className="break-all text-muted-foreground">
+                            {publicPreviewAdminUrl}
+                          </p>
+                        </div>
+                      ) : null}
                       <p className="text-xs text-muted-foreground">
                         Source:{" "}
-                        {biz.publicPreviewUrlSource === "vercel-alias"
-                          ? "Vercel alias"
-                          : biz.publicPreviewUrlSource === "vercel-deployment"
-                            ? "Direct Vercel deployment URL"
+                        {biz.publicPreviewUrlSource === "alias"
+                          ? `${deploymentProviderLabel(
+                              biz.publicPreviewUrlProvider
+                            )} alias`
+                          : biz.publicPreviewUrlSource === "deployment"
+                            ? `${deploymentProviderLabel(
+                                biz.publicPreviewUrlProvider
+                              )} deployment URL`
                             : "Local preview fallback"}
                       </p>
+                      {publicPreviewAdminUrl ? (
+                        <p className="text-xs text-muted-foreground">
+                          This admin URL unlocks Curb&apos;s preview session and
+                          stores edits locally for demos. It is separate from
+                          the customer-facing preview link.
+                        </p>
+                      ) : null}
                       {previewDeployment ? (
                         <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
                           <p className="font-medium">Latest deployment</p>
                           <p className="break-all text-xs text-muted-foreground">
                             {previewDeployment.aliasUrl ||
-                              previewDeployment.vercelDeploymentUrl}
+                              previewDeployment.deploymentUrl}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Provider:{" "}
+                            {deploymentProviderLabel(
+                              previewDeployment.deploymentProvider
+                            )}
                           </p>
                           <p className="text-xs text-muted-foreground">
                             State: {previewDeployment.readyState ?? "Unknown"}
@@ -1746,8 +2149,13 @@ export default function BusinessDetailPage() {
                         </div>
                       ) : (
                         <p className="text-xs text-muted-foreground">
-                          Deploy this site to the shared Vercel preview project
-                          to replace the local-only preview link in outreach.
+                          Deploy this site to the configured preview provider to
+                          replace the local-only preview link in outreach. The
+                          current preview target is{" "}
+                          {deploymentProviderLabel(
+                            biz.configuredPreviewDeploymentProvider
+                          )}
+                          .
                         </p>
                       )}
                     </CardContent>
@@ -1799,15 +2207,18 @@ export default function BusinessDetailPage() {
                           ) : (
                             <Globe className="size-4" />
                           )}
-                          {biz.customerVercelProjectId
+                          {biz.customerProjectId
                             ? "Redeploy Customer Site"
-                            : "Create Customer Project"}
+                            : biz.configuredCustomerDeploymentProvider ===
+                                  "ssh-static"
+                              ? "Deploy Customer Site"
+                              : "Create Customer Project"}
                         </Button>
                         {customerDeployment ? (
                           <a
                             href={
                               customerDeployment.aliasUrl ||
-                              customerDeployment.vercelDeploymentUrl
+                              customerDeployment.deploymentUrl
                             }
                             target="_blank"
                             rel="noopener noreferrer"
@@ -1820,19 +2231,30 @@ export default function BusinessDetailPage() {
                         ) : null}
                       </div>
 
-                      {biz.customerVercelProjectId ? (
+                      {biz.customerProjectId ? (
                         <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
                           <p className="font-medium">
-                            {biz.customerVercelProjectName || "Dedicated project"}
+                            {biz.customerProjectName || "Dedicated project"}
                           </p>
                           <p className="break-all text-xs text-muted-foreground">
-                            Project ID: {biz.customerVercelProjectId}
+                            Provider:{" "}
+                            {deploymentProviderLabel(
+                              biz.customerProjectProvider
+                            )}
+                          </p>
+                          <p className="break-all text-xs text-muted-foreground">
+                            Project ID: {biz.customerProjectId}
                           </p>
                         </div>
                       ) : (
                         <p className="text-xs text-muted-foreground">
                           Use this after a deal is closed and you want a
-                          separate Vercel project for the live customer site.
+                          dedicated live deployment for the customer site. The
+                          current customer target is{" "}
+                          {deploymentProviderLabel(
+                            biz.configuredCustomerDeploymentProvider
+                          )}
+                          .
                         </p>
                       )}
 
@@ -1922,31 +2344,154 @@ export default function BusinessDetailPage() {
                   setGenerationActive(false);
                   setGenerationBaselineId(null);
                   setGenerationError(null);
+                  setSiteCapabilityOverride(
+                    recommendedSiteCapabilityOverride
+                  );
                 }
               }}
             >
-              <DialogContent className="sm:max-w-lg">
+              <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-5xl">
                 <DialogHeader>
                   <DialogTitle>{siteDialogTitle}</DialogTitle>
                 </DialogHeader>
-                <div className="min-w-0 space-y-3">
-                  {siteDialogShowsPrompt ? (
-                    <>
-                      <Label>{siteDialogPromptLabel} (optional)</Label>
-                      <Textarea
-                        value={regeneratePrompt}
-                        onChange={(e) => setRegeneratePrompt(e.target.value)}
-                        placeholder={siteDialogPromptPlaceholder}
-                        rows={4}
-                      />
-                    </>
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      Rebuild this site from the source website, screenshots, and
-                      business data without applying prompt-based edits to the
-                      current draft.
-                    </p>
-                  )}
+                <div className="min-w-0 space-y-4">
+                  <div className="grid items-start gap-4 md:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.95fr)]">
+                    <div className="space-y-3">
+                      {siteDialogShowsPrompt ? (
+                        <>
+                          <Label>{siteDialogPromptLabel} (optional)</Label>
+                          <Textarea
+                            value={regeneratePrompt}
+                            onChange={(e) => setRegeneratePrompt(e.target.value)}
+                            placeholder={siteDialogPromptPlaceholder}
+                            rows={6}
+                          />
+                        </>
+                      ) : (
+                        <div className="rounded-lg border bg-muted/10 p-4">
+                          <p className="text-sm text-muted-foreground">
+                            Rebuild this site from the source website,
+                            screenshots, and business data without applying
+                            prompt-based edits to the current draft.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium">
+                          Packaging Overrides
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          These checkboxes override the model for this
+                          generation run only. Store implies CMS.
+                        </p>
+                      </div>
+                      <div className="mt-3 space-y-3">
+                        <label className="flex items-start gap-3 text-sm">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 size-4 rounded border border-input"
+                            checked={siteCapabilityOverride.includeCmsPack}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setSiteCapabilityOverride((current) => ({
+                                ...current,
+                                includeCmsPack: checked,
+                                includeStorePack:
+                                  checked && current.includeStorePack,
+                              }));
+                            }}
+                          />
+                          <span>
+                            <span className="font-medium">
+                              Include owner CMS
+                            </span>
+                            <span className="block text-xs text-muted-foreground">
+                              Adds the built-in `/admin/` portal and editable
+                              content pack.
+                            </span>
+                          </span>
+                        </label>
+                        <label className="flex items-start gap-3 text-sm">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 size-4 rounded border border-input"
+                            checked={siteCapabilityOverride.includeStorePack}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setSiteCapabilityOverride((current) => ({
+                                ...current,
+                                includeCmsPack:
+                                  checked || current.includeCmsPack,
+                                includeStorePack: checked,
+                              }));
+                            }}
+                          />
+                          <span>
+                            <span className="font-medium">
+                              Include lightweight store
+                            </span>
+                            <span className="block text-xs text-muted-foreground">
+                              Adds the product editor and a direct-checkout
+                              storefront for Stripe or Shopify.
+                            </span>
+                          </span>
+                        </label>
+                        {siteCapabilityOverride.includeStorePack ? (
+                          <div className="space-y-2 rounded-md border bg-muted/20 p-3">
+                            <Label htmlFor="store-provider-select">
+                              Store provider
+                            </Label>
+                            <Select
+                              value={siteCapabilityOverride.commerceProvider}
+                              onValueChange={(value) => {
+                                setSiteCapabilityOverride((current) => ({
+                                  ...current,
+                                  commerceProvider:
+                                    value as StoreCommerceProvider,
+                                }));
+                              }}
+                            >
+                              <SelectTrigger id="store-provider-select">
+                                <SelectValue placeholder="Choose store provider" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="stripe-payment-links">
+                                  Stripe Payment Links
+                                </SelectItem>
+                                <SelectItem value="shopify">
+                                  Shopify checkout links
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">
+                              The owner portal stores one checkout URL per
+                              product, so the public site stays static.
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
+                      {capabilityProfile ? (
+                        <p className="mt-3 text-xs text-muted-foreground">
+                          Model recommendation: CMS{" "}
+                          {recommendedSiteCapabilityOverride.includeCmsPack
+                            ? "on"
+                            : "off"}
+                          , store{" "}
+                          {recommendedSiteCapabilityOverride.includeStorePack
+                            ? "on"
+                            : "off"}
+                          {recommendedSiteCapabilityOverride.includeStorePack
+                            ? ` via ${providerLabel(
+                                recommendedSiteCapabilityOverride.commerceProvider
+                              )}`
+                            : ""}
+                          .
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
                   {generationProgressPanel}
                 </div>
                 <DialogFooter>

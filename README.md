@@ -16,6 +16,12 @@ Most web design outreach sells possibility.
 
 Curb sells proof.
 
+## Product Tour
+
+<p align="center">
+  <img src="./docs/readme-slideshow.gif" alt="Curb dashboard, discovery workflow, businesses pipeline board, and generated site preview." width="100%" />
+</p>
+
 ## The Pitch
 
 Instead of sending:

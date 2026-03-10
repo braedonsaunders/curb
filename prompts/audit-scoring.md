@@ -18,6 +18,7 @@ Assess:
 - how complex the current site appears to be to replace
 - how hard the replacement would be if it includes advanced functionality
 - which advanced features appear to be present (for example: online store, booking, portal, calculator, custom forms)
+- whether the business should stay fully static, get a lightweight owner CMS, get a lightweight store pack, or be treated as a custom-app case beyond the lightweight pack
 - the biggest visible strengths
 - the biggest visible weaknesses
 
@@ -30,9 +31,30 @@ Respond in JSON format:
   "issues": ["..."],
   "websiteComplexity": "advanced",
   "replacementDifficulty": "hard",
-  "advancedFeatures": ["online store"]
+  "advancedFeatures": ["online store"],
+  "capabilityProfile": {
+    "operatingModel": "static-plus-cms-and-store",
+    "confidence": "high",
+    "cms": {
+      "need": "required",
+      "provider": "firebase-auth-firestore",
+      "editableAreas": ["homepage", "products", "contact"]
+    },
+    "commerce": {
+      "need": "required",
+      "provider": "stripe-payment-links",
+      "productStrategy": "payment-links"
+    },
+    "reasons": ["..."]
+  }
 }
 
 Use only `proud`, `mixed`, or `embarrassed` for `ownerSentiment`.
 Use only `simple`, `moderate`, or `advanced` for `websiteComplexity`.
 Use only `easy`, `medium`, or `hard` for `replacementDifficulty`.
+Use only `static-only`, `static-plus-cms`, `static-plus-cms-and-store`, or `custom-app` for `capabilityProfile.operatingModel`.
+Use only `low`, `medium`, or `high` for `capabilityProfile.confidence`.
+Use only `none`, `optional`, `recommended`, or `required` for `capabilityProfile.cms.need` and `capabilityProfile.commerce.need`.
+Use only `none` or `firebase-auth-firestore` for `capabilityProfile.cms.provider`.
+Use only `none`, `stripe-payment-links`, or `shopify` for `capabilityProfile.commerce.provider`.
+Use only `none` or `payment-links` for `capabilityProfile.commerce.productStrategy`.

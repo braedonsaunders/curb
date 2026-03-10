@@ -54,6 +54,8 @@ export function initializeDatabase(): void {
       customer_domain TEXT,
       customer_domain_verified BOOLEAN DEFAULT 0,
       customer_domain_verification_json TEXT,
+      customer_project_provider TEXT,
+      customer_project_metadata_json TEXT,
       vercel_customer_project_id TEXT,
       vercel_customer_project_name TEXT,
       notes TEXT,
@@ -75,6 +77,7 @@ export function initializeDatabase(): void {
       website_complexity TEXT,
       replacement_difficulty TEXT,
       advanced_features_json TEXT,
+      capability_profile_json TEXT,
       review_json TEXT,
       audit_version INTEGER,
       created_at TEXT DEFAULT (datetime('now'))
@@ -89,6 +92,7 @@ export function initializeDatabase(): void {
       prompt_used TEXT,
       model_used TEXT,
       generation_time_ms INTEGER,
+      warnings_json TEXT,
       exported BOOLEAN DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     );
@@ -98,6 +102,7 @@ export function initializeDatabase(): void {
       business_id INTEGER NOT NULL REFERENCES businesses(id),
       generated_site_id INTEGER NOT NULL REFERENCES generated_sites(id),
       deployment_kind TEXT NOT NULL,
+      deployment_provider TEXT DEFAULT 'vercel',
       vercel_project_id TEXT NOT NULL,
       vercel_project_name TEXT,
       vercel_deployment_id TEXT NOT NULL,
@@ -106,6 +111,7 @@ export function initializeDatabase(): void {
       alias_host TEXT,
       target TEXT NOT NULL,
       ready_state TEXT,
+      metadata_json TEXT,
       active BOOLEAN DEFAULT 0,
       error_message TEXT,
       created_at TEXT DEFAULT (datetime('now')),
@@ -170,6 +176,11 @@ export function initializeDatabase(): void {
     "advanced_features_json",
     "advanced_features_json TEXT"
   );
+  ensureColumn(
+    "audits",
+    "capability_profile_json",
+    "capability_profile_json TEXT"
+  );
   ensureColumn("audits", "review_json", "review_json TEXT");
   ensureColumn("audits", "audit_version", "audit_version INTEGER");
   ensureColumn(
@@ -215,6 +226,16 @@ export function initializeDatabase(): void {
   );
   ensureColumn(
     "businesses",
+    "customer_project_provider",
+    "customer_project_provider TEXT"
+  );
+  ensureColumn(
+    "businesses",
+    "customer_project_metadata_json",
+    "customer_project_metadata_json TEXT"
+  );
+  ensureColumn(
+    "businesses",
     "vercel_customer_project_id",
     "vercel_customer_project_id TEXT"
   );
@@ -223,6 +244,17 @@ export function initializeDatabase(): void {
     "vercel_customer_project_name",
     "vercel_customer_project_name TEXT"
   );
+  ensureColumn(
+    "site_deployments",
+    "deployment_provider",
+    "deployment_provider TEXT DEFAULT 'vercel'"
+  );
+  ensureColumn(
+    "site_deployments",
+    "metadata_json",
+    "metadata_json TEXT"
+  );
+  ensureColumn("generated_sites", "warnings_json", "warnings_json TEXT");
 
   db.prepare(
     "UPDATE businesses SET enrichment_status = 'pending' WHERE enrichment_status IS NULL"

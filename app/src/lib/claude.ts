@@ -31,6 +31,11 @@ import {
   OPENAI_OAUTH_CODEX_MODELS,
   refreshOpenAIToken,
 } from "./openai-oauth";
+import {
+  buildSiteCapabilityPromptSummary,
+  normalizeSiteCapabilityProfile,
+  type SiteCapabilityProfile,
+} from "./site-capabilities";
 import type { WebsiteSourceSnapshot } from "./website-source";
 import type { WebsitePageSignals } from "./website-screenshot";
 
@@ -79,6 +84,7 @@ export interface VisualAuditResult {
   websiteComplexity: "simple" | "moderate" | "advanced";
   replacementDifficulty: "easy" | "medium" | "hard";
   advancedFeatures: string[];
+  capabilityProfile: SiteCapabilityProfile;
 }
 
 export interface ExistingSiteFile {
@@ -90,6 +96,12 @@ export interface SourceBrandAsset {
   relativePath: string;
   sourceUrl: string;
   mimeType: string | null;
+}
+
+export interface BusinessPhotoAttachment {
+  relativePath: string;
+  imageBase64: string;
+  mediaType: string;
 }
 
 export interface GenerateSiteOptions {
@@ -107,6 +119,8 @@ export interface GenerateSiteOptions {
     screenshotMediaType: "image/jpeg";
     pageSignals: WebsitePageSignals;
   }>;
+  businessPhotos?: BusinessPhotoAttachment[];
+  siteCapabilityProfile?: SiteCapabilityProfile;
 }
 
 export interface ModifySiteWithToolsOptions {
@@ -1088,6 +1102,23 @@ function buildSourceBrandAssetSummary(
   ].join("\n");
 }
 
+function buildBusinessPhotoSummary(
+  businessPhotos: GenerateSiteOptions["businessPhotos"]
+): string {
+  if (!businessPhotos || businessPhotos.length === 0) {
+    return "Local Business Photos:\nNo local business photos were attached.";
+  }
+
+  return [
+    "Local Business Photos:",
+    "Attached local business photos are real-world visual evidence from the business profile. Use them for palette extraction, signage cues, product/interior/exterior context, and choosing which bundled photos to feature.",
+    "If a photo contains a visible logo or wordmark but no exact standalone logo asset was captured, treat it as reference only. Do not fabricate a cleaned-up replacement mark.",
+    ...businessPhotos.map(
+      (photo, index) => `Photo ${index + 1}: ./${photo.relativePath}`
+    ),
+  ].join("\n");
+}
+
 function buildExistingSiteSummary(
   files: ExistingSiteFile[] | undefined
 ): string {
@@ -1492,8 +1523,19 @@ export async function generateSite(
   const sourceBrandAssetSummary = buildSourceBrandAssetSummary(
     options.sourceBrandAssets
   );
+  const businessPhotoSummary = buildBusinessPhotoSummary(options.businessPhotos);
   const architectureRecommendationSummary =
     buildArchitectureRecommendationSummary(options);
+  const siteCapabilitySummary = buildSiteCapabilityPromptSummary(
+    options.siteCapabilityProfile ??
+      normalizeSiteCapabilityProfile(null, {
+        category: businessData.category,
+        sourceSiteSnapshot: options.sourceSiteSnapshot,
+        sourceSiteVisualSignals: options.sourceSiteVisuals?.map(
+          (visual) => visual.pageSignals
+        ),
+      })
+  );
   const sourceSiteVisualSummary = buildSourceSiteVisualSummary(
     options.sourceSiteVisuals
   );
@@ -1507,7 +1549,9 @@ export async function generateSite(
     existingSiteSummary,
     sourceSiteSummary,
     sourceBrandAssetSummary,
+    businessPhotoSummary,
     architectureRecommendationSummary,
+    siteCapabilitySummary,
     sourceSiteVisualSummary,
   ];
 
@@ -1539,6 +1583,7 @@ export async function generateSite(
     "- Use a cohesive visual system with deliberate color hierarchy, CSS variables or shared tokens, purposeful motion, atmospheric backgrounds or surfaces, and compositions that do not feel like safe templates.",
     "- Match implementation complexity to the concept: restrained directions should be precise and elegant, while bolder directions should have enough layering, motion, and detail to feel fully resolved.",
     "- Preserve and improve all customer-facing content and features from the source material.",
+    "- Treat attached local business photos as primary visual evidence for the real-world business environment, color palette, signage, product/interior/exterior context, and which bundled photos should be used in the site.",
     "- Rewrite and elevate weak copy when helpful, but do not lose important business information.",
     "- Reorganize layout, page structure, and section order whenever needed to produce a stronger modern experience.",
     "- Avoid safe template output, dated layouts, weak typography, cramped spacing, flat white-box sections, generic hero-plus-card patterns, and low-effort visual design.",
@@ -1549,6 +1594,10 @@ export async function generateSite(
     "- When the Architecture Recommendation section provides a substantive HTML page target or minimum, follow it. Those counts refer to real content pages, not redirects, placeholders, or duplicate shells.",
     "- When the Architecture Recommendation section says multi-page is required, you must return a multi-page bundle with at least the stated minimum number of substantive HTML pages.",
     "- Multi-page is required when there are multiple substantive source pages, large navigation, or complex flows such as store, booking, or portal behavior.",
+    "- When the Capability Recommendation section says static-only, do not invent admin dashboards, editor UI, member login, carts, or fake store functionality.",
+    "- When the Capability Recommendation section recommends a lightweight CMS pack, keep the public site static but structure content into stable sections and dedicated pages so an owner-edit layer can be attached cleanly later.",
+    "- When the Capability Recommendation section recommends a lightweight store pack, give products or offerings a clear dedicated page or section and keep checkout assumptions simple enough for product records to map to direct Stripe or Shopify checkout links later.",
+    "- If the Capability Recommendation section says custom-app, keep the marketing site excellent, but do not fake complex authenticated flows inside the static bundle.",
     "- If single-page, consolidate content into anchored sections and use working in-page navigation like #about-us or #specials.",
     "- If multi-page, return a static site bundle with one file per page and keep all internal navigation relative to the site bundle.",
     "- The output must be a static site bundle with no build step and no framework runtime requirement.",
@@ -1576,9 +1625,21 @@ export async function generateSite(
     | {
         type: "image";
         image: string;
-        mediaType: "image/jpeg";
+        mediaType: string;
       }
   > = [{ type: "text", text: userPrompt }];
+
+  for (const [index, photo] of (options.businessPhotos ?? []).entries()) {
+    content.push({
+      type: "text",
+      text: `Attached local business photo ${index + 1} available at ./${photo.relativePath}.`,
+    });
+    content.push({
+      type: "image",
+      image: photo.imageBase64,
+      mediaType: photo.mediaType,
+    });
+  }
 
   for (const [index, visual] of (options.sourceSiteVisuals ?? []).entries()) {
     content.push({
@@ -1860,6 +1921,7 @@ ${buildPageSignalsSummary(input.pageSignals)}
 
 Judge the site the way a business owner would, not with technical speed or SEO metrics.
 Focus on visual polish, modern feel, clarity, trust, and whether the owner would likely feel proud or embarrassed to send customers there.
+Also decide whether this business should stay fully static, get a lightweight owner CMS, get a lightweight product/store layer, or be treated as a custom-app case beyond the lightweight pack.
 
 Return JSON with exactly these fields:
 {
@@ -1870,12 +1932,33 @@ Return JSON with exactly these fields:
   "issues": ["..."],
   "websiteComplexity": "advanced",
   "replacementDifficulty": "hard",
-  "advancedFeatures": ["online store"]
+  "advancedFeatures": ["online store"],
+  "capabilityProfile": {
+    "operatingModel": "static-plus-cms-and-store",
+    "confidence": "high",
+    "cms": {
+      "need": "required",
+      "provider": "firebase-auth-firestore",
+      "editableAreas": ["homepage", "products", "contact"]
+    },
+    "commerce": {
+      "need": "required",
+      "provider": "stripe-payment-links",
+      "productStrategy": "payment-links"
+    },
+    "reasons": ["..."]
+  }
 }
 
 Use only proud, mixed, or embarrassed for ownerSentiment.
 Use only simple, moderate, or advanced for websiteComplexity.
 Use only easy, medium, or hard for replacementDifficulty.
+Use only static-only, static-plus-cms, static-plus-cms-and-store, or custom-app for capabilityProfile.operatingModel.
+Use only low, medium, or high for capabilityProfile.confidence.
+Use only none, optional, recommended, or required for capabilityProfile.cms.need and capabilityProfile.commerce.need.
+Use only none or firebase-auth-firestore for capabilityProfile.cms.provider.
+Use only none, stripe-payment-links, or shopify for capabilityProfile.commerce.provider.
+Use only none or payment-links for capabilityProfile.commerce.productStrategy.
 No markdown code fences.`;
   }
 
@@ -1913,6 +1996,11 @@ No markdown code fences.`;
       throw new Error("Response missing required audit fields.");
     }
 
+    const advancedFeatures = parsed.advancedFeatures
+      .map((item: unknown) => String(item).trim())
+      .filter(Boolean)
+      .slice(0, 6);
+
     return {
       grade: String(parsed.grade).trim().toUpperCase(),
       ownerSentiment:
@@ -1942,10 +2030,15 @@ No markdown code fences.`;
         parsed.replacementDifficulty === "hard"
           ? parsed.replacementDifficulty
           : "medium",
-      advancedFeatures: parsed.advancedFeatures
-        .map((item: unknown) => String(item).trim())
-        .filter(Boolean)
-        .slice(0, 6),
+      advancedFeatures,
+      capabilityProfile: normalizeSiteCapabilityProfile(
+        parsed.capabilityProfile,
+        {
+          category: input.category,
+          advancedFeatures,
+          sourceSiteVisualSignals: [input.pageSignals],
+        }
+      ),
     };
   } catch (e) {
     throw new Error(

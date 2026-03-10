@@ -1,8 +1,14 @@
+import crypto from "crypto";
+
 import { getDb } from "./db";
 
 export type AiProvider = "anthropic" | "openai" | "google" | "openrouter";
 export type AnthropicAuthMode = "apiKey" | "oauth";
 export type OpenAIAuthMode = "apiKey" | "oauth";
+export type DeploymentProvider =
+  | "vercel"
+  | "cloudflare-pages"
+  | "ssh-static";
 
 export interface Config {
   googlePlacesApiKey: string;
@@ -34,10 +40,27 @@ export interface Config {
   businessAddress: string;
   businessEmail: string;
   siteBaseUrl: string;
+  previewDeploymentProvider: DeploymentProvider;
+  customerDeploymentProvider: DeploymentProvider;
   vercelToken: string;
   vercelTeamId: string;
   vercelPreviewProjectId: string;
   vercelPreviewRootDomain: string;
+  cloudflareApiToken: string;
+  cloudflareAccountId: string;
+  cloudflarePreviewProjectName: string;
+  cloudflareCustomerProductionBranch: string;
+  sshHost: string;
+  sshPort: number;
+  sshUser: string;
+  sshPrivateKey: string;
+  sshKnownHosts: string;
+  sshRemoteBasePath: string;
+  sshPreviewUrlTemplate: string;
+  sshCustomerUrlTemplate: string;
+  sshPreviewPostDeployCommand: string;
+  sshCustomerPostDeployCommand: string;
+  previewAdminSecret: string;
   pricingText: string;
 }
 
@@ -73,10 +96,27 @@ const DEFAULT_CONFIG: Config = {
   businessAddress: "",
   businessEmail: "",
   siteBaseUrl: "http://localhost:3000/sites",
+  previewDeploymentProvider: "vercel",
+  customerDeploymentProvider: "vercel",
   vercelToken: "",
   vercelTeamId: "",
   vercelPreviewProjectId: "",
   vercelPreviewRootDomain: "",
+  cloudflareApiToken: "",
+  cloudflareAccountId: "",
+  cloudflarePreviewProjectName: "",
+  cloudflareCustomerProductionBranch: "production",
+  sshHost: "",
+  sshPort: 22,
+  sshUser: "",
+  sshPrivateKey: "",
+  sshKnownHosts: "",
+  sshRemoteBasePath: "/var/www/curb",
+  sshPreviewUrlTemplate: "https://preview.example.com/{slug}",
+  sshCustomerUrlTemplate: "https://sites.example.com/{slug}",
+  sshPreviewPostDeployCommand: "",
+  sshCustomerPostDeployCommand: "",
+  previewAdminSecret: "",
   pricingText: "",
 };
 
@@ -86,6 +126,7 @@ const NUMBER_KEYS = new Set<SettingKey>([
   "defaultRadiusKm",
   "anthropicOAuthExpiresAtMs",
   "openaiOAuthExpiresAtMs",
+  "sshPort",
 ]);
 const BOOLEAN_KEYS = new Set<SettingKey>(["autoEnrichmentEnabled"]);
 
@@ -159,6 +200,13 @@ function parseSetting(
       : "anthropic") as Config[SettingKey]);
   }
 
+  if (key === "previewDeploymentProvider" || key === "customerDeploymentProvider") {
+    return ((rawValue === "cloudflare-pages" ||
+      rawValue === "ssh-static"
+      ? rawValue
+      : "vercel") as Config[SettingKey]);
+  }
+
   if (ARRAY_KEYS.has(key)) {
     try {
       const parsed = JSON.parse(rawValue);
@@ -201,6 +249,22 @@ export function initializeSettingsStore(): void {
 
   seedDefaults();
   db.prepare("DELETE FROM settings WHERE key = ?").run("googlePageSpeedApiKey");
+
+  const previewAdminSecretRow = db
+    .prepare("SELECT value FROM settings WHERE key = ?")
+    .get("previewAdminSecret") as { value: string } | undefined;
+
+  if (!previewAdminSecretRow?.value.trim()) {
+    db.prepare(
+      `
+        INSERT INTO settings (key, value, updated_at)
+        VALUES (?, ?, datetime('now'))
+        ON CONFLICT(key) DO UPDATE SET
+          value = excluded.value,
+          updated_at = excluded.updated_at
+      `
+    ).run("previewAdminSecret", crypto.randomBytes(24).toString("hex"));
+  }
 }
 
 export function getConfig(): Config {

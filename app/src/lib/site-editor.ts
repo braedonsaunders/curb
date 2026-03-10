@@ -308,3 +308,36 @@ export function writeSiteTextFile(
     modifiedAt: stat.mtime.toISOString(),
   };
 }
+
+export function writeSiteBinaryFile(
+  siteDir: string,
+  relativePath: string,
+  content: Buffer
+): {
+  path: string;
+  size: number;
+  modifiedAt: string;
+} {
+  const { normalizedPath, absolutePath } = resolveSitePath(siteDir, relativePath);
+
+  if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+    throw new SiteEditorError("Site file not found.", 404);
+  }
+
+  const existingBuffer = fs.readFileSync(absolutePath);
+  if (isLikelyTextFile(absolutePath, existingBuffer)) {
+    throw new SiteEditorError(
+      "This file is text-based. Use the editor to update it.",
+      400
+    );
+  }
+
+  fs.writeFileSync(absolutePath, content);
+  const stat = fs.statSync(absolutePath);
+
+  return {
+    path: normalizedPath,
+    size: stat.size,
+    modifiedAt: stat.mtime.toISOString(),
+  };
+}

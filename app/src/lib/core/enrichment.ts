@@ -42,6 +42,7 @@ type LatestAuditRow = {
   website_complexity: string | null;
   replacement_difficulty: string | null;
   advanced_features_json: string | null;
+  capability_profile_json: string | null;
   created_at: string | null;
 } | null;
 
@@ -263,6 +264,7 @@ function getLatestAuditForBusiness(businessId: number): LatestAuditRow {
         website_complexity,
         replacement_difficulty,
         advanced_features_json,
+        capability_profile_json,
         created_at
       FROM audits
       WHERE business_id = ? AND audit_version = 2
@@ -287,7 +289,8 @@ function shouldRunVisualAudit(
   if (
     latestAudit.website_complexity == null ||
     latestAudit.replacement_difficulty == null ||
-    latestAudit.advanced_features_json == null
+    latestAudit.advanced_features_json == null ||
+    latestAudit.capability_profile_json == null
   ) {
     return true;
   }
@@ -327,6 +330,7 @@ function findNextBusinessIdForEnrichment(): number | null {
           OR latest_audit.website_complexity IS NULL
           OR latest_audit.replacement_difficulty IS NULL
           OR latest_audit.advanced_features_json IS NULL
+          OR latest_audit.capability_profile_json IS NULL
         )
         AND (
           COALESCE(b.enrichment_status, 'pending') != 'failed'

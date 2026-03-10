@@ -2,11 +2,101 @@ import fs from "fs";
 import path from "path";
 import archiver from "archiver";
 import { getDb } from "../db";
+import {
+  normalizeSiteCapabilityProfile,
+  resolveStoreCommerceProvider,
+  SITE_CAPABILITY_MANIFEST_PATH,
+  type SiteCapabilityProfile,
+} from "../site-capabilities";
 import { initializeDatabase } from "../schema";
 
 const SITES_DIR = path.resolve(process.cwd(), "..", "sites");
 
-const README_CONTENT = `# Generated Website
+function readCapabilityProfile(siteDir: string): SiteCapabilityProfile | null {
+  const manifestPath = path.join(
+    siteDir,
+    ...SITE_CAPABILITY_MANIFEST_PATH.split("/")
+  );
+
+  if (!fs.existsSync(manifestPath) || !fs.statSync(manifestPath).isFile()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as {
+      capabilityProfile?: unknown;
+    };
+    return normalizeSiteCapabilityProfile(parsed.capabilityProfile ?? null);
+  } catch {
+    return null;
+  }
+}
+
+function buildCapabilitySection(profile: SiteCapabilityProfile | null): string {
+  if (!profile) {
+    return "";
+  }
+
+  const lines = [
+    "## Capability Recommendation",
+    "",
+    `Operating model: ${profile.operatingModel}`,
+    `Confidence: ${profile.confidence}`,
+    `Summary: ${profile.packageSummary}`,
+  ];
+
+  if (profile.reasons.length > 0) {
+    lines.push("", "Why Curb recommended this:");
+    for (const reason of profile.reasons) {
+      lines.push(`- ${reason}`);
+    }
+  }
+
+  if (profile.operatingModel === "static-plus-cms") {
+    lines.push(
+      "",
+      "Recommended owner-edit stack:",
+      "- Keep the public site static on Vercel or another static host",
+      "- Add a customer-owned Firebase project for authentication and content storage",
+      "- The built-in /admin portal uses Firebase email-link sign-in and Firestore-backed content records",
+      "- Use the machine-readable manifest in assets/curb-site-package.json as the contract for future CMS packaging"
+    );
+  }
+
+  if (profile.operatingModel === "static-plus-cms-and-store") {
+    const commerceProvider = resolveStoreCommerceProvider(
+      profile.commerce.provider
+    );
+    lines.push(
+      "",
+      "Recommended owner-edit and store stack:",
+      "- Keep the public site static",
+      "- Use the built-in Firebase owner portal for content and product updates",
+      `- Start commerce with ${
+        commerceProvider === "shopify"
+          ? "Shopify checkout links"
+          : "Stripe Payment Links"
+      } instead of a custom cart or inventory backend`,
+      "- Treat products as structured records so the owner can update catalog entries without editing HTML"
+    );
+  }
+
+  if (profile.operatingModel === "custom-app") {
+    lines.push(
+      "",
+      "Important:",
+      "- Do not force this into the lightweight static pack",
+      "- Keep the marketing pages static if you want, but scope the advanced customer flow as a separate app or specialist integration"
+    );
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function buildReadmeContent(siteDir: string): string {
+  const capabilitySection = buildCapabilitySection(readCapabilityProfile(siteDir));
+
+  return `# Generated Website
 ================================
 
 This website was generated or mirrored by Curb for a local business.
@@ -34,8 +124,9 @@ This website was generated or mirrored by Curb for a local business.
    - Edit index.html with any text editor or code editor
    - Replace images in the assets/photos/ directory as needed
    - Update contact information, hours, and other business details
+   - Review assets/curb-site-package.json if this site was marked for an owner CMS or store pack
 
-## Directory Structure
+${capabilitySection}## Directory Structure
 
   index.html          - Entry page for the site
   assets/             - Local business assets when available
@@ -45,6 +136,7 @@ This website was generated or mirrored by Curb for a local business.
 
 For questions or custom modifications, contact your web designer.
 `;
+}
 
 export async function exportSite(slug: string): Promise<Buffer> {
   initializeDatabase();
@@ -78,7 +170,7 @@ export async function exportSite(slug: string): Promise<Buffer> {
     archive.directory(siteDir, slug);
 
     // Add README.txt
-    archive.append(README_CONTENT, {
+    archive.append(buildReadmeContent(siteDir), {
       name: `${slug}/README.txt`,
     });
 

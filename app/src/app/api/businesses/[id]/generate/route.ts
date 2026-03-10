@@ -5,11 +5,50 @@ import {
   type SiteGenerationMode,
 } from '@/lib/core/generate';
 import {
+  normalizeManagedCommerceProvider,
+  type SiteCapabilityPackOverride,
+} from '@/lib/site-capabilities';
+import {
   deployPreviewForBusiness,
   isPreviewDeploymentConfigured,
 } from '@/lib/vercel-sites';
 
 const GENERATION_MODES = new Set(['generate', 'modify', 'regenerate']);
+
+function parseSiteCapabilityOverride(
+  value: unknown
+): SiteCapabilityPackOverride | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const source = value as Record<string, unknown>;
+  const includeCmsPack =
+    typeof source.includeCmsPack === "boolean"
+      ? source.includeCmsPack
+      : undefined;
+  const includeStorePack =
+    typeof source.includeStorePack === "boolean"
+      ? source.includeStorePack
+      : undefined;
+  const commerceProvider = normalizeManagedCommerceProvider(
+    source.commerceProvider
+  ) ?? undefined;
+
+  if (
+    includeCmsPack === undefined &&
+    includeStorePack === undefined &&
+    commerceProvider === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    includeCmsPack,
+    includeStorePack,
+    commerceProvider,
+  };
+}
 
 export async function POST(
   request: NextRequest,
@@ -33,8 +72,15 @@ export async function POST(
       prompt?: unknown;
       promptOverride?: unknown;
       modificationPrompt?: unknown;
+      siteCapabilityOverride?: unknown;
     };
-    const { mode, prompt, promptOverride, modificationPrompt } = body;
+    const {
+      mode,
+      prompt,
+      promptOverride,
+      modificationPrompt,
+      siteCapabilityOverride,
+    } = body;
     const effectivePrompt =
       typeof prompt === 'string' && prompt.trim()
         ? prompt
@@ -47,6 +93,9 @@ export async function POST(
         : typeof modificationPrompt === 'string' && modificationPrompt.trim()
           ? 'modify'
           : 'regenerate';
+
+    const parsedSiteCapabilityOverride =
+      parseSiteCapabilityOverride(siteCapabilityOverride);
 
     if (mode !== undefined && (typeof mode !== 'string' || !GENERATION_MODES.has(mode))) {
       return NextResponse.json(
@@ -89,6 +138,7 @@ export async function POST(
     const site = await generateSiteForBusiness(businessId, {
       mode: effectiveMode,
       prompt: typeof effectivePrompt === 'string' ? effectivePrompt : undefined,
+      siteCapabilityOverride: parsedSiteCapabilityOverride,
     });
     let previewDeployment:
       | {
@@ -122,7 +172,9 @@ export async function POST(
         version: site.version,
         path: site.sitePath,
         generationTimeMs: site.generationTimeMs,
+        warnings: site.warnings,
       },
+      warnings: site.warnings,
       previewDeployment,
       previewDeploymentError,
     });

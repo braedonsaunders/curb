@@ -8,6 +8,7 @@ const NEARBY_SEARCH_BASE =
 const PLACE_DETAILS_BASE =
   "https://maps.googleapis.com/maps/api/place/details/json";
 const PLACE_PHOTO_BASE = "https://maps.googleapis.com/maps/api/place/photo";
+const PLACE_PHOTO_MEDIA_BASE = "https://places.googleapis.com/v1";
 
 const SITES_DIR = path.resolve(process.cwd(), "..", "sites");
 
@@ -69,6 +70,12 @@ export interface PlacePhoto {
   width: number;
 }
 
+interface PlacePhotoAsset {
+  buffer: ArrayBuffer;
+  contentType: string;
+  cacheControl: string;
+}
+
 function getApiKey(): string {
   const key = getConfig().googlePlacesApiKey;
   if (!key) {
@@ -77,6 +84,140 @@ function getApiKey(): string {
     );
   }
   return key;
+}
+
+function normalizePhotoWidth(maxWidth = 800): number {
+  if (!Number.isFinite(maxWidth)) {
+    return 800;
+  }
+
+  return Math.min(1600, Math.max(200, Math.trunc(maxWidth)));
+}
+
+function encodeResourcePath(resourcePath: string): string {
+  return resourcePath
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function buildPlacePhotoMediaUrl(
+  reference: string,
+  apiKey: string,
+  maxWidth: number,
+  placeId?: string | null
+): string | null {
+  const trimmedReference = reference.trim();
+  if (!trimmedReference) {
+    return null;
+  }
+
+  const resourcePath = trimmedReference.startsWith("places/")
+    ? trimmedReference
+    : placeId
+      ? `places/${placeId}/photos/${trimmedReference}`
+      : null;
+
+  if (!resourcePath) {
+    return null;
+  }
+
+  return (
+    `${PLACE_PHOTO_MEDIA_BASE}/${encodeResourcePath(resourcePath)}/media` +
+    `?maxWidthPx=${maxWidth}&key=${encodeURIComponent(apiKey)}`
+  );
+}
+
+function buildLegacyPlacePhotoUrl(
+  reference: string,
+  apiKey: string,
+  maxWidth: number
+): string {
+  return (
+    `${PLACE_PHOTO_BASE}?maxwidth=${maxWidth}` +
+    `&photo_reference=${encodeURIComponent(reference)}` +
+    `&key=${encodeURIComponent(apiKey)}`
+  );
+}
+
+async function readPhotoError(response: Response): Promise<string> {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (contentType.includes("application/json")) {
+    try {
+      const data = (await response.json()) as {
+        error?: { message?: string } | string;
+      };
+      if (typeof data.error === "string" && data.error.trim()) {
+        return data.error.trim();
+      }
+
+      if (
+        data.error &&
+        typeof data.error === "object" &&
+        typeof data.error.message === "string" &&
+        data.error.message.trim()
+      ) {
+        return data.error.message.trim();
+      }
+    } catch {
+      // Ignore JSON parse failures and fall back to status text.
+    }
+  }
+
+  const statusText = response.statusText.trim();
+  return statusText
+    ? `request failed with status ${response.status} (${statusText})`
+    : `request failed with status ${response.status}`;
+}
+
+export async function fetchPlacePhotoAsset(
+  reference: string,
+  options: { maxWidth?: number; placeId?: string | null } = {}
+): Promise<PlacePhotoAsset> {
+  const trimmedReference = reference.trim();
+  if (!trimmedReference) {
+    throw new Error("Photo reference is required");
+  }
+
+  const apiKey = getApiKey();
+  const maxWidth = normalizePhotoWidth(options.maxWidth);
+  const candidates: Array<{ label: string; url: string }> = [];
+  const mediaUrl = buildPlacePhotoMediaUrl(
+    trimmedReference,
+    apiKey,
+    maxWidth,
+    options.placeId
+  );
+
+  if (mediaUrl) {
+    candidates.push({ label: "Places API media", url: mediaUrl });
+  }
+
+  candidates.push({
+    label: "Places Photo API legacy",
+    url: buildLegacyPlacePhotoUrl(trimmedReference, apiKey, maxWidth),
+  });
+
+  const failures: string[] = [];
+
+  for (const candidate of candidates) {
+    const response = await fetch(candidate.url, { redirect: "follow" });
+
+    if (response.ok) {
+      return {
+        buffer: await response.arrayBuffer(),
+        contentType: response.headers.get("content-type") ?? "image/jpeg",
+        cacheControl:
+          response.headers.get("cache-control") ?? "public, max-age=86400",
+      };
+    }
+
+    failures.push(`${candidate.label}: ${await readPhotoError(response)}`);
+  }
+
+  throw new Error(failures.join("; "));
 }
 
 async function delay(ms: number): Promise<void> {
@@ -266,28 +407,24 @@ export async function getPlaceDetails(
 export async function downloadPlacePhoto(
   photoReference: string,
   slug: string,
-  siteDir?: string
+  siteDir?: string,
+  placeId?: string | null
 ): Promise<string> {
-  const apiKey = getApiKey();
   const targetSiteDir = siteDir ?? path.join(SITES_DIR, slug);
   const photoDir = path.join(targetSiteDir, "assets", "photos");
 
   fs.mkdirSync(photoDir, { recursive: true });
 
-  const url = `${PLACE_PHOTO_BASE}?maxwidth=800&photo_reference=${encodeURIComponent(photoReference)}&key=${apiKey}`;
-  const response = await fetch(url, { redirect: "follow" });
-
-  if (!response.ok) {
-    throw new Error(`Photo download failed with status ${response.status}`);
-  }
-
-  const contentType =
-    response.headers.get("content-type") ?? "image/jpeg";
+  const asset = await fetchPlacePhotoAsset(photoReference, {
+    maxWidth: 800,
+    placeId,
+  });
+  const contentType = asset.contentType;
   const ext = contentType.includes("png") ? "png" : "jpg";
   const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
   const filePath = path.join(photoDir, filename);
 
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = Buffer.from(asset.buffer);
   fs.writeFileSync(filePath, buffer);
 
   return `assets/photos/${filename}`;

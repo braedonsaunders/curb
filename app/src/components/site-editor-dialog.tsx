@@ -1,7 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from "react";
 import dynamic from "next/dynamic";
+import Image from "next/image";
 import {
   ChevronDown,
   ChevronRight,
@@ -12,6 +20,7 @@ import {
   ImageIcon,
   Loader2,
   Save,
+  Upload,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -52,6 +61,13 @@ type SiteEditorFilePayload = {
   modifiedAt: string;
 };
 
+type SiteEditorBinaryAsset = {
+  name: string;
+  path: string;
+  size: number;
+  modifiedAt: string | null;
+};
+
 type SiteEditorDialogProps = {
   businessId: string;
   siteSlug: string;
@@ -78,25 +94,28 @@ function findFirstEditablePath(nodes: SiteEditorTreeNode[]): string | null {
   return null;
 }
 
-function treeContainsPath(
+function findFileNodeByPath(
   nodes: SiteEditorTreeNode[],
   targetPath: string | null
-): boolean {
+): Extract<SiteEditorTreeNode, { type: "file" }> | null {
   if (!targetPath) {
-    return false;
+    return null;
   }
 
   for (const node of nodes) {
-    if (node.path === targetPath) {
-      return true;
+    if (node.type === "file" && node.path === targetPath) {
+      return node;
     }
 
-    if (node.type === "directory" && treeContainsPath(node.children, targetPath)) {
-      return true;
+    if (node.type === "directory") {
+      const childNode = findFileNodeByPath(node.children, targetPath);
+      if (childNode) {
+        return childNode;
+      }
     }
   }
 
-  return false;
+  return null;
 }
 
 function collectDirectoryAncestors(filePath: string): string[] {
@@ -120,6 +139,112 @@ function formatBytes(size: number): string {
   }
 
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getFileExtension(filePath: string): string {
+  const normalizedPath = filePath.toLowerCase();
+  const slashIndex = normalizedPath.lastIndexOf("/");
+  const dotIndex = normalizedPath.lastIndexOf(".");
+
+  if (dotIndex === -1 || dotIndex < slashIndex) {
+    return "";
+  }
+
+  return normalizedPath.slice(dotIndex);
+}
+
+function getCanonicalBinaryExtension(extension: string): string {
+  if (extension === ".jpeg") {
+    return ".jpg";
+  }
+
+  return extension;
+}
+
+function getBinaryUploadRules(filePath: string): {
+  accept?: string;
+  extensions: string[];
+  label: string;
+} {
+  const extension = getCanonicalBinaryExtension(getFileExtension(filePath));
+
+  if (extension === ".jpg") {
+    return {
+      accept: ".jpg,.jpeg",
+      extensions: [".jpg"],
+      label: ".jpg or .jpeg",
+    };
+  }
+
+  if (!extension) {
+    return {
+      extensions: [],
+      label: "a matching file",
+    };
+  }
+
+  return {
+    accept: extension,
+    extensions: [extension],
+    label: extension,
+  };
+}
+
+function isPreviewableImageAsset(filePath: string): boolean {
+  const extension = getCanonicalBinaryExtension(getFileExtension(filePath));
+
+  return new Set([".avif", ".gif", ".jpg", ".png", ".webp"]).has(extension);
+}
+
+function buildSiteAssetUrl(
+  siteSlug: string,
+  relativePath: string,
+  cacheKey: string | number
+): string {
+  const encodedPath = relativePath
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+
+  return `/sites/${encodeURIComponent(siteSlug)}/${encodedPath}?v=${encodeURIComponent(
+    String(cacheKey)
+  )}`;
+}
+
+function createBinaryAssetState(
+  node: Extract<SiteEditorTreeNode, { type: "file" }>
+): SiteEditorBinaryAsset {
+  return {
+    name: node.name,
+    path: node.path,
+    size: node.size,
+    modifiedAt: null,
+  };
+}
+
+function updateTreeFileSize(
+  nodes: SiteEditorTreeNode[],
+  targetPath: string,
+  nextSize: number
+): SiteEditorTreeNode[] {
+  return nodes.map((node) => {
+    if (node.type === "directory") {
+      return {
+        ...node,
+        children: updateTreeFileSize(node.children, targetPath, nextSize),
+      };
+    }
+
+    if (node.path !== targetPath) {
+      return node;
+    }
+
+    return {
+      ...node,
+      size: nextSize,
+    };
+  });
 }
 
 function fileIcon(node: Extract<SiteEditorTreeNode, { type: "file" }>) {
@@ -150,8 +275,10 @@ export function SiteEditorDialog({
   const [loadingTree, setLoadingTree] = useState(false);
   const [loadingFile, setLoadingFile] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingBinary, setUploadingBinary] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [file, setFile] = useState<SiteEditorFilePayload | null>(null);
+  const [binaryFile, setBinaryFile] = useState<SiteEditorBinaryAsset | null>(null);
   const [editorValue, setEditorValue] = useState("");
   const [savedValue, setSavedValue] = useState("");
   const [expandedDirectories, setExpandedDirectories] = useState<Set<string>>(
@@ -159,10 +286,23 @@ export function SiteEditorDialog({
   );
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
-  const [binaryFilePath, setBinaryFilePath] = useState<string | null>(null);
+  const [binaryPreviewNonce, setBinaryPreviewNonce] = useState(0);
   const selectedPathRef = useRef<string | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   const dirty = file !== null && editorValue !== savedValue;
+  const busy = saving || uploadingBinary;
+  const binaryUploadRules = binaryFile
+    ? getBinaryUploadRules(binaryFile.path)
+    : null;
+  const binaryPreviewUrl =
+    binaryFile && isPreviewableImageAsset(binaryFile.path)
+      ? buildSiteAssetUrl(
+          siteSlug,
+          binaryFile.path,
+          `${binaryFile.modifiedAt ?? "current"}-${binaryPreviewNonce}`
+        )
+      : null;
 
   useEffect(() => {
     selectedPathRef.current = selectedPath;
@@ -171,7 +311,7 @@ export function SiteEditorDialog({
   const loadFile = useCallback(async (filePath: string) => {
     setLoadingFile(true);
     setEditorError(null);
-    setBinaryFilePath(null);
+    setBinaryFile(null);
 
     try {
       const response = await fetch(
@@ -236,10 +376,18 @@ export function SiteEditorDialog({
         )
       );
 
+      const preservedFile = findFileNodeByPath(payload.tree, selectedPathRef.current);
+      if (preservedFile && !preservedFile.isText) {
+        setSelectedPath(preservedFile.path);
+        setBinaryFile(createBinaryAssetState(preservedFile));
+        setFile(null);
+        setEditorValue("");
+        setSavedValue("");
+        return;
+      }
+
       const defaultPath =
-        (treeContainsPath(payload.tree, selectedPathRef.current)
-          ? selectedPathRef.current
-          : null) ||
+        (preservedFile?.isText ? preservedFile.path : null) ||
         findFirstEditablePath(payload.tree);
 
       if (defaultPath) {
@@ -247,6 +395,7 @@ export function SiteEditorDialog({
       } else {
         setSelectedPath(null);
         setFile(null);
+        setBinaryFile(null);
         setEditorValue("");
         setSavedValue("");
       }
@@ -263,14 +412,17 @@ export function SiteEditorDialog({
   useEffect(() => {
     if (!open) {
       setTree([]);
+      setSaving(false);
+      setUploadingBinary(false);
       setSelectedPath(null);
       setFile(null);
+      setBinaryFile(null);
       setEditorValue("");
       setSavedValue("");
       setExpandedDirectories(new Set());
       setBackupMessage(null);
       setEditorError(null);
-      setBinaryFilePath(null);
+      setBinaryPreviewNonce(0);
       return;
     }
 
@@ -288,6 +440,10 @@ export function SiteEditorDialog({
   }
 
   function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen && busy) {
+      return;
+    }
+
     if (!nextOpen && !canDiscardChanges("close the editor")) {
       return;
     }
@@ -315,8 +471,8 @@ export function SiteEditorDialog({
 
     if (!node.isText) {
       setSelectedPath(node.path);
-      setBinaryFilePath(node.path);
       setFile(null);
+      setBinaryFile(createBinaryAssetState(node));
       setEditorValue("");
       setSavedValue("");
       return;
@@ -387,6 +543,99 @@ export function SiteEditorDialog({
     }
   }
 
+  function openBinaryUploadPicker() {
+    uploadInputRef.current?.click();
+  }
+
+  async function handleBinaryUploadChange(
+    event: ChangeEvent<HTMLInputElement>
+  ) {
+    const uploadedFile = event.target.files?.[0];
+    const currentBinaryFile = binaryFile;
+
+    if (!uploadedFile || !currentBinaryFile) {
+      return;
+    }
+
+    const uploadExtension = getCanonicalBinaryExtension(
+      getFileExtension(uploadedFile.name)
+    );
+    if (
+      binaryUploadRules &&
+      binaryUploadRules.extensions.length > 0 &&
+      !binaryUploadRules.extensions.includes(uploadExtension)
+    ) {
+      toast.error(
+        `Choose ${binaryUploadRules.label} to replace this asset.`
+      );
+      event.target.value = "";
+      return;
+    }
+
+    setUploadingBinary(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", uploadedFile);
+
+      const response = await fetch(
+        `/api/businesses/${businessId}/site-editor?path=${encodeURIComponent(
+          currentBinaryFile.path
+        )}`,
+        {
+          method: "PUT",
+          body: formData,
+        }
+      );
+      const payload = (await response.json()) as {
+        error?: string;
+        backupCreated?: boolean;
+        backupPath?: string;
+        file?: {
+          modifiedAt: string;
+          size: number;
+        };
+      };
+
+      if (!response.ok || !payload.file) {
+        throw new Error(payload.error || "Failed to replace asset.");
+      }
+
+      const nextBinaryFile = payload.file;
+
+      setBinaryFile((previous) =>
+        previous && previous.path === currentBinaryFile.path
+          ? {
+              ...previous,
+              modifiedAt: nextBinaryFile.modifiedAt || previous.modifiedAt,
+              size: nextBinaryFile.size || previous.size,
+            }
+          : previous
+      );
+      setTree((previous) =>
+        updateTreeFileSize(previous, currentBinaryFile.path, nextBinaryFile.size)
+      );
+      setBinaryPreviewNonce((previous) => previous + 1);
+
+      if (payload.backupPath) {
+        setBackupMessage(
+          payload.backupCreated
+            ? `Backup created at ${payload.backupPath}`
+            : `Backup available at ${payload.backupPath}`
+        );
+      }
+
+      toast.success("Asset replaced");
+      onSaved();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to replace asset.";
+      toast.error(message);
+    } finally {
+      setUploadingBinary(false);
+      event.target.value = "";
+    }
+  }
+
   function renderTree(nodes: SiteEditorTreeNode[], depth = 0): ReactNode {
     return nodes.map((node) => {
       const isExpanded =
@@ -403,6 +652,7 @@ export function SiteEditorDialog({
                 : "text-foreground hover:bg-muted"
             }`}
             style={{ paddingLeft: `${depth * 14 + 8}px` }}
+            disabled={busy}
             onClick={() => void handleFileSelection(node)}
           >
             {node.type === "directory" ? (
@@ -440,7 +690,7 @@ export function SiteEditorDialog({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         className="h-[88vh] w-[96vw] max-w-[min(96vw,1400px)] gap-0 overflow-hidden p-0 sm:max-w-[min(96vw,1400px)]"
-        showCloseButton={!saving}
+        showCloseButton={!busy}
       >
         <div className="flex items-start justify-between gap-4 border-b px-6 py-4 pr-14">
           <div className="space-y-1">
@@ -461,7 +711,7 @@ export function SiteEditorDialog({
             <div className="border-b px-4 py-3">
               <p className="text-sm font-medium">Files</p>
               <p className="text-xs text-muted-foreground">
-                Text files are editable. Binary assets are read-only.
+                Text files open in the editor. Binary assets can be replaced by upload.
               </p>
             </div>
             <div className="min-h-0 overflow-y-auto p-2">
@@ -491,12 +741,22 @@ export function SiteEditorDialog({
                     ? `${file.language} • ${formatBytes(file.size)} • Updated ${new Date(
                         file.modifiedAt
                       ).toLocaleString()}`
-                    : binaryFilePath
-                      ? "Binary file preview is not supported."
+                    : binaryFile
+                      ? `${formatBytes(binaryFile.size)}${
+                          binaryFile.modifiedAt
+                            ? ` • Updated ${new Date(
+                                binaryFile.modifiedAt
+                              ).toLocaleString()}`
+                            : ""
+                        }`
                       : "Choose a text file from the tree to start editing."}
                 </p>
               </div>
-              {file ? <Badge variant="outline">{file.language}</Badge> : null}
+              {file ? (
+                <Badge variant="outline">{file.language}</Badge>
+              ) : binaryFile ? (
+                <Badge variant="outline">Asset</Badge>
+              ) : null}
             </div>
 
             <div className="min-h-0 flex-1 bg-background">
@@ -509,10 +769,62 @@ export function SiteEditorDialog({
                 <div className="flex h-full items-center justify-center px-6 text-center text-sm text-destructive">
                   {editorError}
                 </div>
-              ) : binaryFilePath ? (
-                <div className="flex h-full items-center justify-center px-6 text-center text-sm text-muted-foreground">
-                  `{binaryFilePath}` is a binary asset. It can stay in the tree,
-                  but edits here are limited to text files.
+              ) : binaryFile ? (
+                <div className="flex h-full flex-col overflow-y-auto">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/20 px-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium">Replace asset</p>
+                      <p className="text-xs text-muted-foreground">
+                        Upload {binaryUploadRules?.label ?? "a matching file"} to
+                        replace `{binaryFile.name}` in place.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      onClick={openBinaryUploadPicker}
+                      disabled={uploadingBinary}
+                    >
+                      {uploadingBinary ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <Upload className="size-4" />
+                      )}
+                      Replace file
+                    </Button>
+                    <input
+                      ref={uploadInputRef}
+                      type="file"
+                      className="hidden"
+                      accept={binaryUploadRules?.accept}
+                      onChange={handleBinaryUploadChange}
+                    />
+                  </div>
+
+                  <div className="flex min-h-0 flex-1 items-center justify-center p-6">
+                    {binaryPreviewUrl ? (
+                      <div className="relative h-[55vh] w-full max-w-4xl overflow-hidden rounded-xl border bg-muted/10 shadow-sm">
+                        <Image
+                          src={binaryPreviewUrl}
+                          alt={binaryFile.name}
+                          fill
+                          unoptimized
+                          sizes="(max-width: 1400px) 100vw, 896px"
+                          className="object-contain bg-[radial-gradient(circle_at_top,_rgba(148,163,184,0.18),_transparent_56%),linear-gradient(180deg,rgba(248,250,252,0.95),rgba(241,245,249,0.9))]"
+                        />
+                      </div>
+                    ) : (
+                      <div className="max-w-md space-y-3 rounded-xl border bg-muted/10 p-6 text-center">
+                        <ImageIcon className="mx-auto size-10 text-muted-foreground" />
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">{binaryFile.name}</p>
+                          <p className="text-sm text-muted-foreground">
+                            Preview is not available for this asset type, but you can
+                            still replace the file in place.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ) : file ? (
                 <MonacoEditor
@@ -547,11 +859,11 @@ export function SiteEditorDialog({
             <Button
               variant="outline"
               onClick={() => handleOpenChange(false)}
-              disabled={saving}
+              disabled={busy}
             >
               Close
             </Button>
-            <Button onClick={() => void handleSave()} disabled={!dirty || !file || saving}>
+            <Button onClick={() => void handleSave()} disabled={!dirty || !file || busy}>
               {saving ? (
                 <Loader2 className="size-4 animate-spin" />
               ) : (

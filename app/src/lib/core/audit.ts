@@ -2,6 +2,10 @@ import fs from "fs";
 import { logActivity } from "../activity-log";
 import { auditWebsite, isAiAuthenticationError } from "../claude";
 import { getDb } from "../db";
+import {
+  inferSiteCapabilityProfile,
+  type SiteCapabilityProfile,
+} from "../site-capabilities";
 import { initializeDatabase } from "../schema";
 import {
   captureWebsiteScreenshot,
@@ -35,6 +39,7 @@ export interface AuditResult {
   websiteComplexity: WebsiteComplexity;
   replacementDifficulty: ReplacementDifficulty;
   advancedFeatures: string[];
+  capabilityProfile: SiteCapabilityProfile;
 }
 
 function toPublicScreenshotUrl(relativePath: string | null): string | null {
@@ -134,7 +139,7 @@ function inferComplexityFromSignals(
 }
 
 function buildFallbackReview(
-  businessName: string,
+  category: string | null,
   pageSignals: WebsitePageSignals,
   providerError: unknown
 ): {
@@ -146,6 +151,7 @@ function buildFallbackReview(
   websiteComplexity: Exclude<WebsiteComplexity, "none" | "unknown">;
   replacementDifficulty: Exclude<ReplacementDifficulty, "unknown">;
   advancedFeatures: string[];
+  capabilityProfile: SiteCapabilityProfile;
 } {
   const inferred = inferComplexityFromSignals(pageSignals);
   const reason =
@@ -175,6 +181,11 @@ function buildFallbackReview(
     websiteComplexity: inferred.websiteComplexity,
     replacementDifficulty: inferred.replacementDifficulty,
     advancedFeatures: inferred.advancedFeatures,
+    capabilityProfile: inferSiteCapabilityProfile({
+      category,
+      advancedFeatures: inferred.advancedFeatures,
+      sourceSiteVisualSignals: [pageSignals],
+    }),
   };
 }
 
@@ -223,12 +234,16 @@ export async function auditBusiness(
       website_complexity,
       replacement_difficulty,
       advanced_features_json,
+      capability_profile_json,
       review_json,
       audit_version
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   if (!websiteUrl) {
+    const capabilityProfile = inferSiteCapabilityProfile({
+      category: (business.category as string) ?? null,
+    });
     const summary =
       "No website found. This business is a strong candidate for a new site.";
 
@@ -255,6 +270,7 @@ export async function auditBusiness(
       "none",
       "easy",
       JSON.stringify([]),
+      JSON.stringify(capabilityProfile),
       JSON.stringify({ reason: "missing_website" }),
       VISUAL_AUDIT_VERSION
     );
@@ -290,11 +306,15 @@ export async function auditBusiness(
       websiteComplexity: "none",
       replacementDifficulty: "easy",
       advancedFeatures: [],
+      capabilityProfile,
     };
   }
 
   const reachability = await resolveReachableUrl(websiteUrl);
   if (!reachability.reachable || !reachability.finalUrl) {
+    const capabilityProfile = inferSiteCapabilityProfile({
+      category: (business.category as string) ?? null,
+    });
     const summary =
       "Website exists but could not be reached. It may be down, expired, or misconfigured.";
 
@@ -321,6 +341,7 @@ export async function auditBusiness(
       "unknown",
       "unknown",
       JSON.stringify([]),
+      JSON.stringify(capabilityProfile),
       JSON.stringify({ reason: "unreachable_website", requestedUrl: websiteUrl }),
       VISUAL_AUDIT_VERSION
     );
@@ -356,6 +377,7 @@ export async function auditBusiness(
       websiteComplexity: "unknown",
       replacementDifficulty: "unknown",
       advancedFeatures: [],
+      capabilityProfile,
     };
   }
 
@@ -402,7 +424,11 @@ export async function auditBusiness(
         businessName,
         message: `AI review unavailable for ${businessName}; using heuristic fallback`,
       });
-      review = buildFallbackReview(businessName, screenshot.pageSignals, error);
+      review = buildFallbackReview(
+        (business.category as string) ?? null,
+        screenshot.pageSignals,
+        error
+      );
     }
 
     const grade = normalizeGrade(review.grade);
@@ -416,6 +442,7 @@ export async function auditBusiness(
       review.replacementDifficulty
     );
     const advancedFeatures = review.advancedFeatures;
+    const capabilityProfile = review.capabilityProfile;
     const screenshotUrl = toPublicScreenshotUrl(screenshot.relativePath);
     const status = nextBusinessStatus(grade);
 
@@ -432,6 +459,7 @@ export async function auditBusiness(
       websiteComplexity,
       replacementDifficulty,
       JSON.stringify(advancedFeatures),
+      JSON.stringify(capabilityProfile),
       JSON.stringify({
         requestedUrl: websiteUrl,
         finalUrl: screenshot.finalUrl,
@@ -445,6 +473,7 @@ export async function auditBusiness(
         websiteComplexity,
         replacementDifficulty,
         advancedFeatures,
+        capabilityProfile,
       }),
       VISUAL_AUDIT_VERSION
     );
@@ -480,6 +509,7 @@ export async function auditBusiness(
       websiteComplexity,
       replacementDifficulty,
       advancedFeatures,
+      capabilityProfile,
     };
   } catch (err) {
     logActivity({

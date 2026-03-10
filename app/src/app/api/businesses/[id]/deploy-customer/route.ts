@@ -50,7 +50,9 @@ export async function POST(
     const status =
       message.includes("not found") || message.includes("No generated site")
         ? 404
-        : message.includes("token")
+        : message.includes("token") ||
+            message.includes("Settings") ||
+            message.startsWith("Add ")
           ? 422
           : 500;
     return NextResponse.json({ error: message }, { status });

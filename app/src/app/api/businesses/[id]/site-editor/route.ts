@@ -8,6 +8,7 @@ import {
   getLatestGeneratedSiteForBusiness,
   listSiteFiles,
   readSiteTextFile,
+  writeSiteBinaryFile,
   writeSiteTextFile,
 } from "@/lib/site-editor";
 
@@ -30,6 +31,32 @@ function getEditorPath(request: NextRequest): string | null {
   }
 
   return relativePath;
+}
+
+function getCanonicalAssetExtension(extension: string): string {
+  const normalized = extension.toLowerCase();
+  if (normalized === ".jpeg") {
+    return ".jpg";
+  }
+
+  return normalized;
+}
+
+function assertMatchingUploadExtension(
+  relativePath: string,
+  uploadedFileName: string
+): void {
+  const targetExtension = getCanonicalAssetExtension(path.extname(relativePath));
+  const uploadExtension = getCanonicalAssetExtension(path.extname(uploadedFileName));
+
+  if (!targetExtension || !uploadExtension || targetExtension === uploadExtension) {
+    return;
+  }
+
+  throw new SiteEditorError(
+    `Upload a ${targetExtension} file to replace this asset.`,
+    400
+  );
 }
 
 export async function GET(request: NextRequest, context: RouteContext) {
@@ -84,14 +111,35 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       throw new SiteEditorError("A site file path is required.", 400);
     }
 
-    const body = (await request.json()) as { content?: unknown };
-    if (typeof body.content !== "string") {
-      throw new SiteEditorError("A text file body is required.", 400);
+    const site = getLatestGeneratedSiteForBusiness(businessId);
+    const contentType = request.headers.get("content-type") ?? "";
+    let textContent: string | null = null;
+    let binaryContent: Buffer | null = null;
+
+    if (contentType.startsWith("multipart/form-data")) {
+      const formData = await request.formData();
+      const upload = formData.get("file");
+
+      if (!(upload instanceof File)) {
+        throw new SiteEditorError("An uploaded file is required.", 400);
+      }
+
+      assertMatchingUploadExtension(relativePath, upload.name);
+      binaryContent = Buffer.from(await upload.arrayBuffer());
+    } else {
+      const body = (await request.json()) as { content?: unknown };
+      if (typeof body.content !== "string") {
+        throw new SiteEditorError("A text file body is required.", 400);
+      }
+
+      textContent = body.content;
     }
 
-    const site = getLatestGeneratedSiteForBusiness(businessId);
     const backup = ensureSiteBackup(site);
-    const file = writeSiteTextFile(site.siteDir, relativePath, body.content);
+    const file =
+      binaryContent !== null
+        ? writeSiteBinaryFile(site.siteDir, relativePath, binaryContent)
+        : writeSiteTextFile(site.siteDir, relativePath, textContent ?? "");
 
     return NextResponse.json({
       success: true,

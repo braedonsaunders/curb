@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { NextRequest, NextResponse } from "next/server";
+import { applyPreviewAccessToSiteConfigScript } from "@/lib/site-preview-access";
 
 const SITES_DIR = path.resolve(process.cwd(), "..", "sites");
 
@@ -27,6 +28,8 @@ function getContentType(filePath: string): string {
       return "image/gif";
     case ".webp":
       return "image/webp";
+    case ".avif":
+      return "image/avif";
     case ".ico":
       return "image/x-icon";
     case ".txt":
@@ -86,10 +89,32 @@ async function serveSiteAsset(
 ): Promise<NextResponse> {
   const { path: requestedSegments } = await params;
   const segments = Array.isArray(requestedSegments) ? requestedSegments : [];
+  const siteSlug = segments[0] ?? "";
   const filePath = resolveRequestedFile(segments);
 
   if (!filePath) {
     return NextResponse.json({ error: "Site file not found" }, { status: 404 });
+  }
+
+  const siteRelativePath =
+    segments.length > 1 ? segments.slice(1).join("/") : "index.html";
+
+  if (
+    siteSlug &&
+    siteRelativePath === "assets/curb-site-config.js" &&
+    getContentType(filePath).startsWith("application/javascript")
+  ) {
+    const content = fs.readFileSync(filePath, "utf-8");
+
+    return new NextResponse(
+      applyPreviewAccessToSiteConfigScript(content, siteSlug),
+      {
+        headers: {
+          "content-type": getContentType(filePath),
+          "cache-control": "no-store",
+        },
+      }
+    );
   }
 
   if (getContentType(filePath).startsWith("text/html")) {

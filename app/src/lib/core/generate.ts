@@ -9,6 +9,7 @@ import { getConfig } from "../config";
 import { getDb } from "../db";
 import { initializeDatabase } from "../schema";
 import {
+  type BusinessPhotoAttachment,
   generateSite,
   modifySiteWithTools,
   recommendSiteArchitecture,
@@ -24,10 +25,30 @@ import {
   type WebsiteSourceSnapshot,
 } from "../website-source";
 import { captureWebsiteScreenshot } from "../website-screenshot";
+import {
+  applySiteCapabilityPackOverride,
+  buildSiteCapabilityManifest,
+  includeCmsPack,
+  includeStorePack,
+  normalizeSiteCapabilityProfile,
+  SITE_CAPABILITY_MANIFEST_PATH,
+  type SiteCapabilityInferenceContext,
+  type SiteCapabilityPackOverride,
+  type SiteCapabilityProfile,
+} from "../site-capabilities";
+import {
+  prepareManagedSiteBundle,
+  PUBLIC_PACK_RUNTIME_PATH,
+} from "../site-pack";
+import {
+  PREVIEW_ADMIN_QUERY_PARAM,
+  PREVIEW_ADMIN_STORAGE_NAMESPACE,
+} from "../site-preview-access";
 
 const SITES_DIR = path.resolve(process.cwd(), "..", "sites");
 const SOURCE_SNAPSHOT_PAGE_LIMIT = 12;
 const SOURCE_SCREENSHOT_LIMIT = 4;
+const BUSINESS_PHOTO_ATTACHMENT_LIMIT = 4;
 const EXISTING_SITE_FILE_LIMIT = 10;
 const EXISTING_SITE_MAX_CHARS = 45000;
 const EXISTING_SITE_MAX_CHARS_PER_FILE = 12000;
@@ -65,6 +86,7 @@ export interface GenerateResult {
   sitePath: string;
   version: number;
   generationTimeMs: number;
+  warnings: SiteGenerationWarning[];
 }
 
 export type SiteGenerationMode = "generate" | "modify" | "regenerate";
@@ -72,6 +94,20 @@ export type SiteGenerationMode = "generate" | "modify" | "regenerate";
 export interface GenerateSiteForBusinessOptions {
   mode?: SiteGenerationMode;
   prompt?: string;
+  siteCapabilityOverride?: SiteCapabilityPackOverride;
+}
+
+export interface SiteGenerationWarningDetail {
+  fromFilePath: string;
+  rawReference: string;
+  resolvedTarget: string;
+}
+
+export interface SiteGenerationWarning {
+  code: "missing-page-links";
+  title: string;
+  message: string;
+  details: SiteGenerationWarningDetail[];
 }
 
 interface GeneratedSiteFile {
@@ -536,6 +572,38 @@ function buildMissingPageLinkCorrectionPrompt(
     "Do not leave navigation, CTA, card, or footer links pointing at routes that are not returned as HTML pages.",
     examples,
   ].join(" ");
+}
+
+function formatMissingPageLinkSummary(
+  missingPageLinks: MissingPageLink[],
+  limit = 6
+): string {
+  return missingPageLinks
+    .slice(0, limit)
+    .map(
+      (issue) =>
+        `${issue.fromFilePath} -> ${issue.rawReference} (${issue.resolvedTarget})`
+    )
+    .join("; ");
+}
+
+function buildMissingPageLinkWarning(
+  missingPageLinks: MissingPageLink[]
+): SiteGenerationWarning {
+  const issueCount = missingPageLinks.length;
+
+  return {
+    code: "missing-page-links",
+    title: "Internal links need manual repair",
+    message: `The generated site still has ${issueCount} internal page link${
+      issueCount === 1 ? "" : "s"
+    } without matching HTML pages. The site was kept so you can fix the links manually or run a targeted modify pass.`,
+    details: missingPageLinks.map((issue) => ({
+      fromFilePath: issue.fromFilePath,
+      rawReference: issue.rawReference,
+      resolvedTarget: issue.resolvedTarget,
+    })),
+  };
 }
 
 function findMissingRequestedPageRoutes(
@@ -1821,7 +1889,9 @@ function readExistingSiteFiles(siteDir: string): ExistingSiteFile[] {
 }
 
 function buildPortableContactConfig(
-  businessData: BusinessData
+  businessData: BusinessData,
+  siteSlug: string,
+  siteCapabilityProfile: SiteCapabilityProfile
 ): string {
   const config = getConfig();
   const directRecipient = businessData.email?.trim() ?? "";
@@ -1835,6 +1905,10 @@ function buildPortableContactConfig(
 
   const siteConfig = {
     businessName: businessData.name,
+    site: {
+      slug: siteSlug,
+      businessName: businessData.name,
+    },
     contact: {
       recipientEmail,
       recipientSource,
@@ -1843,10 +1917,34 @@ function buildPortableContactConfig(
       fallbackMessage:
         "If your email app did not open, copy the prepared message below and send it manually.",
     },
+    cms: {
+      enabled: includeCmsPack(siteCapabilityProfile),
+      provider: siteCapabilityProfile.cms.provider,
+      ownerEmail: directRecipient || "",
+      firebase: {
+        apiKey: "",
+        authDomain: "",
+        projectId: "",
+        appId: "",
+        storageBucket: "",
+        messagingSenderId: "",
+      },
+      previewMode: {
+        enabled: false,
+        token: "",
+        queryParam: PREVIEW_ADMIN_QUERY_PARAM,
+        storageNamespace: PREVIEW_ADMIN_STORAGE_NAMESPACE,
+      },
+    },
+    commerce: {
+      enabled: includeStorePack(siteCapabilityProfile),
+      provider: siteCapabilityProfile.commerce.provider,
+      shopPath: "./shop/",
+    },
   };
 
   return [
-    "// Update recipientEmail before handing the site off to the customer if needed.",
+    "// Update recipientEmail, Firebase config, store provider, and product checkout links before handing the site off to the customer.",
     `window.CURB_SITE_CONFIG = ${JSON.stringify(siteConfig, null, 2)};`,
     "",
   ].join("\n");
@@ -2098,7 +2196,9 @@ const PORTABLE_CONTACT_RUNTIME = `(function () {
 
 function injectPortableRuntime(
   files: GeneratedSiteFile[],
-  businessData: BusinessData
+  businessData: BusinessData,
+  siteSlug: string,
+  siteCapabilityProfile: SiteCapabilityProfile
 ): GeneratedSiteFile[] {
   const fileMap = new Map<string, GeneratedSiteFile>();
 
@@ -2108,11 +2208,19 @@ function injectPortableRuntime(
 
   fileMap.set(CONTACT_CONFIG_PATH, {
     path: CONTACT_CONFIG_PATH,
-    content: buildPortableContactConfig(businessData),
+    content: buildPortableContactConfig(
+      businessData,
+      siteSlug,
+      siteCapabilityProfile
+    ),
   });
   fileMap.set(CONTACT_RUNTIME_PATH, {
     path: CONTACT_RUNTIME_PATH,
     content: `${PORTABLE_CONTACT_RUNTIME}\n`,
+  });
+  fileMap.set(SITE_CAPABILITY_MANIFEST_PATH, {
+    path: SITE_CAPABILITY_MANIFEST_PATH,
+    content: buildSiteCapabilityManifest(businessData.name, siteCapabilityProfile),
   });
   fileMap.set(VERCEL_CONFIG_PATH, {
     path: VERCEL_CONFIG_PATH,
@@ -2131,14 +2239,31 @@ function injectPortableRuntime(
       return file;
     }
 
+    if (file.path.startsWith("admin/")) {
+      return file;
+    }
+
     const configSrc = relativeHrefBetweenFiles(file.path, CONTACT_CONFIG_PATH);
     const runtimeSrc = relativeHrefBetweenFiles(file.path, CONTACT_RUNTIME_PATH);
+    const publicPackRuntimeSrc = relativeHrefBetweenFiles(
+      file.path,
+      PUBLIC_PACK_RUNTIME_PATH
+    );
+    const includeManagedPack =
+      includeCmsPack(siteCapabilityProfile) || includeStorePack(siteCapabilityProfile);
     const scriptMarkup = [
       `  <script src="${configSrc}"></script>`,
       `  <script src="${runtimeSrc}" defer></script>`,
+      ...(includeManagedPack
+        ? [
+            '  <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-app-compat.js"></script>',
+            '  <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore-compat.js"></script>',
+            `  <script src="${publicPackRuntimeSrc}" defer></script>`,
+          ]
+        : []),
     ].join("\n");
 
-    if (/curb-site-config\.js/i.test(file.content)) {
+    if (/curb-site-config\.js/i.test(file.content) && (!includeManagedPack || /curb-public-pack\.js/i.test(file.content))) {
       return file;
     }
 
@@ -2184,10 +2309,33 @@ function businessRowToData(
   };
 }
 
+function resolveCapabilityProfileForBusiness(
+  db: ReturnType<typeof getDb>,
+  businessId: number,
+  context: SiteCapabilityInferenceContext,
+  override?: SiteCapabilityPackOverride
+): SiteCapabilityProfile {
+  const latestAudit = db
+    .prepare(
+      `SELECT capability_profile_json
+      FROM audits
+      WHERE business_id = ? AND audit_version = 2
+      ORDER BY created_at DESC
+      LIMIT 1`
+    )
+    .get(businessId) as { capability_profile_json: string | null } | undefined;
+
+  return applySiteCapabilityPackOverride(
+    normalizeSiteCapabilityProfile(latestAudit?.capability_profile_json ?? null, context),
+    override
+  );
+}
+
 async function downloadPhotos(
   photosJson: string | null,
   slug: string,
-  siteDir: string
+  siteDir: string,
+  placeId?: string | null
 ): Promise<string[]> {
   if (!photosJson) return [];
 
@@ -2205,7 +2353,12 @@ async function downloadPhotos(
 
   for (const ref of toDownload) {
     try {
-      const relativePath = await downloadPlacePhoto(ref, slug, siteDir);
+      const relativePath = await downloadPlacePhoto(
+        ref,
+        slug,
+        siteDir,
+        placeId
+      );
       downloadedPaths.push(relativePath);
     } catch (err) {
       console.error(
@@ -2215,6 +2368,52 @@ async function downloadPhotos(
   }
 
   return downloadedPaths;
+}
+
+function loadBusinessPhotoAttachments(
+  siteDir: string,
+  relativePaths: string[]
+): BusinessPhotoAttachment[] {
+  const attachments: BusinessPhotoAttachment[] = [];
+  const seen = new Set<string>();
+
+  for (const relativePath of relativePaths) {
+    if (attachments.length >= BUSINESS_PHOTO_ATTACHMENT_LIMIT) {
+      break;
+    }
+
+    const normalizedPath = relativePath.trim().replaceAll("\\", "/");
+    if (!normalizedPath || seen.has(normalizedPath)) {
+      continue;
+    }
+    seen.add(normalizedPath);
+
+    const absolutePath = path.join(siteDir, normalizedPath);
+    if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+      continue;
+    }
+
+    const mediaType = inferImageMimeType(absolutePath);
+    if (!mediaType || !mediaType.startsWith("image/")) {
+      continue;
+    }
+
+    try {
+      attachments.push({
+        relativePath: normalizedPath,
+        imageBase64: fs.readFileSync(absolutePath).toString("base64"),
+        mediaType,
+      });
+    } catch (error) {
+      console.error(
+        `Failed to load local business photo attachment ${normalizedPath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  return attachments;
 }
 
 export async function generateSiteForBusiness(
@@ -2243,6 +2442,7 @@ export async function generateSiteForBusiness(
 
   const slug = business.slug as string;
   const name = business.name as string;
+  const placeId = (business.place_id as string | undefined) ?? null;
   const photosJson = business.photos_json as string | null;
   const websiteUrl = business.website_url as string | null;
 
@@ -2294,6 +2494,15 @@ export async function generateSiteForBusiness(
       > = {
         logo: readCachedSourceLogoAsset(siteDir, sourceSiteSnapshot),
       };
+      const siteCapabilityProfile = resolveCapabilityProfileForBusiness(
+        db,
+        businessId,
+        {
+          category: businessData.category,
+          sourceSiteSnapshot,
+        },
+        requestOptions.siteCapabilityOverride
+      );
 
       logActivity({
         kind: "generation",
@@ -2310,22 +2519,38 @@ export async function generateSiteForBusiness(
         sourceBrandAssets,
       });
 
+      let managedBundle = prepareManagedSiteBundle(
+        readGeneratedSiteFilesFromDirectory(outputSiteDir),
+        {
+          businessName: name,
+          siteSlug: slug,
+          siteCapabilityProfile,
+        }
+      );
       let normalizedFiles = stripMissingBundlerEntrypoints(
         injectPortableRuntime(
-          readGeneratedSiteFilesFromDirectory(outputSiteDir),
-          businessData
+          managedBundle.files,
+          businessData,
+          slug,
+          siteCapabilityProfile
         )
       );
-      const availableStaticAssetPaths = walkDirectoryFiles(outputSiteDir)
-        .map((fullPath) =>
-          path.relative(outputSiteDir, fullPath).split(path.sep).join("/")
+      const availableStaticAssetPaths = Array.from(
+        new Set(
+          [
+            ...walkDirectoryFiles(outputSiteDir).map((fullPath) =>
+              path.relative(outputSiteDir, fullPath).split(path.sep).join("/")
+            ),
+            ...normalizedFiles.map((file) => file.path),
+          ].filter((relativePath) => relativePath !== SOURCE_SNAPSHOT_FILE)
         )
-        .filter((relativePath) => relativePath !== SOURCE_SNAPSHOT_FILE);
+      );
       let bundleValidation = analyzeGeneratedBundle(
         normalizedFiles,
         requestedRouteAliases,
         availableStaticAssetPaths
       );
+      let generationWarnings: SiteGenerationWarning[] = [];
 
       const correctionPrompts: string[] = [];
       if (
@@ -2379,10 +2604,20 @@ export async function generateSiteForBusiness(
           sourceBrandAssets,
         });
 
+        managedBundle = prepareManagedSiteBundle(
+          readGeneratedSiteFilesFromDirectory(outputSiteDir),
+          {
+            businessName: name,
+            siteSlug: slug,
+            siteCapabilityProfile,
+          }
+        );
         normalizedFiles = stripMissingBundlerEntrypoints(
           injectPortableRuntime(
-            readGeneratedSiteFilesFromDirectory(outputSiteDir),
-            businessData
+            managedBundle.files,
+            businessData,
+            slug,
+            siteCapabilityProfile
           )
         );
         bundleValidation = analyzeGeneratedBundle(
@@ -2404,15 +2639,18 @@ export async function generateSiteForBusiness(
         }
 
         if (bundleValidation.missingPageLinks.length > 0) {
-          throw new Error(
-            `Updated site still contains internal page links without matching HTML pages: ${bundleValidation.missingPageLinks
-              .slice(0, 6)
-              .map(
-                (issue) =>
-                  `${issue.fromFilePath} -> ${issue.rawReference} (${issue.resolvedTarget})`
-              )
-              .join("; ")}`
-          );
+          generationWarnings = [
+            buildMissingPageLinkWarning(bundleValidation.missingPageLinks),
+          ];
+          logActivity({
+            kind: "generation",
+            stage: "warning",
+            businessId,
+            businessName: name,
+            message: `Updated site still contains internal page links without matching HTML pages for ${name}; keeping the bundle and surfacing a manual-fix warning. ${formatMissingPageLinkSummary(
+              bundleValidation.missingPageLinks
+            )}`,
+          });
         }
 
         if (bundleValidation.missingNonPageBundleReferences.length > 0) {
@@ -2479,8 +2717,8 @@ export async function generateSiteForBusiness(
       db.prepare(
         `INSERT INTO generated_sites (
           business_id, version, slug, site_path, prompt_used, model_used,
-          generation_time_ms, exported
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)`
+          generation_time_ms, warnings_json, exported
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`
       ).run(
         businessId,
         version,
@@ -2488,7 +2726,8 @@ export async function generateSiteForBusiness(
         sitePath,
         promptText,
         modelUsed,
-        generationTimeMs
+        generationTimeMs,
+        JSON.stringify(generationWarnings)
       );
 
       db.prepare(
@@ -2512,10 +2751,12 @@ export async function generateSiteForBusiness(
         sitePath: siteDir,
         version,
         generationTimeMs,
+        warnings: generationWarnings,
       };
     }
 
     let sourceSiteSnapshot: WebsiteSourceSnapshot | null = null;
+    let businessPhotos: NonNullable<GenerateSiteOptions["businessPhotos"]> = [];
 
     if (!isModificationRequest) {
       const assetsDir = path.join(outputSiteDir, "assets", "photos");
@@ -2528,7 +2769,16 @@ export async function generateSiteForBusiness(
         businessName: name,
         message: `Downloading local business photos for ${name}`,
       });
-      await downloadPhotos(photosJson, slug, outputSiteDir);
+      const downloadedBusinessPhotoPaths = await downloadPhotos(
+        photosJson,
+        slug,
+        outputSiteDir,
+        placeId
+      );
+      businessPhotos = loadBusinessPhotoAttachments(
+        outputSiteDir,
+        downloadedBusinessPhotoPaths
+      );
 
       logActivity({
         kind: "generation",
@@ -2638,9 +2888,31 @@ export async function generateSiteForBusiness(
       sourceBrandAssets,
       sourceSiteVisuals,
     });
+    const siteCapabilityProfile = resolveCapabilityProfileForBusiness(
+      db,
+      businessId,
+      {
+        category: businessData.category,
+        sourceSiteSnapshot,
+        sourceSiteVisualSignals: sourceSiteVisuals.map(
+          (visual) => visual.pageSignals
+        ),
+      },
+      requestOptions.siteCapabilityOverride
+    );
     const requiresMultiPageBundle =
       architectureRecommendation.mode === "multi-page" &&
       architectureRecommendation.required;
+
+    if (siteCapabilityProfile.operatingModel !== "static-only") {
+      logActivity({
+        kind: "generation",
+        stage: "model",
+        businessId,
+        businessName: name,
+        message: `Capability pack recommendation for ${name}: ${siteCapabilityProfile.packageSummary}`,
+      });
+    }
 
     logActivity({
       kind: "generation",
@@ -2657,25 +2929,43 @@ export async function generateSiteForBusiness(
       existingSiteFiles,
       sourceSiteSnapshot,
       sourceBrandAssets,
+      businessPhotos,
       sourceSiteVisuals,
+      siteCapabilityProfile,
     });
     let parsedFiles = parseGeneratedSiteFiles(payload);
+    let managedBundle = prepareManagedSiteBundle(
+      rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
+      {
+        businessName: name,
+        siteSlug: slug,
+        siteCapabilityProfile,
+      }
+    );
     let normalizedFiles = stripMissingBundlerEntrypoints(
       injectPortableRuntime(
-        rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
-        businessData
+        managedBundle.files,
+        businessData,
+        slug,
+        siteCapabilityProfile
       )
     );
-    const availableStaticAssetPaths = walkDirectoryFiles(outputSiteDir)
-      .map((fullPath) =>
-        path.relative(outputSiteDir, fullPath).split(path.sep).join("/")
+    const availableStaticAssetPaths = Array.from(
+      new Set(
+        [
+          ...walkDirectoryFiles(outputSiteDir).map((fullPath) =>
+            path.relative(outputSiteDir, fullPath).split(path.sep).join("/")
+          ),
+          ...normalizedFiles.map((file) => file.path),
+        ].filter((relativePath) => relativePath !== SOURCE_SNAPSHOT_FILE)
       )
-      .filter((relativePath) => relativePath !== SOURCE_SNAPSHOT_FILE);
+    );
     let bundleValidation = analyzeGeneratedBundle(
       normalizedFiles,
       requestedRouteAliases,
       availableStaticAssetPaths
     );
+    let generationWarnings: SiteGenerationWarning[] = [];
 
     const correctionPrompts: string[] = [];
     if (
@@ -2737,13 +3027,25 @@ export async function generateSiteForBusiness(
         existingSiteFiles: toEditableSiteFiles(normalizedFiles),
         sourceSiteSnapshot,
         sourceBrandAssets,
+        businessPhotos,
         sourceSiteVisuals,
+        siteCapabilityProfile,
       });
       parsedFiles = parseGeneratedSiteFiles(payload);
+      managedBundle = prepareManagedSiteBundle(
+        rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
+        {
+          businessName: name,
+          siteSlug: slug,
+          siteCapabilityProfile,
+        }
+      );
       normalizedFiles = stripMissingBundlerEntrypoints(
         injectPortableRuntime(
-          rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
-          businessData
+          managedBundle.files,
+          businessData,
+          slug,
+          siteCapabilityProfile
         )
       );
       bundleValidation = analyzeGeneratedBundle(
@@ -2771,15 +3073,18 @@ export async function generateSiteForBusiness(
       }
 
       if (bundleValidation.missingPageLinks.length > 0) {
-        throw new Error(
-          `Generated site still contains internal page links without matching HTML pages: ${bundleValidation.missingPageLinks
-            .slice(0, 6)
-            .map(
-              (issue) =>
-                `${issue.fromFilePath} -> ${issue.rawReference} (${issue.resolvedTarget})`
-            )
-            .join("; ")}`
-        );
+        generationWarnings = [
+          buildMissingPageLinkWarning(bundleValidation.missingPageLinks),
+        ];
+        logActivity({
+          kind: "generation",
+          stage: "warning",
+          businessId,
+          businessName: name,
+          message: `Generated site still contains internal page links without matching HTML pages for ${name}; keeping the bundle and surfacing a manual-fix warning. ${formatMissingPageLinkSummary(
+            bundleValidation.missingPageLinks
+          )}`,
+        });
       }
 
       if (bundleValidation.missingNonPageBundleReferences.length > 0) {
@@ -2857,8 +3162,8 @@ export async function generateSiteForBusiness(
     db.prepare(
       `INSERT INTO generated_sites (
         business_id, version, slug, site_path, prompt_used, model_used,
-        generation_time_ms, exported
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)`
+        generation_time_ms, warnings_json, exported
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`
     ).run(
       businessId,
       version,
@@ -2866,7 +3171,8 @@ export async function generateSiteForBusiness(
       sitePath,
       promptText ?? null,
       modelUsed,
-      generationTimeMs
+      generationTimeMs,
+      JSON.stringify(generationWarnings)
     );
 
     // Update business status
@@ -2891,6 +3197,7 @@ export async function generateSiteForBusiness(
       sitePath: siteDir,
       version,
       generationTimeMs,
+      warnings: generationWarnings,
     };
   } catch (error) {
     logActivity({

@@ -9,6 +9,7 @@ import {
   type AiProvider,
   type AnthropicAuthMode,
   type Config,
+  type DeploymentProvider,
   type OpenAIAuthMode,
 } from "@/lib/config";
 import { listProviderModelsFromApi } from "@/lib/provider-models";
@@ -47,11 +48,33 @@ interface SettingsPayload {
     categories: string[];
     siteBaseUrl: string;
   };
-  vercel: {
-    token: string;
-    teamId: string;
-    previewProjectId: string;
-    previewRootDomain: string;
+  deployments: {
+    previewProvider: DeploymentProvider;
+    customerProvider: DeploymentProvider;
+    vercel: {
+      token: string;
+      teamId: string;
+      previewProjectId: string;
+      previewRootDomain: string;
+    };
+    cloudflare: {
+      apiToken: string;
+      accountId: string;
+      previewProjectName: string;
+      customerProductionBranch: string;
+    };
+    sharedServer: {
+      host: string;
+      port: number;
+      user: string;
+      privateKey: string;
+      knownHosts: string;
+      remoteBasePath: string;
+      previewUrlTemplate: string;
+      customerUrlTemplate: string;
+      previewPostDeployCommand: string;
+      customerPostDeployCommand: string;
+    };
   };
   outreach: {
     yourName: string;
@@ -67,7 +90,7 @@ interface SettingsPayload {
 type WritableSettingsSection =
   | "credentials"
   | "defaults"
-  | "vercel"
+  | "deployments"
   | "outreach"
   | "pricing";
 
@@ -95,11 +118,33 @@ function toSettingsPayload(config: Config): SettingsPayload {
       categories: config.defaultCategories,
       siteBaseUrl: config.siteBaseUrl,
     },
-    vercel: {
-      token: config.vercelToken,
-      teamId: config.vercelTeamId,
-      previewProjectId: config.vercelPreviewProjectId,
-      previewRootDomain: config.vercelPreviewRootDomain,
+    deployments: {
+      previewProvider: config.previewDeploymentProvider,
+      customerProvider: config.customerDeploymentProvider,
+      vercel: {
+        token: config.vercelToken,
+        teamId: config.vercelTeamId,
+        previewProjectId: config.vercelPreviewProjectId,
+        previewRootDomain: config.vercelPreviewRootDomain,
+      },
+      cloudflare: {
+        apiToken: config.cloudflareApiToken,
+        accountId: config.cloudflareAccountId,
+        previewProjectName: config.cloudflarePreviewProjectName,
+        customerProductionBranch: config.cloudflareCustomerProductionBranch,
+      },
+      sharedServer: {
+        host: config.sshHost,
+        port: config.sshPort,
+        user: config.sshUser,
+        privateKey: config.sshPrivateKey,
+        knownHosts: config.sshKnownHosts,
+        remoteBasePath: config.sshRemoteBasePath,
+        previewUrlTemplate: config.sshPreviewUrlTemplate,
+        customerUrlTemplate: config.sshCustomerUrlTemplate,
+        previewPostDeployCommand: config.sshPreviewPostDeployCommand,
+        customerPostDeployCommand: config.sshCustomerPostDeployCommand,
+      },
     },
     outreach: {
       yourName: config.ownerName,
@@ -133,6 +178,14 @@ function normalizeAiProvider(value: unknown): AiProvider {
   }
 
   return "anthropic";
+}
+
+function normalizeDeploymentProvider(value: unknown): DeploymentProvider {
+  if (value === "cloudflare-pages" || value === "ssh-static") {
+    return value;
+  }
+
+  return "vercel";
 }
 
 function flattenSettingsPayload(
@@ -178,12 +231,56 @@ function flattenSettingsPayload(
     };
   }
 
-  if (section === "vercel") {
+  if (section === "deployments") {
+    const vercel =
+      source.vercel && typeof source.vercel === "object"
+        ? (source.vercel as Record<string, unknown>)
+        : {};
+    const cloudflare =
+      source.cloudflare && typeof source.cloudflare === "object"
+        ? (source.cloudflare as Record<string, unknown>)
+        : {};
+    const sharedServer =
+      source.sharedServer && typeof source.sharedServer === "object"
+        ? (source.sharedServer as Record<string, unknown>)
+        : {};
+    const port = Number.parseInt(String(sharedServer.port ?? ""), 10);
+
     return {
-      vercelToken: String(source.token ?? ""),
-      vercelTeamId: String(source.teamId ?? "").trim(),
-      vercelPreviewProjectId: String(source.previewProjectId ?? "").trim(),
-      vercelPreviewRootDomain: String(source.previewRootDomain ?? "").trim(),
+      previewDeploymentProvider: normalizeDeploymentProvider(
+        source.previewProvider
+      ),
+      customerDeploymentProvider: normalizeDeploymentProvider(
+        source.customerProvider
+      ),
+      vercelToken: String(vercel.token ?? ""),
+      vercelTeamId: String(vercel.teamId ?? "").trim(),
+      vercelPreviewProjectId: String(vercel.previewProjectId ?? "").trim(),
+      vercelPreviewRootDomain: String(vercel.previewRootDomain ?? "").trim(),
+      cloudflareApiToken: String(cloudflare.apiToken ?? ""),
+      cloudflareAccountId: String(cloudflare.accountId ?? "").trim(),
+      cloudflarePreviewProjectName: String(
+        cloudflare.previewProjectName ?? ""
+      ).trim(),
+      cloudflareCustomerProductionBranch: String(
+        cloudflare.customerProductionBranch ?? ""
+      ).trim(),
+      sshHost: String(sharedServer.host ?? "").trim(),
+      sshPort: Number.isFinite(port) && port > 0 ? port : 22,
+      sshUser: String(sharedServer.user ?? "").trim(),
+      sshPrivateKey: String(sharedServer.privateKey ?? ""),
+      sshKnownHosts: String(sharedServer.knownHosts ?? ""),
+      sshRemoteBasePath: String(sharedServer.remoteBasePath ?? "").trim(),
+      sshPreviewUrlTemplate: String(sharedServer.previewUrlTemplate ?? "").trim(),
+      sshCustomerUrlTemplate: String(
+        sharedServer.customerUrlTemplate ?? ""
+      ).trim(),
+      sshPreviewPostDeployCommand: String(
+        sharedServer.previewPostDeployCommand ?? ""
+      ),
+      sshCustomerPostDeployCommand: String(
+        sharedServer.customerPostDeployCommand ?? ""
+      ),
     };
   }
 
@@ -219,8 +316,8 @@ function flattenFullPayload(data: unknown): Partial<Config> {
     ...("defaults" in source
       ? flattenSettingsPayload("defaults", source.defaults)
       : {}),
-    ...("vercel" in source
-      ? flattenSettingsPayload("vercel", source.vercel)
+    ...("deployments" in source
+      ? flattenSettingsPayload("deployments", source.deployments)
       : {}),
     ...("outreach" in source
       ? flattenSettingsPayload("outreach", source.outreach)

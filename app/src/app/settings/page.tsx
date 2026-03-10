@@ -29,6 +29,7 @@ import {
 import type {
   AiProvider,
   AnthropicAuthMode,
+  DeploymentProvider,
   OpenAIAuthMode,
 } from "@/lib/config";
 import { formatStoredDateTime } from "@/lib/datetime";
@@ -83,11 +84,33 @@ interface SettingsData {
     categories: string[];
     siteBaseUrl: string;
   };
-  vercel: {
-    token: string;
-    teamId: string;
-    previewProjectId: string;
-    previewRootDomain: string;
+  deployments: {
+    previewProvider: DeploymentProvider;
+    customerProvider: DeploymentProvider;
+    vercel: {
+      token: string;
+      teamId: string;
+      previewProjectId: string;
+      previewRootDomain: string;
+    };
+    cloudflare: {
+      apiToken: string;
+      accountId: string;
+      previewProjectName: string;
+      customerProductionBranch: string;
+    };
+    sharedServer: {
+      host: string;
+      port: number;
+      user: string;
+      privateKey: string;
+      knownHosts: string;
+      remoteBasePath: string;
+      previewUrlTemplate: string;
+      customerUrlTemplate: string;
+      previewPostDeployCommand: string;
+      customerPostDeployCommand: string;
+    };
   };
   outreach: {
     yourName: string;
@@ -142,7 +165,11 @@ type SettingsResponse = Partial<
   anthropicOAuth?: Partial<SettingsData["anthropicOAuth"]>;
   openaiOAuth?: Partial<SettingsData["openaiOAuth"]>;
   defaults?: Partial<SettingsData["defaults"]>;
-  vercel?: Partial<SettingsData["vercel"]>;
+  deployments?: Partial<SettingsData["deployments"]> & {
+    vercel?: Partial<SettingsData["deployments"]["vercel"]>;
+    cloudflare?: Partial<SettingsData["deployments"]["cloudflare"]>;
+    sharedServer?: Partial<SettingsData["deployments"]["sharedServer"]>;
+  };
   outreach?: Partial<SettingsData["outreach"]>;
   pricing?: Partial<SettingsData["pricing"]>;
 };
@@ -181,14 +208,42 @@ const DEFAULT_SETTINGS: SettingsData = {
     categories: [],
     siteBaseUrl: "http://localhost:3000/sites",
   },
-  vercel: {
-    token: "",
-    teamId: "",
-    previewProjectId: "",
-    previewRootDomain: "",
+  deployments: {
+    previewProvider: "vercel",
+    customerProvider: "vercel",
+    vercel: {
+      token: "",
+      teamId: "",
+      previewProjectId: "",
+      previewRootDomain: "",
+    },
+    cloudflare: {
+      apiToken: "",
+      accountId: "",
+      previewProjectName: "",
+      customerProductionBranch: "production",
+    },
+    sharedServer: {
+      host: "",
+      port: 22,
+      user: "",
+      privateKey: "",
+      knownHosts: "",
+      remoteBasePath: "/var/www/curb",
+      previewUrlTemplate: "https://preview.example.com/{slug}",
+      customerUrlTemplate: "https://sites.example.com/{slug}",
+      previewPostDeployCommand: "",
+      customerPostDeployCommand: "",
+    },
   },
   outreach: { yourName: "", businessName: "", address: "", email: "" },
   pricing: { text: "" },
+};
+
+const DEPLOYMENT_PROVIDER_LABELS: Record<DeploymentProvider, string> = {
+  vercel: "Vercel",
+  "cloudflare-pages": "Cloudflare Pages",
+  "ssh-static": "Shared Server",
 };
 
 const PROVIDER_MODEL_FIELDS = {
@@ -282,7 +337,22 @@ function normalizeSettingsData(data: SettingsResponse): SettingsData {
       ...(data.openaiOAuth ?? {}),
     },
     defaults: { ...DEFAULT_SETTINGS.defaults, ...(data.defaults ?? {}) },
-    vercel: { ...DEFAULT_SETTINGS.vercel, ...(data.vercel ?? {}) },
+    deployments: {
+      ...DEFAULT_SETTINGS.deployments,
+      ...(data.deployments ?? {}),
+      vercel: {
+        ...DEFAULT_SETTINGS.deployments.vercel,
+        ...(data.deployments?.vercel ?? {}),
+      },
+      cloudflare: {
+        ...DEFAULT_SETTINGS.deployments.cloudflare,
+        ...(data.deployments?.cloudflare ?? {}),
+      },
+      sharedServer: {
+        ...DEFAULT_SETTINGS.deployments.sharedServer,
+        ...(data.deployments?.sharedServer ?? {}),
+      },
+    },
     outreach: { ...DEFAULT_SETTINGS.outreach, ...(data.outreach ?? {}) },
     pricing: { ...DEFAULT_SETTINGS.pricing, ...(data.pricing ?? {}) },
   };
@@ -302,6 +372,8 @@ export default function SettingsPage() {
     googleApiKey: false,
     openrouterApiKey: false,
     vercelToken: false,
+    cloudflareApiToken: false,
+    sshPrivateKey: false,
   });
   const [oauthPhase, setOauthPhase] = useState<
     "idle" | "waiting" | "exchanging" | "disconnecting"
@@ -531,13 +603,52 @@ export default function SettingsPage() {
     }));
   }
 
+  function updateDeploymentProviders(
+    key: "previewProvider" | "customerProvider",
+    value: DeploymentProvider
+  ) {
+    setSettings((prev) => ({
+      ...prev,
+      deployments: { ...prev.deployments, [key]: value },
+    }));
+  }
+
   function updateVercel(
-    key: keyof SettingsData["vercel"],
+    key: keyof SettingsData["deployments"]["vercel"],
     value: string
   ) {
     setSettings((prev) => ({
       ...prev,
-      vercel: { ...prev.vercel, [key]: value },
+      deployments: {
+        ...prev.deployments,
+        vercel: { ...prev.deployments.vercel, [key]: value },
+      },
+    }));
+  }
+
+  function updateCloudflare(
+    key: keyof SettingsData["deployments"]["cloudflare"],
+    value: string
+  ) {
+    setSettings((prev) => ({
+      ...prev,
+      deployments: {
+        ...prev.deployments,
+        cloudflare: { ...prev.deployments.cloudflare, [key]: value },
+      },
+    }));
+  }
+
+  function updateSharedServer(
+    key: keyof SettingsData["deployments"]["sharedServer"],
+    value: string | number
+  ) {
+    setSettings((prev) => ({
+      ...prev,
+      deployments: {
+        ...prev.deployments,
+        sharedServer: { ...prev.deployments.sharedServer, [key]: value },
+      },
     }));
   }
 
@@ -1018,120 +1129,456 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="vercel" className="space-y-6">
+      <Tabs defaultValue="deployments" className="space-y-6">
         <TabsList className="h-auto flex-wrap">
-          <TabsTrigger value="vercel">Vercel</TabsTrigger>
+          <TabsTrigger value="deployments">Deployments</TabsTrigger>
           <TabsTrigger value="credentials">AI & APIs</TabsTrigger>
           <TabsTrigger value="defaults">Defaults</TabsTrigger>
           <TabsTrigger value="outreach">Outreach</TabsTrigger>
           <TabsTrigger value="pricing">Pricing</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="vercel" className="space-y-6">
+        <TabsContent value="deployments" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Link2 className="size-4" />
-                Vercel Deployments
+                Deployment Targets
               </CardTitle>
               <CardDescription>
-                Shared preview-project settings plus the credentials needed to
-                spin up dedicated customer projects later.
+                Choose the provider used for previews and customer launches,
+                then fill in the credentials for any provider you want Curb to
+                use.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="vercelToken">Vercel Token</Label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
+            <CardContent className="space-y-6">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="previewDeploymentProvider">
+                    Preview Provider
+                  </Label>
+                  <Select
+                    value={settings.deployments.previewProvider}
+                    onValueChange={(value) =>
+                      updateDeploymentProviders(
+                        "previewProvider",
+                        value as DeploymentProvider
+                      )
+                    }
+                  >
+                    <SelectTrigger id="previewDeploymentProvider">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(
+                        Object.entries(DEPLOYMENT_PROVIDER_LABELS) as Array<
+                          [DeploymentProvider, string]
+                        >
+                      ).map(([provider, label]) => (
+                        <SelectItem key={provider} value={provider}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    This provider handles the public preview URL attached to a
+                    generated site.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="customerDeploymentProvider">
+                    Customer Provider
+                  </Label>
+                  <Select
+                    value={settings.deployments.customerProvider}
+                    onValueChange={(value) =>
+                      updateDeploymentProviders(
+                        "customerProvider",
+                        value as DeploymentProvider
+                      )
+                    }
+                  >
+                    <SelectTrigger id="customerDeploymentProvider">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(
+                        Object.entries(DEPLOYMENT_PROVIDER_LABELS) as Array<
+                          [DeploymentProvider, string]
+                        >
+                      ).map(([provider, label]) => (
+                        <SelectItem key={provider} value={provider}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    This provider handles the live customer deployment flow.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-3">
+                <div className="space-y-4 rounded-xl border p-4">
+                  <div className="space-y-1">
+                    <p className="font-medium">Vercel</p>
+                    <p className="text-xs text-muted-foreground">
+                      Best when you want shared preview projects and per-customer
+                      dedicated projects managed fully inside Vercel.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="vercelToken">Token</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          id="vercelToken"
+                          type={showKeys.vercelToken ? "text" : "password"}
+                          value={settings.deployments.vercel.token}
+                          onChange={(e) => updateVercel("token", e.target.value)}
+                          placeholder="Enter a Vercel access token"
+                        />
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() => toggleKeyVisibility("vercelToken")}
+                      >
+                        {showKeys.vercelToken ? (
+                          <EyeOff className="size-4" />
+                        ) : (
+                          <Eye className="size-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="vercelTeamId">Team ID</Label>
                     <Input
-                      id="vercelToken"
-                      type={showKeys.vercelToken ? "text" : "password"}
-                      value={settings.vercel.token}
-                      onChange={(e) => updateVercel("token", e.target.value)}
-                      placeholder="Enter a Vercel access token"
+                      id="vercelTeamId"
+                      value={settings.deployments.vercel.teamId}
+                      onChange={(e) => updateVercel("teamId", e.target.value)}
+                      placeholder="Optional for personal accounts"
                     />
                   </div>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => toggleKeyVisibility("vercelToken")}
-                  >
-                    {showKeys.vercelToken ? (
-                      <EyeOff className="size-4" />
-                    ) : (
-                      <Eye className="size-4" />
-                    )}
-                  </Button>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="vercelPreviewProjectId">
+                      Preview Project ID
+                    </Label>
+                    <Input
+                      id="vercelPreviewProjectId"
+                      value={settings.deployments.vercel.previewProjectId}
+                      onChange={(e) =>
+                        updateVercel("previewProjectId", e.target.value)
+                      }
+                      placeholder="Existing shared preview project"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="vercelPreviewRootDomain">
+                      Preview Root Domain
+                    </Label>
+                    <Input
+                      id="vercelPreviewRootDomain"
+                      value={settings.deployments.vercel.previewRootDomain}
+                      onChange={(e) =>
+                        updateVercel("previewRootDomain", e.target.value)
+                      }
+                      placeholder="preview.example.com"
+                    />
+                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Use a token from the Vercel account or team that should own
-                  the preview and customer projects.
-                </p>
+
+                <div className="space-y-4 rounded-xl border p-4">
+                  <div className="space-y-1">
+                    <p className="font-medium">Cloudflare Pages</p>
+                    <p className="text-xs text-muted-foreground">
+                      Uses direct uploads through a pinned local Wrangler binary
+                      and can create dedicated customer projects automatically.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="cloudflareApiToken">API Token</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          id="cloudflareApiToken"
+                          type={showKeys.cloudflareApiToken ? "text" : "password"}
+                          value={settings.deployments.cloudflare.apiToken}
+                          onChange={(e) =>
+                            updateCloudflare("apiToken", e.target.value)
+                          }
+                          placeholder="Enter a Cloudflare API token"
+                        />
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() => toggleKeyVisibility("cloudflareApiToken")}
+                      >
+                        {showKeys.cloudflareApiToken ? (
+                          <EyeOff className="size-4" />
+                        ) : (
+                          <Eye className="size-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="cloudflareAccountId">Account ID</Label>
+                    <Input
+                      id="cloudflareAccountId"
+                      value={settings.deployments.cloudflare.accountId}
+                      onChange={(e) =>
+                        updateCloudflare("accountId", e.target.value)
+                      }
+                      placeholder="Cloudflare account id"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="cloudflarePreviewProjectName">
+                      Preview Project Name
+                    </Label>
+                    <Input
+                      id="cloudflarePreviewProjectName"
+                      value={settings.deployments.cloudflare.previewProjectName}
+                      onChange={(e) =>
+                        updateCloudflare("previewProjectName", e.target.value)
+                      }
+                      placeholder="curb-previews"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="cloudflareCustomerProductionBranch">
+                      Customer Production Branch
+                    </Label>
+                    <Input
+                      id="cloudflareCustomerProductionBranch"
+                      value={
+                        settings.deployments.cloudflare.customerProductionBranch
+                      }
+                      onChange={(e) =>
+                        updateCloudflare(
+                          "customerProductionBranch",
+                          e.target.value
+                        )
+                      }
+                      placeholder="production"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-4 rounded-xl border p-4">
+                  <div className="space-y-1">
+                    <p className="font-medium">Shared Server</p>
+                    <p className="text-xs text-muted-foreground">
+                      Uploads versioned releases over SSH/SCP, swaps a `current`
+                      symlink, and can run your own post-deploy hook to wire
+                      routing or TLS.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="sharedServerHost">Host</Label>
+                      <Input
+                        id="sharedServerHost"
+                        value={settings.deployments.sharedServer.host}
+                        onChange={(e) => updateSharedServer("host", e.target.value)}
+                        placeholder="deploy.example.com"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="sharedServerPort">Port</Label>
+                      <Input
+                        id="sharedServerPort"
+                        type="number"
+                        value={settings.deployments.sharedServer.port}
+                        onChange={(e) =>
+                          updateSharedServer(
+                            "port",
+                            Number.parseInt(e.target.value, 10) || 22
+                          )
+                        }
+                        placeholder="22"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sharedServerUser">User</Label>
+                    <Input
+                      id="sharedServerUser"
+                      value={settings.deployments.sharedServer.user}
+                      onChange={(e) => updateSharedServer("user", e.target.value)}
+                      placeholder="deploy"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sharedServerPrivateKey">Private Key</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Textarea
+                          id="sharedServerPrivateKey"
+                          value={settings.deployments.sharedServer.privateKey}
+                          onChange={(e) =>
+                            updateSharedServer("privateKey", e.target.value)
+                          }
+                          placeholder="Optional if your SSH agent already has the key loaded"
+                          rows={5}
+                          className={showKeys.sshPrivateKey ? "" : "[text-security:disc]"}
+                        />
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="shrink-0"
+                        onClick={() => toggleKeyVisibility("sshPrivateKey")}
+                      >
+                        {showKeys.sshPrivateKey ? (
+                          <EyeOff className="size-4" />
+                        ) : (
+                          <Eye className="size-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sharedServerKnownHosts">Known Hosts</Label>
+                    <Textarea
+                      id="sharedServerKnownHosts"
+                      value={settings.deployments.sharedServer.knownHosts}
+                      onChange={(e) =>
+                        updateSharedServer("knownHosts", e.target.value)
+                      }
+                      placeholder="Optional. Paste a known_hosts entry to pin the server host key."
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sharedServerRemoteBasePath">
+                      Remote Base Path
+                    </Label>
+                    <Input
+                      id="sharedServerRemoteBasePath"
+                      value={settings.deployments.sharedServer.remoteBasePath}
+                      onChange={(e) =>
+                        updateSharedServer("remoteBasePath", e.target.value)
+                      }
+                      placeholder="/var/www/curb"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sharedServerPreviewUrlTemplate">
+                      Preview URL Template
+                    </Label>
+                    <Input
+                      id="sharedServerPreviewUrlTemplate"
+                      value={settings.deployments.sharedServer.previewUrlTemplate}
+                      onChange={(e) =>
+                        updateSharedServer("previewUrlTemplate", e.target.value)
+                      }
+                      placeholder="https://preview.example.com/{slug}"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sharedServerCustomerUrlTemplate">
+                      Customer URL Template
+                    </Label>
+                    <Input
+                      id="sharedServerCustomerUrlTemplate"
+                      value={settings.deployments.sharedServer.customerUrlTemplate}
+                      onChange={(e) =>
+                        updateSharedServer("customerUrlTemplate", e.target.value)
+                      }
+                      placeholder="https://sites.example.com/{slug}"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sharedServerPreviewPostDeployCommand">
+                      Preview Post-Deploy Command
+                    </Label>
+                    <Textarea
+                      id="sharedServerPreviewPostDeployCommand"
+                      value={
+                        settings.deployments.sharedServer.previewPostDeployCommand
+                      }
+                      onChange={(e) =>
+                        updateSharedServer(
+                          "previewPostDeployCommand",
+                          e.target.value
+                        )
+                      }
+                      placeholder="Optional. Supports placeholders like {slug}, {deployment_dir}, {current_dir}, and {deployment_url}."
+                      rows={3}
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sharedServerCustomerPostDeployCommand">
+                      Customer Post-Deploy Command
+                    </Label>
+                    <Textarea
+                      id="sharedServerCustomerPostDeployCommand"
+                      value={
+                        settings.deployments.sharedServer.customerPostDeployCommand
+                      }
+                      onChange={(e) =>
+                        updateSharedServer(
+                          "customerPostDeployCommand",
+                          e.target.value
+                        )
+                      }
+                      placeholder="Optional. Use this to provision vhosts, reload Caddy/Nginx, or request certificates."
+                      rows={3}
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="vercelTeamId">Team ID</Label>
-                  <Input
-                    id="vercelTeamId"
-                    value={settings.vercel.teamId}
-                    onChange={(e) => updateVercel("teamId", e.target.value)}
-                    placeholder="Optional for personal accounts"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Leave blank if you deploy into your personal Vercel account.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="vercelPreviewProjectId">
-                    Preview Project ID
-                  </Label>
-                  <Input
-                    id="vercelPreviewProjectId"
-                    value={settings.vercel.previewProjectId}
-                    onChange={(e) =>
-                      updateVercel("previewProjectId", e.target.value)
-                    }
-                    placeholder="Existing shared preview project"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Curb deploys every prospect preview into this one project.
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="vercelPreviewRootDomain">
-                  Preview Root Domain
-                </Label>
-                <Input
-                  id="vercelPreviewRootDomain"
-                  value={settings.vercel.previewRootDomain}
-                  onChange={(e) =>
-                    updateVercel("previewRootDomain", e.target.value)
-                  }
-                  placeholder="preview.example.com"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Optional, but recommended. Curb aliases previews to
-                  `slug.preview.example.com` when this is set and available on
-                  your Vercel account.
-                </p>
+              <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
+                Active preview target:{" "}
+                {
+                  DEPLOYMENT_PROVIDER_LABELS[
+                    settings.deployments.previewProvider
+                  ]
+                }
+                . Active customer target:{" "}
+                {
+                  DEPLOYMENT_PROVIDER_LABELS[
+                    settings.deployments.customerProvider
+                  ]
+                }
+                .
               </div>
 
               <div className="flex justify-end pt-2">
                 <Button
-                  onClick={() => saveSection("vercel")}
-                  disabled={saving === "vercel"}
+                  onClick={() => saveSection("deployments")}
+                  disabled={saving === "deployments"}
                 >
-                  {saving === "vercel" ? (
+                  {saving === "deployments" ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : (
                     <Save className="size-4" />
                   )}
-                  Save Vercel Settings
+                  Save Deployment Settings
                 </Button>
               </div>
             </CardContent>

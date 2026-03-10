@@ -154,6 +154,17 @@ Technical requirements:
 - Multi-page is required when there are multiple substantive source pages, large
   navigation, distinct service or content pages, or complex flows such as
   store, booking, or portal behavior.
+- When the Capability Recommendation section says `static-only`, do not invent
+  login CMS UI, admin dashboards, carts, or fake store mechanics.
+- When the Capability Recommendation section recommends a lightweight CMS pack,
+  keep the public experience static but organize content into stable sections
+  and dedicated pages so an owner-edit layer can be attached cleanly later.
+- When the Capability Recommendation section recommends a lightweight store
+  pack, give products or offerings a clear dedicated page or section and keep
+  checkout assumptions simple enough for per-product payment links later.
+- If the Capability Recommendation section says `custom-app`, keep the
+  marketing site excellent, but do not fake authenticated or highly dynamic app
+  flows inside the static bundle.
 - If single-page, internal navigation must use working anchor links, never
   root-relative paths like `/about-us/`.
 - If multi-page, return a complete static site bundle with valid relative
@@ -166,6 +177,9 @@ Technical requirements:
 - Contact and quote forms must remain static-hosting friendly: use ordinary HTML
   forms, avoid framework handlers, and prefer adding `data-curb-contact-form="true"`
   on lead forms.
+- Treat any attached local business photos as primary visual evidence for real
+  colors, signage, atmosphere, and which bundled photos should be used on the
+  site.
 - If local business photos are provided, they may be referenced from
   `./assets/photos/...` where appropriate.
 - Use only implementation complexity that the concept can justify. Elegant
