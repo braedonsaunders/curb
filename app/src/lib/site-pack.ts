@@ -98,6 +98,46 @@ export const HANDOFF_FIRESTORE_INDEXES_PATH =
   "handoff/firestore.indexes.json";
 export const HANDOFF_OWNERSHIP_PATH = "handoff/OWNER_SETUP.md";
 
+type SiteErrorPageSpec = {
+  path: string;
+  statusCode: number;
+  title: string;
+  message: string;
+};
+
+const STANDARD_ERROR_PAGES: SiteErrorPageSpec[] = [
+  {
+    path: "401.html",
+    statusCode: 401,
+    title: "Sign-in required",
+    message: "This page needs valid access before it can be viewed.",
+  },
+  {
+    path: "403.html",
+    statusCode: 403,
+    title: "Access restricted",
+    message: "This page is unavailable with the permissions currently in use.",
+  },
+  {
+    path: "404.html",
+    statusCode: 404,
+    title: "Page not found",
+    message: "The page you requested could not be found in this site.",
+  },
+  {
+    path: "500.html",
+    statusCode: 500,
+    title: "Something went wrong",
+    message: "An unexpected error prevented this page from loading correctly.",
+  },
+  {
+    path: "503.html",
+    statusCode: 503,
+    title: "Temporarily unavailable",
+    message: "This page is unavailable right now. Please try again shortly.",
+  },
+];
+
 const MAX_TEXT_FIELDS_PER_PAGE = 24;
 const MAX_LINK_FIELDS_PER_PAGE = 12;
 const MAX_IMAGE_FIELDS_PER_PAGE = 12;
@@ -164,6 +204,11 @@ const AUTHOR_HINT_RE = /(author|byline)/i;
 const SOURCE_HINT_RE = /(source|company|location|venue)/i;
 const SUBTITLE_HINT_RE = /(subtitle|subheading|role|position|location|venue|price)/i;
 const MEDIA_HINT_RE = /(image|media|photo|thumb|logo|avatar|artwork|icon|emoji)/i;
+const HEADER_LOGO_CONTEXT_RE =
+  /(header|nav|navbar|masthead|topbar|top-bar|brand|logo|wordmark)/i;
+const HEADER_LOGO_EXCLUDED_RE =
+  /(footer|sidebar|drawer|offcanvas|modal|dialog|popup|banner-ad|ad-)/i;
+const HEADER_LOGO_ASSET_RE = /(source-logo|logo|brand|wordmark)/i;
 const DATE_TEXT_RE =
   /\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b|\b\d{1,2}(?:st|nd|rd|th)?\b/i;
 const TIME_TEXT_RE =
@@ -907,6 +952,260 @@ function pathToPageTitle(filePath: string): string {
 function ensureDoctype(content: string, renderedHtml: string): string {
   const doctypeMatch = content.match(/^\s*<!DOCTYPE[^>]*>/i);
   return doctypeMatch ? `${doctypeMatch[0]}\n${renderedHtml}` : renderedHtml;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildStandardErrorPage(
+  businessName: string,
+  spec: SiteErrorPageSpec
+): string {
+  const homeHref = relativeHrefForIndexPage(spec.path, "index.html");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${escapeHtml(String(spec.statusCode))} | ${escapeHtml(
+      businessName
+    )}</title>
+    <meta name="robots" content="noindex">
+    <style>
+      :root {
+        color-scheme: light;
+        --error-bg: #f6f4ef;
+        --error-surface: rgba(255, 255, 255, 0.92);
+        --error-border: rgba(15, 23, 42, 0.09);
+        --error-text: #1f2937;
+        --error-muted: #6b7280;
+        --error-accent: #d1d5db;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        background:
+          radial-gradient(circle at top, rgba(255, 255, 255, 0.85), transparent 38%),
+          linear-gradient(180deg, #fbfaf8 0%, var(--error-bg) 100%);
+        color: var(--error-text);
+      }
+
+      main {
+        width: min(100%, 34rem);
+      }
+
+      .error-shell {
+        background: var(--error-surface);
+        border: 1px solid var(--error-border);
+        border-radius: 1.4rem;
+        padding: 1.75rem;
+        box-shadow: 0 22px 55px -40px rgba(15, 23, 42, 0.35);
+        backdrop-filter: blur(10px);
+      }
+
+      .error-code {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 4.25rem;
+        min-height: 2rem;
+        padding: 0.35rem 0.8rem;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        color: var(--error-muted);
+        font-size: 0.84rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+      }
+
+      h1 {
+        margin: 1rem 0 0;
+        font-size: clamp(1.8rem, 4vw, 2.5rem);
+        letter-spacing: -0.03em;
+      }
+
+      p {
+        margin: 0.9rem 0 0;
+        color: var(--error-muted);
+        line-height: 1.65;
+        font-size: 1rem;
+      }
+
+      .error-actions {
+        display: flex;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin-top: 1.4rem;
+      }
+
+      .error-actions a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.85rem;
+        padding: 0.8rem 1rem;
+        border-radius: 999px;
+        border: 1px solid var(--error-accent);
+        text-decoration: none;
+        color: inherit;
+        background: rgba(255, 255, 255, 0.86);
+      }
+
+      .error-actions a:hover {
+        background: #fff;
+      }
+
+      .error-footnote {
+        margin-top: 1.25rem;
+        font-size: 0.9rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="error-shell" aria-labelledby="error-title">
+        <div class="error-code">${escapeHtml(String(spec.statusCode))}</div>
+        <h1 id="error-title">${escapeHtml(spec.title)}</h1>
+        <p>${escapeHtml(spec.message)}</p>
+        <div class="error-actions">
+          <a href="${escapeHtml(homeHref)}">Back to homepage</a>
+        </div>
+        <p class="error-footnote">${escapeHtml(
+          businessName
+        )} static site preview</p>
+      </section>
+    </main>
+  </body>
+</html>
+`;
+}
+
+function buildStandardErrorPageFiles(
+  context: ManagedSiteContext
+): StaticSiteFile[] {
+  return STANDARD_ERROR_PAGES.map((spec) => ({
+    path: spec.path,
+    content: buildStandardErrorPage(context.businessName, spec),
+  }));
+}
+
+function buildHeaderLogoAdjustmentStyle(): string {
+  return `<style data-curb-header-logo-style="true">
+img[data-curb-header-logo="true"] {
+  display: block;
+  width: auto !important;
+  height: clamp(46px, 5vw, 60px) !important;
+  max-width: min(320px, 42vw) !important;
+  max-height: 60px !important;
+  object-fit: contain;
+  object-position: left center;
+}
+
+@media (max-width: 720px) {
+  img[data-curb-header-logo="true"] {
+    height: clamp(38px, 9vw, 52px) !important;
+    max-width: min(68vw, 240px) !important;
+    max-height: 52px !important;
+  }
+}
+</style>`;
+}
+
+function collectAncestorHint(node: HtmlNode, depth = 5): string {
+  const ancestors = node.parents();
+  const parts: string[] = [];
+
+  for (let index = 0; index < Math.min(depth, ancestors.length); index += 1) {
+    const ancestor = ancestors.eq(index);
+    parts.push(getTagName(ancestor), getNodeHint(ancestor));
+  }
+
+  return parts.filter(Boolean).join(" ").toLowerCase();
+}
+
+function scoreHeaderLogoCandidate(node: HtmlNode): number {
+  const src = normalizeText(node.attr("src")).toLowerCase();
+  if (!src) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const hint = [getNodeHint(node), collectAncestorHint(node)].join(" ").toLowerCase();
+  let score = 0;
+
+  if (HEADER_LOGO_ASSET_RE.test(src)) {
+    score += src.includes("source-logo") ? 22 : 12;
+  }
+
+  if (HEADER_LOGO_CONTEXT_RE.test(hint)) {
+    score += 18;
+  }
+
+  if (hint.includes("header") || hint.includes("nav") || hint.includes("navbar")) {
+    score += 18;
+  }
+
+  if (hint.includes("logo") || hint.includes("brand") || hint.includes("wordmark")) {
+    score += 12;
+  }
+
+  if (HEADER_LOGO_EXCLUDED_RE.test(hint)) {
+    score -= 40;
+  }
+
+  return score;
+}
+
+function normalizePrimaryHeaderLogo(file: StaticSiteFile): StaticSiteFile {
+  if (!/\.html$/i.test(file.path) || file.path.startsWith("admin/")) {
+    return file;
+  }
+
+  const $ = load(file.content);
+  const candidates = $("img[src]")
+    .toArray()
+    .map((element) => $(element))
+    .map((node) => ({
+      node,
+      score: scoreHeaderLogoCandidate(node),
+    }))
+    .filter((candidate) => Number.isFinite(candidate.score) && candidate.score >= 28)
+    .sort((left, right) => right.score - left.score);
+
+  const primaryLogo = candidates[0]?.node;
+  if (!primaryLogo || primaryLogo.attr("data-curb-header-logo") === "true") {
+    return file;
+  }
+
+  primaryLogo.attr("data-curb-header-logo", "true");
+
+  if ($('style[data-curb-header-logo-style="true"]').length === 0) {
+    const head = $("head").first();
+    if (head.length > 0) {
+      head.append(`\n${buildHeaderLogoAdjustmentStyle()}`);
+    } else {
+      $("html").prepend(buildHeaderLogoAdjustmentStyle());
+    }
+  }
+
+  return {
+    ...file,
+    content: ensureDoctype(file.content, $.html()),
+  };
 }
 
 function shouldIgnoreLink(href: string): boolean {
@@ -3619,9 +3918,17 @@ function buildCmsSchemaFile(schema: CmsSchema): string {
 
 function buildManagedSupportFiles(
   context: ManagedSiteContext,
-  cmsSchema: CmsSchema
+  cmsSchema: CmsSchema | null
 ): StaticSiteFile[] {
   const supportFiles: StaticSiteFile[] = [
+    ...buildStandardErrorPageFiles(context),
+  ];
+
+  if (!cmsSchema) {
+    return supportFiles;
+  }
+
+  supportFiles.push(
     {
       path: CMS_SCHEMA_PATH,
       content: buildCmsSchemaFile(cmsSchema),
@@ -3649,8 +3956,8 @@ function buildManagedSupportFiles(
     {
       path: HANDOFF_OWNERSHIP_PATH,
       content: buildOwnerSetupGuide(context),
-    },
-  ];
+    }
+  );
 
   if (includeCmsPack(context.siteCapabilityProfile)) {
     supportFiles.push(
@@ -3717,44 +4024,44 @@ export function prepareManagedSiteBundle(
   inputFiles: StaticSiteFile[],
   context: ManagedSiteContext
 ): ManagedSiteBundle {
-  if (
-    !includeCmsPack(context.siteCapabilityProfile) &&
-    !includeStorePack(context.siteCapabilityProfile)
-  ) {
-    return {
-      files: inputFiles,
-      cmsSchema: null,
-    };
-  }
+  const hasManagedPack =
+    includeCmsPack(context.siteCapabilityProfile) ||
+    includeStorePack(context.siteCapabilityProfile);
 
   const filesByPath = new Map<string, StaticSiteFile>();
   const pages: CmsPageSchema[] = [];
 
   for (const inputFile of inputFiles) {
-    if (!/\.html$/i.test(inputFile.path) || inputFile.path.startsWith("admin/")) {
-      filesByPath.set(inputFile.path, inputFile);
+    const normalizedFile = normalizePrimaryHeaderLogo(inputFile);
+
+    if (
+      !hasManagedPack ||
+      !/\.html$/i.test(normalizedFile.path) ||
+      normalizedFile.path.startsWith("admin/")
+    ) {
+      filesByPath.set(normalizedFile.path, normalizedFile);
       continue;
     }
 
     if (
-      inputFile.path === STORE_PAGE_PATH ||
-      inputFile.path === STORE_ALIAS_PATH
+      normalizedFile.path === STORE_PAGE_PATH ||
+      normalizedFile.path === STORE_ALIAS_PATH
     ) {
-      filesByPath.set(inputFile.path, inputFile);
+      filesByPath.set(normalizedFile.path, normalizedFile);
       continue;
     }
 
     const annotated = annotateManagedHtmlFile(
-      inputFile,
+      normalizedFile,
       includeStorePack(context.siteCapabilityProfile)
-        ? relativeHrefBetweenFiles(inputFile.path, STORE_PAGE_PATH)
+        ? relativeHrefBetweenFiles(normalizedFile.path, STORE_PAGE_PATH)
         : null
     );
     filesByPath.set(annotated.file.path, annotated.file);
     pages.push(annotated.page);
   }
 
-  const cmsSchema = buildCmsSchema(context, pages);
+  const cmsSchema = hasManagedPack ? buildCmsSchema(context, pages) : null;
   for (const supportFile of buildManagedSupportFiles(context, cmsSchema)) {
     filesByPath.set(supportFile.path, supportFile);
   }

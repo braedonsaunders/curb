@@ -46,6 +46,7 @@ This is not another generic AI site builder. It is an outbound engine for sellin
 - Previews generated sites inside the local app
 - Drafts outreach emails with a preview link and pricing
 - Exports handoff-ready site files
+- Recommends provider-backed post-sale packs such as Storyblok, Shopify, Square Appointments, and Memberstack when the business needs them
 - Tracks the full pipeline in SQLite
 
 ## Why It Feels Different
@@ -53,6 +54,7 @@ This is not another generic AI site builder. It is an outbound engine for sellin
 - Local-first. Leads, settings, drafts, screenshots, and generated sites live on your machine.
 - One-shot by design. The first touch is the completed website, not a discovery call.
 - Static output. The deliverable is a real site, not a mockup.
+- Provider-backed handoff. Post-sale admin, store, booking, and member workflows should live in real external products, not a fake `/admin/` inside the generated bundle.
 - Human-in-the-loop. You review the audit, the site, and the email before anything gets sent.
 - Model-agnostic. Use Anthropic, OpenAI, Google, or OpenRouter.
 - Built for operators. This is closer to a sales system for freelancers and agencies than a generic website builder.
@@ -151,7 +153,13 @@ If you believe the fastest close is showing the work before the meeting exists, 
 
 Curb is opinionated, local-first, and optimized for one-shot website sales.
 
-It is not trying to be a collaborative SaaS CMS.
+It is not trying to be a collaborative SaaS CMS or a custom backend generator.
+
+The default architecture is:
+
+- Public site: static files, cheap to host
+- Preview and deployment control plane: Curb
+- Post-sale content/store/booking/member workflows: real provider back offices chosen per business
 
 It is trying to make outbound feel like a before-and-after reveal.
 

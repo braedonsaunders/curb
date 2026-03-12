@@ -28,7 +28,9 @@ import { captureWebsiteScreenshot } from "../website-screenshot";
 import {
   applySiteCapabilityPackOverride,
   buildSiteCapabilityManifest,
+  includeBookingPack,
   includeCmsPack,
+  includeMembershipPack,
   includeStorePack,
   normalizeSiteCapabilityProfile,
   SITE_CAPABILITY_MANIFEST_PATH,
@@ -36,14 +38,9 @@ import {
   type SiteCapabilityPackOverride,
   type SiteCapabilityProfile,
 } from "../site-capabilities";
-import {
-  prepareManagedSiteBundle,
-  PUBLIC_PACK_RUNTIME_PATH,
-} from "../site-pack";
-import {
-  PREVIEW_ADMIN_QUERY_PARAM,
-  PREVIEW_ADMIN_STORAGE_NAMESPACE,
-} from "../site-preview-access";
+import { PORTABLE_CONTACT_RUNTIME } from "../contact-runtime";
+import { isLegacyManagedArtifactPath } from "../legacy-site-artifacts";
+import { buildSharedFormSiteTokenFromConfig } from "../shared-form-delivery";
 
 const SITES_DIR = path.resolve(process.cwd(), "..", "sites");
 const SOURCE_SNAPSHOT_PAGE_LIMIT = 12;
@@ -54,6 +51,8 @@ const EXISTING_SITE_MAX_CHARS = 45000;
 const EXISTING_SITE_MAX_CHARS_PER_FILE = 12000;
 const CONTACT_CONFIG_PATH = "assets/curb-site-config.js";
 const CONTACT_RUNTIME_PATH = "assets/curb-contact.js";
+const HANDOFF_README_PATH = "handoff/README.md";
+const HANDOFF_PROVIDER_SETUP_PATH = "handoff/PROVIDER_SETUP.md";
 const VERCEL_CONFIG_PATH = "vercel.json";
 const SOURCE_BRAND_DIR = "assets/brand";
 const SOURCE_SNAPSHOT_FILE = "__source_snapshot.json";
@@ -517,6 +516,7 @@ function buildExactLogoCorrectionPrompt(relativePath: string): string {
     `Use the exact source logo asset from bundle path ${relativePath} for every visible logo placement, with the correct relative path from each page.`,
     "Replace any redrawn, text-only, approximate, simplified, or recreated logo treatment.",
     "Do not typeset the business name as a substitute mark when the exact logo file is available.",
+    "If the logo appears in the main header or homepage top bar, give it clear visual presence and legibility instead of shrinking it to a tiny badge.",
   ].join(" ");
 }
 
@@ -585,25 +585,6 @@ function formatMissingPageLinkSummary(
         `${issue.fromFilePath} -> ${issue.rawReference} (${issue.resolvedTarget})`
     )
     .join("; ");
-}
-
-function buildMissingPageLinkWarning(
-  missingPageLinks: MissingPageLink[]
-): SiteGenerationWarning {
-  const issueCount = missingPageLinks.length;
-
-  return {
-    code: "missing-page-links",
-    title: "Internal links need manual repair",
-    message: `The generated site still has ${issueCount} internal page link${
-      issueCount === 1 ? "" : "s"
-    } without matching HTML pages. The site was kept so you can fix the links manually or run a targeted modify pass.`,
-    details: missingPageLinks.map((issue) => ({
-      fromFilePath: issue.fromFilePath,
-      rawReference: issue.rawReference,
-      resolvedTarget: issue.resolvedTarget,
-    })),
-  };
 }
 
 function findMissingRequestedPageRoutes(
@@ -1767,9 +1748,41 @@ function buildAvailableStaticAssetPaths(
           path.relative(siteDir, fullPath).split(path.sep).join("/")
         ),
         ...files.map((file) => file.path),
-      ].filter((relativePath) => relativePath !== SOURCE_SNAPSHOT_FILE)
+      ].filter(
+        (relativePath) =>
+          relativePath !== SOURCE_SNAPSHOT_FILE &&
+          !isLegacyManagedArtifactPath(relativePath)
+      )
     )
   );
+}
+
+function stripLegacyManagedPackFiles(
+  files: GeneratedSiteFile[]
+): GeneratedSiteFile[] {
+  return files.filter((file) => !isLegacyManagedArtifactPath(file.path));
+}
+
+function removeLegacyManagedPackArtifacts(siteDir: string): void {
+  for (const relativePath of [
+    "assets/curb-admin-pack.css",
+    "assets/curb-admin-pack.js",
+    "assets/curb-cms-schema.json",
+    "assets/curb-products.json",
+    "assets/curb-public-pack.js",
+    "assets/vendor/tabler.min.css",
+    "assets/vendor/tabler.min.js",
+    "handoff/OWNER_SETUP.md",
+    "handoff/firebase.json",
+    "handoff/firestore.indexes.json",
+    "handoff/firestore.rules",
+    "admin",
+  ]) {
+    fs.rmSync(path.join(siteDir, ...relativePath.split("/")), {
+      force: true,
+      recursive: true,
+    });
+  }
 }
 
 function formatBrokenBundleReferences(
@@ -1794,6 +1807,14 @@ function assertWrittenBundleHasNoMissingLocalFiles(
     requestedRouteAliases,
     buildAvailableStaticAssetPaths(siteDir, writtenFiles)
   );
+
+  if (writtenBundleValidation.missingPageLinks.length > 0) {
+    throw new Error(
+      `Written site bundle still contains broken internal page links: ${formatMissingPageLinkSummary(
+        writtenBundleValidation.missingPageLinks
+      )}`
+    );
+  }
 
   if (writtenBundleValidation.missingNonPageBundleReferences.length > 0) {
     throw new Error(
@@ -1950,6 +1971,7 @@ function buildPortableContactConfig(
     : fallbackRecipient
       ? "fallback"
       : "unset";
+  const endpointUrl = config.sharedFormEndpointUrl.trim();
 
   const siteConfig = {
     businessName: businessData.name,
@@ -1960,287 +1982,208 @@ function buildPortableContactConfig(
     contact: {
       recipientEmail,
       recipientSource,
-      deliveryMode: "mailto",
+      deliveryMode: "shared-endpoint",
+      endpointUrl,
+      siteToken: buildSharedFormSiteTokenFromConfig(
+        {
+          businessName: businessData.name,
+          recipientEmail,
+          siteSlug,
+        },
+        config
+      ),
       subjectPrefix: `New website lead for ${businessData.name}`,
-      fallbackMessage:
-        "If your email app did not open, copy the prepared message below and send it manually.",
+      turnstileSiteKey: config.turnstileSiteKey.trim(),
+      successMessage: "Thanks. Your message has been sent.",
+      errorMessage:
+        "We could not send your message right now. Please try again in a moment.",
     },
-    cms: {
-      enabled: includeCmsPack(siteCapabilityProfile),
-      provider: siteCapabilityProfile.cms.provider,
-      ownerEmail: directRecipient || "",
-      firebase: {
-        apiKey: "",
-        authDomain: "",
-        projectId: "",
-        appId: "",
-        storageBucket: "",
-        messagingSenderId: "",
+    recommendedPacks: {
+      hosting: {
+        provider: "cloudflare-pages",
       },
-      previewMode: {
-        enabled: false,
-        token: "",
-        queryParam: PREVIEW_ADMIN_QUERY_PARAM,
-        storageNamespace: PREVIEW_ADMIN_STORAGE_NAMESPACE,
+      cms: {
+        enabled: includeCmsPack(siteCapabilityProfile),
+        provider: siteCapabilityProfile.cms.provider,
+        editableAreas: siteCapabilityProfile.cms.editableAreas,
       },
-    },
-    commerce: {
-      enabled: includeStorePack(siteCapabilityProfile),
-      provider: siteCapabilityProfile.commerce.provider,
-      shopPath: "./shop/",
+      commerce: {
+        enabled: includeStorePack(siteCapabilityProfile),
+        provider: siteCapabilityProfile.commerce.provider,
+        strategy: siteCapabilityProfile.commerce.productStrategy,
+      },
+      booking: {
+        enabled: includeBookingPack(siteCapabilityProfile),
+        provider: siteCapabilityProfile.booking.provider,
+      },
+      memberships: {
+        enabled: includeMembershipPack(siteCapabilityProfile),
+        provider: siteCapabilityProfile.memberships.provider,
+      },
     },
   };
 
   return [
-    "// Update recipientEmail, Firebase config, store provider, and product checkout links before handing the site off to the customer.",
+    "// Update recipientEmail before launch. Configure the shared form service before publishing the live site.",
     `window.CURB_SITE_CONFIG = ${JSON.stringify(siteConfig, null, 2)};`,
     "",
   ].join("\n");
 }
 
-const PORTABLE_CONTACT_RUNTIME = `(function () {
-  var siteConfig = window.CURB_SITE_CONFIG || {};
-  var contactConfig = siteConfig.contact || {};
+function buildProviderPackSummaryLines(
+  siteCapabilityProfile: SiteCapabilityProfile
+): string[] {
+  const lines = [
+    "- Hosting: Cloudflare Pages",
+    "- Forms: Shared Cloudflare form endpoint with Turnstile and Resend",
+  ];
 
-  function text(value) {
-    return typeof value === "string" ? value.trim() : "";
+  if (includeCmsPack(siteCapabilityProfile)) {
+    lines.push(
+      `- CMS: ${
+        siteCapabilityProfile.cms.provider === "sanity" ? "Sanity" : "Storyblok"
+      }`
+    );
   }
 
-  function ensureStatus(form) {
-    var status = form.querySelector("[data-curb-form-status]");
-    if (status) {
-      return status;
-    }
-
-    status = document.createElement("div");
-    status.setAttribute("data-curb-form-status", "true");
-    status.style.marginTop = "0.75rem";
-    status.style.fontSize = "0.95rem";
-    form.appendChild(status);
-    return status;
+  if (includeStorePack(siteCapabilityProfile)) {
+    lines.push("- Store admin: Shopify");
   }
 
-  function ensureFallback(form) {
-    var fallback = form.querySelector("[data-curb-mailto-fallback]");
-    if (fallback) {
-      return fallback;
-    }
-
-    fallback = document.createElement("div");
-    fallback.setAttribute("data-curb-mailto-fallback", "true");
-    fallback.hidden = true;
-    fallback.style.marginTop = "1rem";
-    fallback.style.padding = "1rem";
-    fallback.style.border = "1px solid rgba(15, 23, 42, 0.12)";
-    fallback.style.borderRadius = "0.75rem";
-    fallback.style.background = "rgba(248, 250, 252, 0.96)";
-    fallback.innerHTML =
-      '<p data-curb-mailto-copy-message style="margin:0 0 0.75rem 0;font-size:0.95rem;"></p>' +
-      '<div style="display:flex;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.75rem;">' +
-      '<a data-curb-mailto-link href="#" style="font-weight:600;">Open email app again</a>' +
-      '<button data-curb-mailto-copy type="button" style="padding:0.6rem 0.9rem;border-radius:999px;border:0;background:#0f172a;color:#fff;cursor:pointer;">Copy message</button>' +
-      "</div>" +
-      '<pre data-curb-mailto-preview style="margin:0;white-space:pre-wrap;font-size:0.85rem;line-height:1.5;"></pre>';
-    form.appendChild(fallback);
-    return fallback;
+  if (includeBookingPack(siteCapabilityProfile)) {
+    lines.push(
+      `- Booking: ${
+        siteCapabilityProfile.booking.provider === "cal-com"
+          ? "Cal.com"
+          : "Square Appointments"
+      }`
+    );
   }
 
-  function setStatus(form, type, message) {
-    var status = ensureStatus(form);
-    status.textContent = message;
-    status.style.color = type === "error" ? "#b42318" : "#166534";
+  if (includeMembershipPack(siteCapabilityProfile)) {
+    lines.push(
+      `- Memberships: ${
+        siteCapabilityProfile.memberships.provider === "clerk"
+          ? "Clerk"
+          : "Memberstack"
+      }`
+    );
   }
 
-  function serializeForm(form) {
-    var formData = new FormData(form);
-    var pairs = [];
-    formData.forEach(function (value, key) {
-      if (typeof value === "string" && value.trim()) {
-        pairs.push([key, value.trim()]);
-      }
-    });
-    return pairs;
+  if (lines.length === 1) {
+    lines.push("- No external admin packs are recommended for this site.");
   }
 
-  function looksLikeContactForm(form) {
-    if (form.getAttribute("data-curb-contact-form") === "true") {
-      return true;
-    }
+  return lines;
+}
 
-    var tokens = [];
-    var controls = form.querySelectorAll("input, textarea, select");
-    controls.forEach(function (control) {
-      ["name", "id", "placeholder", "aria-label"].forEach(function (attribute) {
-        var value = control.getAttribute(attribute);
-        if (value) {
-          tokens.push(value.toLowerCase());
-        }
-      });
-    });
+function buildProviderHandoffReadme(
+  businessName: string,
+  siteCapabilityProfile: SiteCapabilityProfile
+): string {
+  return [
+    "# Provider-Based Handoff",
+    "",
+    `This bundle was generated for ${businessName}.`,
+    "",
+    "Curb now treats generated sites as static public experiences.",
+    "Do not ship a fake in-site admin, fake account portal, or fake checkout flow inside this bundle.",
+    "",
+    "## Recommended Stack",
+    "",
+    ...buildProviderPackSummaryLines(siteCapabilityProfile),
+    "",
+    "## Files",
+    "",
+    "- `assets/curb-site-package.json`: machine-readable capability manifest",
+    "- `handoff/PROVIDER_SETUP.md`: provider activation checklist",
+    "- `assets/curb-site-config.js`: contact runtime config",
+    "",
+    "## Launch Model",
+    "",
+    "1. Deploy the public site to Cloudflare Pages.",
+    "2. Keep the outreach preview static and believable.",
+    "3. After the sale, activate only the provider packs this business actually needs.",
+    "",
+  ].join("\n");
+}
 
-    var haystack = tokens.join(" ");
-    return /(name|email|phone|message|quote|service|appointment|booking)/.test(haystack);
-  }
+function buildProviderSetupGuide(
+  siteCapabilityProfile: SiteCapabilityProfile
+): string {
+  const lines = [
+    "# Provider Activation Checklist",
+    "",
+    "Use this after the customer buys. The public site stays static; owner workflows live in provider-managed back offices.",
+    "",
+    "## Base",
+    "",
+    "1. Deploy the static bundle to Cloudflare Pages.",
+    "2. Connect the customer domain.",
+    "3. Update `assets/curb-site-config.js` with the final contact recipient email.",
+    "4. Verify the shared Cloudflare form service URL, signing secret, Turnstile keys, and Resend sender are configured in Curb.",
+  ];
 
-  function shouldHandleForm(form) {
-    if (!looksLikeContactForm(form)) {
-      return false;
-    }
-
-    var action = text(form.getAttribute("action"));
-    if (!action || action === "#") {
-      return true;
-    }
-
-    if (/^(mailto:|tel:|sms:|javascript:|data:)/i.test(action)) {
-      return false;
-    }
-
-    return !/^(https?:)?\\/\\//i.test(action);
-  }
-
-  function buildMailtoUrl(recipient, pairs) {
-    var lines = pairs.map(function (pair) {
-      return pair[0] + ": " + pair[1];
-    });
-    var subject = text(contactConfig.subjectPrefix) || "Website inquiry";
-    return "mailto:" + encodeURIComponent(recipient) +
-      "?subject=" + encodeURIComponent(subject) +
-      "&body=" + encodeURIComponent(lines.join("\\n"));
-  }
-
-  function buildFallbackText(recipient, pairs) {
-    var subject = text(contactConfig.subjectPrefix) || "Website inquiry";
-    var body = pairs.map(function (pair) {
-      return pair[0] + ": " + pair[1];
-    }).join("\\n");
-    return [
-      "To: " + recipient,
-      "Subject: " + subject,
+  if (includeCmsPack(siteCapabilityProfile)) {
+    lines.push(
       "",
-      body
-    ].join("\\n");
+      "## CMS",
+      "",
+      siteCapabilityProfile.cms.provider === "sanity"
+        ? "1. Create a Sanity project owned by the customer or your agency workspace."
+        : "1. Create a Storyblok space owned by the customer or your agency workspace.",
+      "2. Model the editable sections listed in `assets/curb-site-package.json`.",
+      "3. Connect preview and publishing workflows to the static site.",
+      "4. Train the customer in the provider UI instead of a custom /admin portal."
+    );
   }
 
-  function showFallback(form, recipient, mailtoUrl, fallbackText) {
-    var fallback = ensureFallback(form);
-    var message = fallback.querySelector("[data-curb-mailto-copy-message]");
-    var link = fallback.querySelector("[data-curb-mailto-link]");
-    var preview = fallback.querySelector("[data-curb-mailto-preview]");
-    var copyButton = fallback.querySelector("[data-curb-mailto-copy]");
-    var hint =
-      text(contactConfig.fallbackMessage) ||
-      "If your email app did not open, copy the prepared message below.";
-
-    if (message) {
-      message.textContent = hint;
-    }
-    if (link) {
-      link.setAttribute("href", mailtoUrl);
-    }
-    if (preview) {
-      preview.textContent = fallbackText;
-    }
-    if (copyButton) {
-      copyButton.onclick = async function () {
-        try {
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(fallbackText);
-            copyButton.textContent = "Copied";
-            window.setTimeout(function () {
-              copyButton.textContent = "Copy message";
-            }, 1800);
-            return;
-          }
-        } catch (error) {
-          void error;
-        }
-
-        window.prompt("Copy this email message", fallbackText);
-      };
-    }
-
-    fallback.hidden = false;
+  if (includeStorePack(siteCapabilityProfile)) {
+    lines.push(
+      "",
+      "## Store",
+      "",
+      "1. Create a Shopify store for the customer.",
+      siteCapabilityProfile.commerce.productStrategy === "storefront-api"
+        ? "2. Connect the generated storefront to Shopify Storefront API."
+        : "2. Start with Shopify Buy Button embeds or checkout links for the first launch.",
+      "3. Manage products, pricing, inventory, and orders inside Shopify admin."
+    );
   }
 
-  function bindForm(form) {
-    if (form.dataset.curbBound === "true" || !shouldHandleForm(form)) {
-      return;
-    }
-
-    form.dataset.curbBound = "true";
-
-    form.addEventListener("submit", async function (event) {
-      event.preventDefault();
-
-      var submitter = form.querySelector('[type="submit"]');
-      if (submitter) {
-        submitter.disabled = true;
-      }
-
-      var pairs = serializeForm(form);
-      var recipient = text(contactConfig.recipientEmail);
-      var mailtoUrl = buildMailtoUrl(recipient, pairs);
-      var fallbackText = buildFallbackText(recipient, pairs);
-      var composerOpened = false;
-      var visibilityHandler = function () {
-        if (document.hidden) {
-          composerOpened = true;
-        }
-      };
-
-      try {
-        if (!recipient) {
-          throw new Error(
-            "Set contact.recipientEmail in assets/curb-site-config.js before launch."
-          );
-        }
-
-        document.addEventListener("visibilitychange", visibilityHandler, {
-          once: false
-        });
-        setStatus(form, "success", "Opening your email app...");
-        window.location.href = mailtoUrl;
-
-        window.setTimeout(function () {
-          document.removeEventListener("visibilitychange", visibilityHandler);
-          if (!composerOpened) {
-            setStatus(form, "error", "Email app not detected.");
-            showFallback(form, recipient, mailtoUrl, fallbackText);
-            return;
-          }
-
-          showFallback(form, recipient, mailtoUrl, fallbackText);
-          setStatus(
-            form,
-            "success",
-            "Your email draft should be open. Send it from your mail app."
-          );
-        }, 1200);
-      } catch (error) {
-        var message =
-          error instanceof Error && error.message
-            ? error.message
-            : "Unable to send your message right now.";
-        setStatus(form, "error", message);
-      } finally {
-        if (submitter) {
-          submitter.disabled = false;
-        }
-      }
-    });
+  if (includeBookingPack(siteCapabilityProfile)) {
+    lines.push(
+      "",
+      "## Booking",
+      "",
+      siteCapabilityProfile.booking.provider === "cal-com"
+        ? "1. Create a Cal.com account and embed the booking flow on the relevant pages."
+        : "1. Create a Square Appointments account and embed the booking flow on the relevant pages.",
+      "2. Keep scheduling, staff availability, and confirmations inside the booking provider."
+    );
   }
 
-  function bindForms() {
-    Array.prototype.slice.call(document.forms || []).forEach(bindForm);
+  if (includeMembershipPack(siteCapabilityProfile)) {
+    lines.push(
+      "",
+      "## Memberships",
+      "",
+      siteCapabilityProfile.memberships.provider === "clerk"
+        ? "1. Build the authenticated flow as a separate app and use Clerk for auth."
+        : "1. Add Memberstack only if a light member area is genuinely required after the sale.",
+      "2. Do not simulate member dashboards in the static marketing bundle."
+    );
   }
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bindForms);
-  } else {
-    bindForms();
-  }
-})();`;
+  lines.push(
+    "",
+    "## Rule",
+    "",
+    "If a requested feature needs real app logic, scope it as a separate build instead of extending the static site with fake UI."
+  );
+
+  return `${lines.join("\n")}\n`;
+}
 
 function injectPortableRuntime(
   files: GeneratedSiteFile[],
@@ -2265,6 +2208,17 @@ function injectPortableRuntime(
   fileMap.set(CONTACT_RUNTIME_PATH, {
     path: CONTACT_RUNTIME_PATH,
     content: `${PORTABLE_CONTACT_RUNTIME}\n`,
+  });
+  fileMap.set(HANDOFF_README_PATH, {
+    path: HANDOFF_README_PATH,
+    content: `${buildProviderHandoffReadme(
+      businessData.name,
+      siteCapabilityProfile
+    )}\n`,
+  });
+  fileMap.set(HANDOFF_PROVIDER_SETUP_PATH, {
+    path: HANDOFF_PROVIDER_SETUP_PATH,
+    content: buildProviderSetupGuide(siteCapabilityProfile),
   });
   fileMap.set(SITE_CAPABILITY_MANIFEST_PATH, {
     path: SITE_CAPABILITY_MANIFEST_PATH,
@@ -2293,25 +2247,12 @@ function injectPortableRuntime(
 
     const configSrc = relativeHrefBetweenFiles(file.path, CONTACT_CONFIG_PATH);
     const runtimeSrc = relativeHrefBetweenFiles(file.path, CONTACT_RUNTIME_PATH);
-    const publicPackRuntimeSrc = relativeHrefBetweenFiles(
-      file.path,
-      PUBLIC_PACK_RUNTIME_PATH
-    );
-    const includeManagedPack =
-      includeCmsPack(siteCapabilityProfile) || includeStorePack(siteCapabilityProfile);
     const scriptMarkup = [
       `  <script src="${configSrc}"></script>`,
       `  <script src="${runtimeSrc}" defer></script>`,
-      ...(includeManagedPack
-        ? [
-            '  <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-app-compat.js"></script>',
-            '  <script src="https://www.gstatic.com/firebasejs/12.7.0/firebase-firestore-compat.js"></script>',
-            `  <script src="${publicPackRuntimeSrc}" defer></script>`,
-          ]
-        : []),
     ].join("\n");
 
-    if (/curb-site-config\.js/i.test(file.content) && (!includeManagedPack || /curb-public-pack\.js/i.test(file.content))) {
+    if (/curb-site-config\.js/i.test(file.content)) {
       return file;
     }
 
@@ -2597,17 +2538,11 @@ export async function generateSiteForBusiness(
         ]);
       }
 
-      let managedBundle = prepareManagedSiteBundle(
-        readGeneratedSiteFilesFromDirectory(outputSiteDir),
-        {
-          businessName: name,
-          siteSlug: slug,
-          siteCapabilityProfile,
-        }
-      );
       let normalizedFiles = stripMissingBundlerEntrypoints(
         injectPortableRuntime(
-          managedBundle.files,
+          stripLegacyManagedPackFiles(
+            readGeneratedSiteFilesFromDirectory(outputSiteDir)
+          ),
           businessData,
           slug,
           siteCapabilityProfile
@@ -2618,7 +2553,7 @@ export async function generateSiteForBusiness(
         requestedRouteAliases,
         buildAvailableStaticAssetPaths(outputSiteDir, normalizedFiles)
       );
-      let generationWarnings: SiteGenerationWarning[] = [];
+      const generationWarnings: SiteGenerationWarning[] = [];
 
       const correctionPrompts: string[] = [];
       if (
@@ -2666,17 +2601,11 @@ export async function generateSiteForBusiness(
 
         modificationResult = await applyModificationPass(correctionPrompts);
 
-        managedBundle = prepareManagedSiteBundle(
-          readGeneratedSiteFilesFromDirectory(outputSiteDir),
-          {
-            businessName: name,
-            siteSlug: slug,
-            siteCapabilityProfile,
-          }
-        );
         normalizedFiles = stripMissingBundlerEntrypoints(
           injectPortableRuntime(
-            managedBundle.files,
+            stripLegacyManagedPackFiles(
+              readGeneratedSiteFilesFromDirectory(outputSiteDir)
+            ),
             businessData,
             slug,
             siteCapabilityProfile
@@ -2701,18 +2630,11 @@ export async function generateSiteForBusiness(
         }
 
         if (bundleValidation.missingPageLinks.length > 0) {
-          generationWarnings = [
-            buildMissingPageLinkWarning(bundleValidation.missingPageLinks),
-          ];
-          logActivity({
-            kind: "generation",
-            stage: "warning",
-            businessId,
-            businessName: name,
-            message: `Updated site still contains internal page links without matching HTML pages for ${name}; keeping the bundle and surfacing a manual-fix warning. ${formatMissingPageLinkSummary(
+          throw new Error(
+            `Updated site still contains internal page links without matching HTML pages: ${formatMissingPageLinkSummary(
               bundleValidation.missingPageLinks
-            )}`,
-          });
+            )}`
+          );
         }
 
         if (bundleValidation.missingNonPageBundleReferences.length > 0) {
@@ -2747,6 +2669,7 @@ export async function generateSiteForBusiness(
         businessName: name,
         message: `Writing ${normalizedFiles.length} site file${normalizedFiles.length === 1 ? "" : "s"} for ${name}`,
       });
+      removeLegacyManagedPackArtifacts(outputSiteDir);
       writeGeneratedSiteFiles(outputSiteDir, normalizedFiles);
       assertWrittenBundleHasNoMissingLocalFiles(
         outputSiteDir,
@@ -2981,7 +2904,7 @@ export async function generateSiteForBusiness(
         stage: "model",
         businessId,
         businessName: name,
-        message: `Capability pack recommendation for ${name}: ${siteCapabilityProfile.packageSummary}`,
+        message: `Provider pack recommendation for ${name}: ${siteCapabilityProfile.packageSummary}`,
       });
     }
 
@@ -3005,17 +2928,11 @@ export async function generateSiteForBusiness(
       siteCapabilityProfile,
     });
     let parsedFiles = parseGeneratedSiteFiles(payload);
-    let managedBundle = prepareManagedSiteBundle(
-      rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
-      {
-        businessName: name,
-        siteSlug: slug,
-        siteCapabilityProfile,
-      }
-    );
     let normalizedFiles = stripMissingBundlerEntrypoints(
       injectPortableRuntime(
-        managedBundle.files,
+        stripLegacyManagedPackFiles(
+          rewriteBundleLinks(parsedFiles, sourceSiteSnapshot)
+        ),
         businessData,
         slug,
         siteCapabilityProfile
@@ -3026,7 +2943,7 @@ export async function generateSiteForBusiness(
       requestedRouteAliases,
       buildAvailableStaticAssetPaths(outputSiteDir, normalizedFiles)
     );
-    let generationWarnings: SiteGenerationWarning[] = [];
+    const generationWarnings: SiteGenerationWarning[] = [];
 
     const correctionPrompts: string[] = [];
     if (
@@ -3093,17 +3010,11 @@ export async function generateSiteForBusiness(
         siteCapabilityProfile,
       });
       parsedFiles = parseGeneratedSiteFiles(payload);
-      managedBundle = prepareManagedSiteBundle(
-        rewriteBundleLinks(parsedFiles, sourceSiteSnapshot),
-        {
-          businessName: name,
-          siteSlug: slug,
-          siteCapabilityProfile,
-        }
-      );
       normalizedFiles = stripMissingBundlerEntrypoints(
         injectPortableRuntime(
-          managedBundle.files,
+          stripLegacyManagedPackFiles(
+            rewriteBundleLinks(parsedFiles, sourceSiteSnapshot)
+          ),
           businessData,
           slug,
           siteCapabilityProfile
@@ -3134,18 +3045,11 @@ export async function generateSiteForBusiness(
       }
 
       if (bundleValidation.missingPageLinks.length > 0) {
-        generationWarnings = [
-          buildMissingPageLinkWarning(bundleValidation.missingPageLinks),
-        ];
-        logActivity({
-          kind: "generation",
-          stage: "warning",
-          businessId,
-          businessName: name,
-          message: `Generated site still contains internal page links without matching HTML pages for ${name}; keeping the bundle and surfacing a manual-fix warning. ${formatMissingPageLinkSummary(
+        throw new Error(
+          `Generated site still contains internal page links without matching HTML pages: ${formatMissingPageLinkSummary(
             bundleValidation.missingPageLinks
-          )}`,
-        });
+          )}`
+        );
       }
 
       if (bundleValidation.missingNonPageBundleReferences.length > 0) {
@@ -3195,6 +3099,7 @@ export async function generateSiteForBusiness(
       businessName: name,
       message: `Writing ${normalizedFiles.length} generated file${normalizedFiles.length === 1 ? "" : "s"} for ${name}`,
     });
+    removeLegacyManagedPackArtifacts(outputSiteDir);
     writeGeneratedSiteFiles(outputSiteDir, normalizedFiles);
     assertWrittenBundleHasNoMissingLocalFiles(
       outputSiteDir,

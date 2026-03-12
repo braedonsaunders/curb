@@ -7,12 +7,17 @@ import slugify from "slugify";
 import { Vercel } from "@vercel/sdk";
 import { logActivity } from "./activity-log";
 import {
+  selectCloudflareCustomerAccount,
+  selectCloudflarePreviewAccount,
+  type CloudflareAccountPoolEntry,
+} from "./cloudflare-account-pool";
+import {
   getConfig,
   type Config,
   type DeploymentProvider,
 } from "./config";
 import { getDb } from "./db";
-import { applyPreviewAccessToSiteConfigScript } from "./site-preview-access";
+import { isLegacyManagedArtifactPath } from "./legacy-site-artifacts";
 import { initializeDatabase } from "./schema";
 
 const WORKSPACE_ROOT = path.resolve(process.cwd(), "..");
@@ -365,13 +370,7 @@ function walkSiteFiles(directory: string): string[] {
   return files;
 }
 
-function collectDeploymentFiles(
-  siteDir: string,
-  options?: {
-    enablePreviewAdmin?: boolean;
-    siteSlug?: string;
-  }
-): DeploymentFiles {
+function collectDeploymentFiles(siteDir: string): DeploymentFiles {
   if (!fs.existsSync(siteDir)) {
     throw new Error(`Generated site directory not found at ${siteDir}`);
   }
@@ -384,6 +383,9 @@ function collectDeploymentFiles(
         .relative(siteDir, fullPath)
         .split(path.sep)
         .join("/");
+      if (isLegacyManagedArtifactPath(relativePath)) {
+        return null;
+      }
       const extension = path.extname(fullPath).toLowerCase();
       const encoding = TEXT_FILE_EXTENSIONS.has(extension) ? "utf-8" : "base64";
 
@@ -391,26 +393,12 @@ function collectDeploymentFiles(
         file: relativePath,
         data:
           encoding === "utf-8"
-            ? (() => {
-                const content = fs.readFileSync(fullPath, "utf8");
-
-                if (
-                  options?.enablePreviewAdmin &&
-                  options.siteSlug &&
-                  relativePath === "assets/curb-site-config.js"
-                ) {
-                  return applyPreviewAccessToSiteConfigScript(
-                    content,
-                    options.siteSlug
-                  );
-                }
-
-                return content;
-              })()
+            ? fs.readFileSync(fullPath, "utf8")
             : fs.readFileSync(fullPath).toString("base64"),
         encoding,
       };
-    });
+    })
+    .filter((entry): entry is DeploymentFiles[number] => entry !== null);
 }
 
 function writeDeploymentFiles(directory: string, files: DeploymentFiles): void {
@@ -534,31 +522,31 @@ function resolveWranglerBinary(): string {
 }
 
 function cloudflareAuthEnv(
-  config: Config
+  account: CloudflareAccountPoolEntry
 ): Record<string, string | undefined> {
   return {
-    CLOUDFLARE_API_TOKEN: config.cloudflareApiToken.trim(),
-    CLOUDFLARE_ACCOUNT_ID: config.cloudflareAccountId.trim(),
+    CLOUDFLARE_API_TOKEN: account.apiToken.trim(),
+    CLOUDFLARE_ACCOUNT_ID: account.accountId.trim(),
   };
 }
 
 async function runWrangler(
-  config: Config,
+  account: CloudflareAccountPoolEntry,
   args: string[]
 ): Promise<{ stdout: string; stderr: string }> {
   return runCommand(resolveWranglerBinary(), args, {
     cwd: process.cwd(),
-    env: cloudflareAuthEnv(config),
+    env: cloudflareAuthEnv(account),
   });
 }
 
 async function callCloudflareApi<T>(
-  config: Config,
+  account: CloudflareAccountPoolEntry,
   pathname: string,
   init?: RequestInit
 ): Promise<T> {
-  const accountId = config.cloudflareAccountId.trim();
-  const token = config.cloudflareApiToken.trim();
+  const accountId = account.accountId.trim();
+  const token = account.apiToken.trim();
   if (!accountId || !token) {
     throw new Error(
       "Add a Cloudflare API token and Account ID in Settings before deploying sites."
@@ -1070,11 +1058,8 @@ function isVercelPreviewDeploymentConfigured(config: Config): boolean {
 }
 
 function isCloudflarePreviewDeploymentConfigured(config: Config): boolean {
-  return (
-    config.cloudflareApiToken.trim().length > 0 &&
-    config.cloudflareAccountId.trim().length > 0 &&
-    config.cloudflarePreviewProjectName.trim().length > 0
-  );
+  const account = selectCloudflarePreviewAccount(config);
+  return Boolean(account && account.previewProjectName.trim());
 }
 
 function isSshPreviewDeploymentConfigured(config: Config): boolean {
@@ -1320,10 +1305,7 @@ async function deployPreviewWithVercel(
   }
 
   const client = createVercelClient(config);
-  const files = collectDeploymentFiles(context.siteDir, {
-    enablePreviewAdmin: true,
-    siteSlug: context.generatedSite.slug,
-  });
+  const files = collectDeploymentFiles(context.siteDir);
   const aliasHost = buildPreviewAliasHost(context.generatedSite.slug, config);
 
   logActivity({
@@ -1400,10 +1382,7 @@ async function deployCustomerWithVercel(
   }
 > {
   const client = createVercelClient(config);
-  const files = collectDeploymentFiles(context.siteDir, {
-    enablePreviewAdmin: false,
-    siteSlug: context.generatedSite.slug,
-  });
+  const files = collectDeploymentFiles(context.siteDir);
   const requestedDomain =
     normalizeHostname(options?.customerDomain) ??
     normalizeHostname(context.business.customer_domain);
@@ -1484,12 +1463,12 @@ async function deployCustomerWithVercel(
 }
 
 async function ensureCloudflareProject(
-  config: Config,
+  account: CloudflareAccountPoolEntry,
   projectName: string,
   productionBranch: string
 ): Promise<{ created: boolean; projectId: string; projectName: string }> {
   try {
-    await runWrangler(config, [
+    await runWrangler(account, [
       "pages",
       "project",
       "create",
@@ -1517,7 +1496,7 @@ async function ensureCloudflareProject(
 }
 
 async function getCloudflareDeploymentInfo(
-  config: Config,
+  account: CloudflareAccountPoolEntry,
   input: {
     branch: string;
     environment: "preview" | "production";
@@ -1526,7 +1505,7 @@ async function getCloudflareDeploymentInfo(
   }
 ): Promise<{ deploymentId: string; deploymentUrl: string }> {
   try {
-    const { stdout } = await runWrangler(config, [
+    const { stdout } = await runWrangler(account, [
       "pages",
       "deployment",
       "list",
@@ -1582,7 +1561,7 @@ async function getCloudflareDeploymentInfo(
 }
 
 async function deployCloudflareDirectory(
-  config: Config,
+  account: CloudflareAccountPoolEntry,
   input: {
     branch: string;
     directory: string;
@@ -1591,7 +1570,7 @@ async function deployCloudflareDirectory(
     productionBranch: string;
   }
 ): Promise<{ deploymentId: string; deploymentUrl: string; readyState: "READY" }> {
-  const deployOutput = await runWrangler(config, [
+  const deployOutput = await runWrangler(account, [
     "pages",
     "deploy",
     input.directory,
@@ -1608,7 +1587,7 @@ async function deployCloudflareDirectory(
   const urlMatch = `${deployOutput.stdout}\n${deployOutput.stderr}`.match(
     /https:\/\/[^\s]+\.pages\.dev/gi
   );
-  const deploymentInfo = await getCloudflareDeploymentInfo(config, input);
+  const deploymentInfo = await getCloudflareDeploymentInfo(account, input);
 
   return {
     deploymentId: deploymentInfo.deploymentId,
@@ -1619,7 +1598,7 @@ async function deployCloudflareDirectory(
 }
 
 async function ensureCloudflareCustomerDomain(
-  config: Config,
+  account: CloudflareAccountPoolEntry,
   projectName: string,
   domain: string
 ): Promise<{ verified: boolean; verification: VerificationRecord[] }> {
@@ -1627,7 +1606,7 @@ async function ensureCloudflareCustomerDomain(
 
   try {
     const created = await callCloudflareApi<Record<string, unknown>>(
-      config,
+      account,
       `/pages/projects/${encodedProjectName}/domains`,
       {
         method: "POST",
@@ -1643,7 +1622,7 @@ async function ensureCloudflareCustomerDomain(
   }
 
   const domains = await callCloudflareApi<Array<Record<string, unknown>>>(
-    config,
+    account,
     `/pages/projects/${encodedProjectName}/domains`,
     { method: "GET" }
   );
@@ -1659,18 +1638,16 @@ async function deployPreviewWithCloudflare(
   config: Config,
   options?: { initiatedBy?: "automatic" | "manual" }
 ): Promise<CoreDeploymentResult> {
-  if (!isCloudflarePreviewDeploymentConfigured(config)) {
+  const account = selectCloudflarePreviewAccount(config);
+  if (!account || !account.previewProjectName.trim()) {
     throw new Error(
-      "Add a Cloudflare API token, Account ID, and Preview Project Name in Settings before deploying previews."
+      "Add a Cloudflare preview account, API token, Account ID, and Preview Project Name in Settings before deploying previews."
     );
   }
 
-  const projectName = config.cloudflarePreviewProjectName.trim();
+  const projectName = account.previewProjectName.trim();
   const branch = buildDnsLabel(context.generatedSite.slug, "preview");
-  const files = collectDeploymentFiles(context.siteDir, {
-    enablePreviewAdmin: true,
-    siteSlug: context.generatedSite.slug,
-  });
+  const files = collectDeploymentFiles(context.siteDir);
 
   logActivity({
     kind: "deployment",
@@ -1684,13 +1661,13 @@ async function deployPreviewWithCloudflare(
   });
 
   await ensureCloudflareProject(
-    config,
+    account,
     projectName,
     CLOUDFLARE_WRANGLER_PRODUCTION_BRANCH
   );
 
   return withStagedDirectory(files, async (directory) => {
-    const deployment = await deployCloudflareDirectory(config, {
+    const deployment = await deployCloudflareDirectory(account, {
       branch,
       directory,
       environment: "preview",
@@ -1702,6 +1679,8 @@ async function deployPreviewWithCloudflare(
       deploymentId: deployment.deploymentId,
       deploymentUrl: deployment.deploymentUrl,
       metadata: {
+        cloudflareAccountId: account.accountId,
+        cloudflareAccountLabel: account.label,
         branch,
         productionBranch: CLOUDFLARE_WRANGLER_PRODUCTION_BRANCH,
       },
@@ -1728,12 +1707,32 @@ async function deployCustomerWithCloudflare(
   const requestedDomain =
     normalizeHostname(options?.customerDomain) ??
     normalizeHostname(context.business.customer_domain);
-  const files = collectDeploymentFiles(context.siteDir, {
-    enablePreviewAdmin: false,
-    siteSlug: context.generatedSite.slug,
-  });
+  const existingProjectMetadata =
+    customerState.customerProjectProvider === "cloudflare-pages" &&
+    customerState.customerProjectMetadata &&
+    typeof customerState.customerProjectMetadata === "object"
+      ? (customerState.customerProjectMetadata as Record<string, unknown>)
+      : null;
+  const account = selectCloudflareCustomerAccount(
+    config,
+    businessId,
+    typeof existingProjectMetadata?.cloudflareAccountId === "string"
+      ? existingProjectMetadata.cloudflareAccountId
+      : null,
+    typeof existingProjectMetadata?.cloudflareAccountLabel === "string"
+      ? existingProjectMetadata.cloudflareAccountLabel
+      : null
+  );
+  if (!account) {
+    throw new Error(
+      "Add at least one Cloudflare customer deployment account in Settings before deploying customer sites."
+    );
+  }
+  const files = collectDeploymentFiles(context.siteDir);
   const productionBranch =
-    config.cloudflareCustomerProductionBranch.trim() || "production";
+    account.customerProductionBranch.trim() ||
+    config.cloudflareCustomerProductionBranch.trim() ||
+    "production";
   const projectName =
     customerState.customerProjectProvider === "cloudflare-pages" &&
     customerState.customerProjectId?.trim()
@@ -1748,8 +1747,14 @@ async function deployCustomerWithCloudflare(
     message: `Deploying a dedicated customer project for ${context.business.name} on Cloudflare Pages`,
   });
 
-  const project = await ensureCloudflareProject(config, projectName, productionBranch);
+  const project = await ensureCloudflareProject(
+    account,
+    projectName,
+    productionBranch
+  );
   const projectMetadata = {
+    cloudflareAccountId: account.accountId,
+    cloudflareAccountLabel: account.label,
     productionBranch,
   } satisfies DeploymentMetadata;
   setBusinessCustomerProject(context.business.id, {
@@ -1763,7 +1768,7 @@ async function deployCustomerWithCloudflare(
   let customerDomainVerification: VerificationRecord[] = [];
   if (requestedDomain) {
     const domainResult = await ensureCloudflareCustomerDomain(
-      config,
+      account,
       projectName,
       requestedDomain
     );
@@ -1778,7 +1783,7 @@ async function deployCustomerWithCloudflare(
   }
 
   return withStagedDirectory(files, async (directory) => {
-    const deployment = await deployCloudflareDirectory(config, {
+    const deployment = await deployCloudflareDirectory(account, {
       branch: productionBranch,
       directory,
       environment: "production",
@@ -1811,17 +1816,13 @@ async function deployWithSharedServer(
   config: Config,
   input: {
     customerDomain?: string | null;
-    enablePreviewAdmin: boolean;
     kind: DeploymentKind;
     logMessage: string;
     urlTemplate: string;
     postDeployCommand: string;
   }
 ): Promise<CoreDeploymentResult> {
-  const files = collectDeploymentFiles(context.siteDir, {
-    enablePreviewAdmin: input.enablePreviewAdmin,
-    siteSlug: context.generatedSite.slug,
-  });
+  const files = collectDeploymentFiles(context.siteDir);
   const remoteSiteRoot = buildSshRemoteBasePath(
     config,
     input.kind,
@@ -1915,7 +1916,6 @@ async function deployPreviewWithSharedServer(
   }
 
   return deployWithSharedServer(businessId, context, config, {
-    enablePreviewAdmin: true,
     kind: "preview",
     logMessage:
       options?.initiatedBy === "automatic"
@@ -1955,7 +1955,6 @@ async function deployCustomerWithSharedServer(
 
   const deployment = await deployWithSharedServer(businessId, context, config, {
     customerDomain: requestedDomain,
-    enablePreviewAdmin: false,
     kind: "customer",
     logMessage: `Deploying a dedicated customer site for ${context.business.name} to the shared server`,
     postDeployCommand: config.sshCustomerPostDeployCommand,

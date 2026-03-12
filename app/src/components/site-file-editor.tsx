@@ -258,6 +258,24 @@ function updateTreeFileSize(
   });
 }
 
+function buildFilesApiRequestUrl(
+  filesApiPath: string,
+  filePath?: string | null
+): string {
+  if (!filePath) {
+    return filesApiPath;
+  }
+
+  const url = new URL(filesApiPath, "http://local-preview.invalid");
+  url.searchParams.set("path", filePath);
+
+  if (/^https?:\/\//i.test(filesApiPath)) {
+    return url.toString();
+  }
+
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
 function fileIcon(node: Extract<SiteEditorTreeNode, { type: "file" }>) {
   if (!node.isText) {
     return <ImageIcon className="size-4 shrink-0 text-muted-foreground" />;
@@ -342,10 +360,9 @@ export function SiteFileEditor({
       setBinaryFile(null);
 
       try {
-        const response = await fetch(
-          `${filesApiPath}?path=${encodeURIComponent(filePath)}`,
-          { cache: "no-store" }
-        );
+        const response = await fetch(buildFilesApiRequestUrl(filesApiPath, filePath), {
+          cache: "no-store",
+        });
         const payload = (await response.json()) as {
           error?: string;
           site?: SiteEditorSiteMeta;
@@ -538,16 +555,13 @@ export function SiteFileEditor({
 
     setSaving(true);
     try {
-      const response = await fetch(
-        `${filesApiPath}?path=${encodeURIComponent(file.path)}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ content: editorValue }),
-        }
-      );
+      const response = await fetch(buildFilesApiRequestUrl(filesApiPath, file.path), {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ content: editorValue }),
+      });
       const payload = (await response.json()) as {
         error?: string;
         backupCreated?: boolean;
@@ -626,7 +640,7 @@ export function SiteFileEditor({
       formData.append("file", uploadedFile);
 
       const response = await fetch(
-        `${filesApiPath}?path=${encodeURIComponent(currentBinaryFile.path)}`,
+        buildFilesApiRequestUrl(filesApiPath, currentBinaryFile.path),
         {
           method: "PUT",
           body: formData,

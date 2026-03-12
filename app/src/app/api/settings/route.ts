@@ -60,6 +60,7 @@ interface SettingsPayload {
     cloudflare: {
       apiToken: string;
       accountId: string;
+      accountsJson: string;
       previewProjectName: string;
       customerProductionBranch: string;
     };
@@ -76,6 +77,14 @@ interface SettingsPayload {
       customerPostDeployCommand: string;
     };
   };
+  forms: {
+    endpointUrl: string;
+    signingSecret: string;
+    turnstileSiteKey: string;
+    turnstileSecretKey: string;
+    resendApiKey: string;
+    resendFromEmail: string;
+  };
   outreach: {
     yourName: string;
     businessName: string;
@@ -91,6 +100,7 @@ type WritableSettingsSection =
   | "credentials"
   | "defaults"
   | "deployments"
+  | "forms"
   | "outreach"
   | "pricing";
 
@@ -130,6 +140,7 @@ function toSettingsPayload(config: Config): SettingsPayload {
       cloudflare: {
         apiToken: config.cloudflareApiToken,
         accountId: config.cloudflareAccountId,
+        accountsJson: config.cloudflareAccountsJson,
         previewProjectName: config.cloudflarePreviewProjectName,
         customerProductionBranch: config.cloudflareCustomerProductionBranch,
       },
@@ -145,6 +156,14 @@ function toSettingsPayload(config: Config): SettingsPayload {
         previewPostDeployCommand: config.sshPreviewPostDeployCommand,
         customerPostDeployCommand: config.sshCustomerPostDeployCommand,
       },
+    },
+    forms: {
+      endpointUrl: config.sharedFormEndpointUrl,
+      signingSecret: config.sharedFormSigningSecret,
+      turnstileSiteKey: config.turnstileSiteKey,
+      turnstileSecretKey: config.turnstileSecretKey,
+      resendApiKey: config.resendApiKey,
+      resendFromEmail: config.resendFromEmail,
     },
     outreach: {
       yourName: config.ownerName,
@@ -259,6 +278,7 @@ function flattenSettingsPayload(
       vercelPreviewRootDomain: String(vercel.previewRootDomain ?? "").trim(),
       cloudflareApiToken: String(cloudflare.apiToken ?? ""),
       cloudflareAccountId: String(cloudflare.accountId ?? "").trim(),
+      cloudflareAccountsJson: String(cloudflare.accountsJson ?? ""),
       cloudflarePreviewProjectName: String(
         cloudflare.previewProjectName ?? ""
       ).trim(),
@@ -281,6 +301,17 @@ function flattenSettingsPayload(
       sshCustomerPostDeployCommand: String(
         sharedServer.customerPostDeployCommand ?? ""
       ),
+    };
+  }
+
+  if (section === "forms") {
+    return {
+      sharedFormEndpointUrl: String(source.endpointUrl ?? "").trim(),
+      sharedFormSigningSecret: String(source.signingSecret ?? ""),
+      turnstileSiteKey: String(source.turnstileSiteKey ?? "").trim(),
+      turnstileSecretKey: String(source.turnstileSecretKey ?? ""),
+      resendApiKey: String(source.resendApiKey ?? ""),
+      resendFromEmail: String(source.resendFromEmail ?? "").trim(),
     };
   }
 
@@ -319,6 +350,7 @@ function flattenFullPayload(data: unknown): Partial<Config> {
     ...("deployments" in source
       ? flattenSettingsPayload("deployments", source.deployments)
       : {}),
+    ...("forms" in source ? flattenSettingsPayload("forms", source.forms) : {}),
     ...("outreach" in source
       ? flattenSettingsPayload("outreach", source.outreach)
       : {}),

@@ -18,7 +18,7 @@ Assess:
 - how complex the current site appears to be to replace
 - how hard the replacement would be if it includes advanced functionality
 - which advanced features appear to be present (for example: online store, booking, portal, calculator, custom forms)
-- whether the business should stay fully static, get a lightweight owner CMS, get a lightweight store pack, or be treated as a custom-app case beyond the lightweight pack
+- whether the business should stay fully static, use external provider packs on top of a static site, or be treated as a custom-app case
 - the biggest visible strengths
 - the biggest visible weaknesses
 
@@ -33,17 +33,25 @@ Respond in JSON format:
   "replacementDifficulty": "hard",
   "advancedFeatures": ["online store"],
   "capabilityProfile": {
-    "operatingModel": "static-plus-cms-and-store",
+    "operatingModel": "static-plus-packs",
     "confidence": "high",
     "cms": {
       "need": "required",
-      "provider": "firebase-auth-firestore",
+      "provider": "storyblok",
       "editableAreas": ["homepage", "products", "contact"]
     },
     "commerce": {
       "need": "required",
-      "provider": "stripe-payment-links",
-      "productStrategy": "payment-links"
+      "provider": "shopify",
+      "productStrategy": "buy-button"
+    },
+    "booking": {
+      "need": "none",
+      "provider": "none"
+    },
+    "memberships": {
+      "need": "none",
+      "provider": "none"
     },
     "reasons": ["..."]
   }
@@ -52,9 +60,12 @@ Respond in JSON format:
 Use only `proud`, `mixed`, or `embarrassed` for `ownerSentiment`.
 Use only `simple`, `moderate`, or `advanced` for `websiteComplexity`.
 Use only `easy`, `medium`, or `hard` for `replacementDifficulty`.
-Use only `static-only`, `static-plus-cms`, `static-plus-cms-and-store`, or `custom-app` for `capabilityProfile.operatingModel`.
+Use only `static-only`, `static-plus-packs`, or `custom-app` for `capabilityProfile.operatingModel`.
 Use only `low`, `medium`, or `high` for `capabilityProfile.confidence`.
 Use only `none`, `optional`, `recommended`, or `required` for `capabilityProfile.cms.need` and `capabilityProfile.commerce.need`.
-Use only `none` or `firebase-auth-firestore` for `capabilityProfile.cms.provider`.
-Use only `none`, `stripe-payment-links`, or `shopify` for `capabilityProfile.commerce.provider`.
-Use only `none` or `payment-links` for `capabilityProfile.commerce.productStrategy`.
+Use only `none`, `optional`, `recommended`, or `required` for `capabilityProfile.booking.need` and `capabilityProfile.memberships.need`.
+Use only `none`, `storyblok`, or `sanity` for `capabilityProfile.cms.provider`.
+Use only `none` or `shopify` for `capabilityProfile.commerce.provider`.
+Use only `none`, `buy-button`, or `storefront-api` for `capabilityProfile.commerce.productStrategy`.
+Use only `none`, `square-appointments`, or `cal-com` for `capabilityProfile.booking.provider`.
+Use only `none`, `memberstack`, or `clerk` for `capabilityProfile.memberships.provider`.

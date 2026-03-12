@@ -48,8 +48,15 @@ export interface Config {
   vercelPreviewRootDomain: string;
   cloudflareApiToken: string;
   cloudflareAccountId: string;
+  cloudflareAccountsJson: string;
   cloudflarePreviewProjectName: string;
   cloudflareCustomerProductionBranch: string;
+  sharedFormEndpointUrl: string;
+  sharedFormSigningSecret: string;
+  turnstileSiteKey: string;
+  turnstileSecretKey: string;
+  resendApiKey: string;
+  resendFromEmail: string;
   sshHost: string;
   sshPort: number;
   sshUser: string;
@@ -104,8 +111,15 @@ const DEFAULT_CONFIG: Config = {
   vercelPreviewRootDomain: "",
   cloudflareApiToken: "",
   cloudflareAccountId: "",
+  cloudflareAccountsJson: "",
   cloudflarePreviewProjectName: "",
   cloudflareCustomerProductionBranch: "production",
+  sharedFormEndpointUrl: "",
+  sharedFormSigningSecret: "",
+  turnstileSiteKey: "",
+  turnstileSecretKey: "",
+  resendApiKey: "",
+  resendFromEmail: "",
   sshHost: "",
   sshPort: 22,
   sshUser: "",

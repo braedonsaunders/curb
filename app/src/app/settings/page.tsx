@@ -96,6 +96,7 @@ interface SettingsData {
     cloudflare: {
       apiToken: string;
       accountId: string;
+      accountsJson: string;
       previewProjectName: string;
       customerProductionBranch: string;
     };
@@ -111,6 +112,14 @@ interface SettingsData {
       previewPostDeployCommand: string;
       customerPostDeployCommand: string;
     };
+  };
+  forms: {
+    endpointUrl: string;
+    signingSecret: string;
+    turnstileSiteKey: string;
+    turnstileSecretKey: string;
+    resendApiKey: string;
+    resendFromEmail: string;
   };
   outreach: {
     yourName: string;
@@ -157,6 +166,7 @@ type SettingsResponse = Partial<
     | "anthropicOAuth"
     | "openaiOAuth"
     | "defaults"
+    | "forms"
     | "outreach"
     | "pricing"
   >
@@ -165,6 +175,7 @@ type SettingsResponse = Partial<
   anthropicOAuth?: Partial<SettingsData["anthropicOAuth"]>;
   openaiOAuth?: Partial<SettingsData["openaiOAuth"]>;
   defaults?: Partial<SettingsData["defaults"]>;
+  forms?: Partial<SettingsData["forms"]>;
   deployments?: Partial<SettingsData["deployments"]> & {
     vercel?: Partial<SettingsData["deployments"]["vercel"]>;
     cloudflare?: Partial<SettingsData["deployments"]["cloudflare"]>;
@@ -220,6 +231,7 @@ const DEFAULT_SETTINGS: SettingsData = {
     cloudflare: {
       apiToken: "",
       accountId: "",
+      accountsJson: "",
       previewProjectName: "",
       customerProductionBranch: "production",
     },
@@ -235,6 +247,14 @@ const DEFAULT_SETTINGS: SettingsData = {
       previewPostDeployCommand: "",
       customerPostDeployCommand: "",
     },
+  },
+  forms: {
+    endpointUrl: "",
+    signingSecret: "",
+    turnstileSiteKey: "",
+    turnstileSecretKey: "",
+    resendApiKey: "",
+    resendFromEmail: "",
   },
   outreach: { yourName: "", businessName: "", address: "", email: "" },
   pricing: { text: "" },
@@ -337,6 +357,7 @@ function normalizeSettingsData(data: SettingsResponse): SettingsData {
       ...(data.openaiOAuth ?? {}),
     },
     defaults: { ...DEFAULT_SETTINGS.defaults, ...(data.defaults ?? {}) },
+    forms: { ...DEFAULT_SETTINGS.forms, ...(data.forms ?? {}) },
     deployments: {
       ...DEFAULT_SETTINGS.deployments,
       ...(data.deployments ?? {}),
@@ -373,6 +394,9 @@ export default function SettingsPage() {
     openrouterApiKey: false,
     vercelToken: false,
     cloudflareApiToken: false,
+    sharedFormSigningSecret: false,
+    turnstileSecretKey: false,
+    resendApiKey: false,
     sshPrivateKey: false,
   });
   const [oauthPhase, setOauthPhase] = useState<
@@ -649,6 +673,13 @@ export default function SettingsPage() {
         ...prev.deployments,
         sharedServer: { ...prev.deployments.sharedServer, [key]: value },
       },
+    }));
+  }
+
+  function updateForms(key: keyof SettingsData["forms"], value: string) {
+    setSettings((prev) => ({
+      ...prev,
+      forms: { ...prev.forms, [key]: value },
     }));
   }
 
@@ -1132,6 +1163,7 @@ export default function SettingsPage() {
       <Tabs defaultValue="deployments" className="space-y-6">
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="deployments">Deployments</TabsTrigger>
+          <TabsTrigger value="forms">Forms</TabsTrigger>
           <TabsTrigger value="credentials">AI & APIs</TabsTrigger>
           <TabsTrigger value="defaults">Defaults</TabsTrigger>
           <TabsTrigger value="outreach">Outreach</TabsTrigger>
@@ -1342,6 +1374,35 @@ export default function SettingsPage() {
                       }
                       placeholder="Cloudflare account id"
                     />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="cloudflareAccountsJson">
+                      Optional Account Pool JSON
+                    </Label>
+                    <Textarea
+                      id="cloudflareAccountsJson"
+                      value={settings.deployments.cloudflare.accountsJson}
+                      onChange={(e) =>
+                        updateCloudflare("accountsJson", e.target.value)
+                      }
+                      placeholder={`[
+  {
+    "label": "pool-east",
+    "accountId": "cf-account-id",
+    "apiToken": "cf-api-token",
+    "previewProjectName": "curb-previews",
+    "customerProductionBranch": "production"
+  }
+]`}
+                      rows={8}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Optional. When set, Curb hashes customer sites across
+                      these Cloudflare accounts and reuses the same account for
+                      future redeploys. The single-account fields above remain
+                      the fallback.
+                    </p>
                   </div>
 
                   <div className="space-y-2">
@@ -1579,6 +1640,207 @@ export default function SettingsPage() {
                     <Save className="size-4" />
                   )}
                   Save Deployment Settings
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="forms" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <CheckCircle2 className="size-4" />
+                Shared Lead Form Service
+              </CardTitle>
+              <CardDescription>
+                Generated sites now submit contact forms to one shared endpoint
+                instead of using `mailto`. Deploy the Cloudflare worker, then
+                paste its public URL and credentials here.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid gap-6 xl:grid-cols-2">
+                <div className="space-y-4 rounded-xl border p-4">
+                  <div className="space-y-1">
+                    <p className="font-medium">Endpoint</p>
+                    <p className="text-xs text-muted-foreground">
+                      Public HTTPS URL for the shared form handler. Example:
+                      `https://forms.example.com/submit`
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sharedFormEndpointUrl">Endpoint URL</Label>
+                    <Input
+                      id="sharedFormEndpointUrl"
+                      value={settings.forms.endpointUrl}
+                      onChange={(e) =>
+                        updateForms("endpointUrl", e.target.value)
+                      }
+                      placeholder="https://forms.example.com/submit"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="sharedFormSigningSecret">
+                      Signing Secret
+                    </Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          id="sharedFormSigningSecret"
+                          type={
+                            showKeys.sharedFormSigningSecret
+                              ? "text"
+                              : "password"
+                          }
+                          value={settings.forms.signingSecret}
+                          onChange={(e) =>
+                            updateForms("signingSecret", e.target.value)
+                          }
+                          placeholder="Long random secret shared with the Cloudflare worker"
+                        />
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() =>
+                          toggleKeyVisibility("sharedFormSigningSecret")
+                        }
+                      >
+                        {showKeys.sharedFormSigningSecret ? (
+                          <EyeOff className="size-4" />
+                        ) : (
+                          <Eye className="size-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4 rounded-xl border p-4">
+                  <div className="space-y-1">
+                    <p className="font-medium">Turnstile</p>
+                    <p className="text-xs text-muted-foreground">
+                      Public site key is embedded into generated sites. Secret
+                      key stays only in Curb and the Cloudflare worker.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="turnstileSiteKey">Site Key</Label>
+                    <Input
+                      id="turnstileSiteKey"
+                      value={settings.forms.turnstileSiteKey}
+                      onChange={(e) =>
+                        updateForms("turnstileSiteKey", e.target.value)
+                      }
+                      placeholder="0x4AAAA..."
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="turnstileSecretKey">Secret Key</Label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <Input
+                          id="turnstileSecretKey"
+                          type={
+                            showKeys.turnstileSecretKey ? "text" : "password"
+                          }
+                          value={settings.forms.turnstileSecretKey}
+                          onChange={(e) =>
+                            updateForms("turnstileSecretKey", e.target.value)
+                          }
+                          placeholder="Cloudflare Turnstile secret"
+                        />
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() => toggleKeyVisibility("turnstileSecretKey")}
+                      >
+                        {showKeys.turnstileSecretKey ? (
+                          <EyeOff className="size-4" />
+                        ) : (
+                          <Eye className="size-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4 rounded-xl border p-4 xl:col-span-2">
+                  <div className="space-y-1">
+                    <p className="font-medium">Email Delivery</p>
+                    <p className="text-xs text-muted-foreground">
+                      Resend is used to deliver the shared form submission to
+                      the business recipient stored in each site bundle.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
+                    <div className="space-y-2">
+                      <Label htmlFor="resendApiKey">Resend API Key</Label>
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Input
+                            id="resendApiKey"
+                            type={showKeys.resendApiKey ? "text" : "password"}
+                            value={settings.forms.resendApiKey}
+                            onChange={(e) =>
+                              updateForms("resendApiKey", e.target.value)
+                            }
+                            placeholder="re_..."
+                          />
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => toggleKeyVisibility("resendApiKey")}
+                        >
+                          {showKeys.resendApiKey ? (
+                            <EyeOff className="size-4" />
+                          ) : (
+                            <Eye className="size-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="resendFromEmail">From Email</Label>
+                      <Input
+                        id="resendFromEmail"
+                        value={settings.forms.resendFromEmail}
+                        onChange={(e) =>
+                          updateForms("resendFromEmail", e.target.value)
+                        }
+                        placeholder="leads@yourdomain.com"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
+                Generated sites use this service for contact forms. When these
+                values are empty, Curb cannot ship a production-ready contact
+                pipeline.
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={() => saveSection("forms")}
+                  disabled={saving === "forms"}
+                >
+                  {saving === "forms" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Save Form Settings
                 </Button>
               </div>
             </CardContent>

@@ -1,7 +1,10 @@
 import fs from "fs";
 import path from "path";
 import { NextRequest, NextResponse } from "next/server";
-import { applyPreviewAccessToSiteConfigScript } from "@/lib/site-preview-access";
+import {
+  isLegacyAdminRequestPath,
+  isLegacyManagedArtifactPath,
+} from "@/lib/legacy-site-artifacts";
 
 const SITES_DIR = path.resolve(process.cwd(), "..", "sites");
 
@@ -60,6 +63,18 @@ function resolveRequestedFile(segments: string[]): string | null {
   return null;
 }
 
+function resolveSiteErrorFile(
+  siteSlug: string,
+  statusCode: number
+): string | null {
+  const trimmedSlug = siteSlug.trim();
+  if (!trimmedSlug) {
+    return null;
+  }
+
+  return resolveRequestedFile([trimmedSlug, `${statusCode}.html`]);
+}
+
 function injectBaseHref(html: string, baseHref: string): string {
   if (/<base\b/i.test(html)) {
     return html;
@@ -83,46 +98,43 @@ function getBaseHref(pathname: string): string {
   return pathname.endsWith("/") ? pathname : `${pathname}/`;
 }
 
-async function serveSiteAsset(
-  request: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
-): Promise<NextResponse> {
-  const { path: requestedSegments } = await params;
-  const segments = Array.isArray(requestedSegments) ? requestedSegments : [];
-  const siteSlug = segments[0] ?? "";
-  const filePath = resolveRequestedFile(segments);
+function getServedSiteRelativePath(siteSlug: string, filePath: string): string {
+  const siteRoot = path.resolve(SITES_DIR, siteSlug);
+  return path.relative(siteRoot, filePath).split(path.sep).join("/");
+}
 
-  if (!filePath) {
-    return NextResponse.json({ error: "Site file not found" }, { status: 404 });
+function sitePathnameForFile(siteSlug: string, siteRelativePath: string): string {
+  if (!siteRelativePath || siteRelativePath === "index.html") {
+    return `/sites/${siteSlug}/`;
   }
 
-  const siteRelativePath =
-    segments.length > 1 ? segments.slice(1).join("/") : "index.html";
+  if (/\/index\.html$/i.test(siteRelativePath)) {
+    return `/sites/${siteSlug}/${siteRelativePath.replace(/\/index\.html$/i, "/")}`;
+  }
 
-  if (
-    siteSlug &&
-    siteRelativePath === "assets/curb-site-config.js" &&
-    getContentType(filePath).startsWith("application/javascript")
-  ) {
-    const content = fs.readFileSync(filePath, "utf-8");
+  return `/sites/${siteSlug}/${siteRelativePath}`;
+}
 
-    return new NextResponse(
-      applyPreviewAccessToSiteConfigScript(content, siteSlug),
-      {
-        headers: {
-          "content-type": getContentType(filePath),
-          "cache-control": "no-store",
-        },
-      }
-    );
+function serveResolvedFile(
+  filePath: string,
+  siteSlug: string,
+  status = 200
+): NextResponse {
+  const siteRelativePath = getServedSiteRelativePath(siteSlug, filePath);
+
+  if (isLegacyManagedArtifactPath(siteRelativePath)) {
+    return NextResponse.json({ error: "Site file not found" }, { status: 404 });
   }
 
   if (getContentType(filePath).startsWith("text/html")) {
     const html = fs.readFileSync(filePath, "utf-8");
-    const baseHref = getBaseHref(request.nextUrl.pathname);
+    const baseHref = getBaseHref(
+      sitePathnameForFile(siteSlug, siteRelativePath)
+    );
     const body = injectBaseHref(html, baseHref);
 
     return new NextResponse(body, {
+      status,
       headers: {
         "content-type": getContentType(filePath),
         "cache-control": "no-store",
@@ -132,11 +144,55 @@ async function serveSiteAsset(
 
   const buffer = fs.readFileSync(filePath);
   return new NextResponse(buffer, {
+    status,
     headers: {
       "content-type": getContentType(filePath),
       "cache-control": "no-store",
     },
   });
+}
+
+async function serveSiteAsset(
+  _request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+): Promise<NextResponse> {
+  const { path: requestedSegments } = await params;
+  const segments = Array.isArray(requestedSegments) ? requestedSegments : [];
+  const siteSlug = segments[0] ?? "";
+
+  try {
+    if (isLegacyAdminRequestPath(segments)) {
+      return NextResponse.json({ error: "Site file not found" }, { status: 404 });
+    }
+
+    const filePath = resolveRequestedFile(segments);
+    if (!filePath) {
+      const notFoundFile = resolveSiteErrorFile(siteSlug, 404);
+      if (notFoundFile) {
+        return serveResolvedFile(notFoundFile, siteSlug, 404);
+      }
+
+      return NextResponse.json({ error: "Site file not found" }, { status: 404 });
+    }
+
+    return serveResolvedFile(filePath, siteSlug);
+  } catch (error) {
+    console.error(
+      `Failed to serve generated site asset for "${siteSlug}": ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+
+    const errorFile = resolveSiteErrorFile(siteSlug, 500);
+    if (errorFile) {
+      return serveResolvedFile(errorFile, siteSlug, 500);
+    }
+
+    return NextResponse.json(
+      { error: "Failed to serve site file" },
+      { status: 500 }
+    );
+  }
 }
 
 export const GET = serveSiteAsset;

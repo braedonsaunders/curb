@@ -1140,6 +1140,7 @@ function buildSourceBrandAssetSummary(
     `Original logo URL: ${logo.sourceUrl}`,
     `Logo MIME type: ${logo.mimeType ?? "Unknown"}`,
     "If you display a logo anywhere in the site, you must reference this exact asset using the correct relative path from each file and must not redraw or approximate it.",
+    "If you place the logo in the main header or homepage top bar, keep it clearly legible with enough visual presence to read at a glance instead of reducing it to a tiny badge.",
   ].join("\n");
 }
 
@@ -1629,6 +1630,7 @@ export async function generateSite(
     "- Reorganize layout, page structure, and section order whenever needed to produce a stronger modern experience.",
     "- Avoid safe template output, dated layouts, weak typography, cramped spacing, flat white-box sections, generic hero-plus-card patterns, and low-effort visual design.",
     "- When an exact source logo file path is provided, every visible logo treatment must use that exact asset path. Do not recreate, redraw, typeset, simplify, or approximate the logo.",
+    "- If the logo appears in the main header or homepage top bar, size it for immediate legibility and real brand presence. Avoid tiny badge-like logo treatments; a practical desktop header logo usually needs roughly 44-64px of visual height unless the logo proportions clearly require otherwise.",
     "- If no exact source logo asset is provided, do not invent or fabricate a new logo mark.",
     "- Choose the site architecture that best fits the business: single-page only for simple brochure sites, multi-page when there are clearly distinct pages, galleries, FAQs, specialties, resources, locations, or utility flows.",
     "- Match the source site's page-level complexity. Do not collapse a many-page website into a one-page brochure or a tiny handful of pages.",
@@ -1636,8 +1638,10 @@ export async function generateSite(
     "- When the Architecture Recommendation section says multi-page is required, you must return a multi-page bundle with at least the stated minimum number of substantive HTML pages.",
     "- Multi-page is required when there are multiple substantive source pages, large navigation, or complex flows such as store, booking, or portal behavior.",
     "- When the Capability Recommendation section says static-only, do not invent admin dashboards, editor UI, member login, carts, or fake store functionality.",
-    "- When the Capability Recommendation section recommends a lightweight CMS pack, keep the public site static but structure content into stable sections and dedicated pages so an owner-edit layer can be attached cleanly later.",
-    "- When the Capability Recommendation section recommends a lightweight store pack, give products or offerings a clear dedicated page or section and keep checkout assumptions simple enough for product records to map to direct Stripe or Shopify checkout links later.",
+    "- When the Capability Recommendation section says static-plus-packs, keep the public site static but structure content so real external providers can be connected cleanly after the sale.",
+    "- If CMS is recommended, organize content into stable sections and dedicated pages that can map cleanly into Storyblok or Sanity later.",
+    "- If commerce is recommended, give products or offerings a clear dedicated page or section and keep the storefront simple enough to connect to Shopify later.",
+    "- If booking is recommended, use honest booking CTAs and layouts that can later connect to Square Appointments or Cal.com. Do not invent a fake scheduler.",
     "- If the Capability Recommendation section says custom-app, keep the marketing site excellent, but do not fake complex authenticated flows inside the static bundle.",
     "- If single-page, consolidate content into anchored sections and use working in-page navigation like #about-us or #specials.",
     "- If multi-page, return a static site bundle with one file per page and keep all internal navigation relative to the site bundle.",
@@ -1972,7 +1976,7 @@ ${buildPageSignalsSummary(input.pageSignals)}
 
 Judge the site the way a business owner would, not with technical speed or SEO metrics.
 Focus on visual polish, modern feel, clarity, trust, and whether the owner would likely feel proud or embarrassed to send customers there.
-Also decide whether this business should stay fully static, get a lightweight owner CMS, get a lightweight product/store layer, or be treated as a custom-app case beyond the lightweight pack.
+Also decide whether this business should stay fully static, use external provider packs on top of a static site, or be treated as a custom-app case.
 
 Return JSON with exactly these fields:
 {
@@ -1985,17 +1989,25 @@ Return JSON with exactly these fields:
   "replacementDifficulty": "hard",
   "advancedFeatures": ["online store"],
   "capabilityProfile": {
-    "operatingModel": "static-plus-cms-and-store",
+    "operatingModel": "static-plus-packs",
     "confidence": "high",
     "cms": {
       "need": "required",
-      "provider": "firebase-auth-firestore",
+      "provider": "storyblok",
       "editableAreas": ["homepage", "products", "contact"]
     },
     "commerce": {
       "need": "required",
-      "provider": "stripe-payment-links",
-      "productStrategy": "payment-links"
+      "provider": "shopify",
+      "productStrategy": "buy-button"
+    },
+    "booking": {
+      "need": "none",
+      "provider": "none"
+    },
+    "memberships": {
+      "need": "none",
+      "provider": "none"
     },
     "reasons": ["..."]
   }
@@ -2004,12 +2016,15 @@ Return JSON with exactly these fields:
 Use only proud, mixed, or embarrassed for ownerSentiment.
 Use only simple, moderate, or advanced for websiteComplexity.
 Use only easy, medium, or hard for replacementDifficulty.
-Use only static-only, static-plus-cms, static-plus-cms-and-store, or custom-app for capabilityProfile.operatingModel.
+Use only static-only, static-plus-packs, or custom-app for capabilityProfile.operatingModel.
 Use only low, medium, or high for capabilityProfile.confidence.
 Use only none, optional, recommended, or required for capabilityProfile.cms.need and capabilityProfile.commerce.need.
-Use only none or firebase-auth-firestore for capabilityProfile.cms.provider.
-Use only none, stripe-payment-links, or shopify for capabilityProfile.commerce.provider.
-Use only none or payment-links for capabilityProfile.commerce.productStrategy.
+Use only none, optional, recommended, or required for capabilityProfile.booking.need and capabilityProfile.memberships.need.
+Use only none, storyblok, or sanity for capabilityProfile.cms.provider.
+Use only none or shopify for capabilityProfile.commerce.provider.
+Use only none, buy-button, or storefront-api for capabilityProfile.commerce.productStrategy.
+Use only none, square-appointments, or cal-com for capabilityProfile.booking.provider.
+Use only none, memberstack, or clerk for capabilityProfile.memberships.provider.
 No markdown code fences.`;
   }
 

@@ -7,11 +7,10 @@ import { initializeDatabase } from '@/lib/schema';
 import { getDb } from '@/lib/db';
 import { getConfig } from '@/lib/config';
 import { normalizeEmailRecord } from '@/lib/email-record';
-import { hasSiteCms } from '@/lib/generated-site-cms';
+import { normalizeProviderActivationState } from '@/lib/provider-activation';
 import {
   normalizeSiteCapabilityProfile,
 } from '@/lib/site-capabilities';
-import { buildPreviewAdminUrl } from '@/lib/site-preview-access';
 import {
   getCustomerProjectState,
   getPublicPreviewLinkForBusiness,
@@ -214,12 +213,12 @@ export async function GET(
       updatedAt: deployment.updatedAt,
     }));
 
-    const businessSlug = String(business.slug ?? "");
     const capabilityProfile = normalizedAudits[0]?.capabilityProfile ?? null;
-    const previewAdminUrl =
-      businessSlug && hasSiteCms(businessSlug)
-        ? buildPreviewAdminUrl(previewLink.url, businessSlug)
-        : null;
+    const providerActivation = normalizeProviderActivationState(
+      business.provider_activation_json,
+      capabilityProfile,
+      config
+    );
 
     return NextResponse.json({
       ...(business as Record<string, unknown>),
@@ -235,8 +234,8 @@ export async function GET(
       publicPreviewUrl: previewLink.url,
       publicPreviewUrlProvider: previewLink.provider,
       publicPreviewUrlSource: previewLink.source,
-      publicPreviewAdminUrl: previewAdminUrl,
       capabilityProfile,
+      providerActivation,
       audits: normalizedAudits,
       generatedSites: normalizedSites,
       emails: normalizedEmails,
@@ -270,7 +269,9 @@ export async function PATCH(
       );
     }
 
-    const existing = db.prepare('SELECT id FROM businesses WHERE id = ?').get(businessId);
+    const existing = db.prepare('SELECT id, category FROM businesses WHERE id = ?').get(
+      businessId
+    ) as { id: number; category: string | null } | undefined;
     if (!existing) {
       return NextResponse.json(
         { error: 'Business not found' },
@@ -311,6 +312,43 @@ export async function PATCH(
           shouldResetEnrichment = true;
         }
       }
+    }
+
+    if (body.provider_activation !== undefined) {
+      const latestAudit = db
+        .prepare(
+          `SELECT advanced_features_json, capability_profile_json
+           FROM audits
+           WHERE business_id = ? AND audit_version = 2
+           ORDER BY created_at DESC
+           LIMIT 1`
+        )
+        .get(businessId) as
+        | {
+            advanced_features_json: string | null;
+            capability_profile_json: string | null;
+          }
+        | undefined;
+
+      const advancedFeatures = parseJsonArray(
+        latestAudit?.advanced_features_json ?? null
+      );
+      const capabilityProfile = parseCapabilityProfile(
+        latestAudit?.capability_profile_json ?? null,
+        typeof body.category === "string" ? body.category : existing.category,
+        advancedFeatures
+      );
+
+      updates.push("provider_activation_json = ?");
+      values.push(
+        JSON.stringify(
+          normalizeProviderActivationState(
+            body.provider_activation,
+            capabilityProfile,
+            getConfig()
+          )
+        )
+      );
     }
 
     if (updates.length === 0) {

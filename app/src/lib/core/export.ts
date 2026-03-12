@@ -2,9 +2,13 @@ import fs from "fs";
 import path from "path";
 import archiver from "archiver";
 import { getDb } from "../db";
+import { isLegacyManagedArtifactPath } from "../legacy-site-artifacts";
 import {
+  includeBookingPack,
+  includeCmsPack,
+  includeMembershipPack,
+  includeStorePack,
   normalizeSiteCapabilityProfile,
-  resolveStoreCommerceProvider,
   SITE_CAPABILITY_MANIFEST_PATH,
   type SiteCapabilityProfile,
 } from "../site-capabilities";
@@ -52,42 +56,52 @@ function buildCapabilitySection(profile: SiteCapabilityProfile | null): string {
     }
   }
 
-  if (profile.operatingModel === "static-plus-cms") {
-    lines.push(
-      "",
-      "Recommended owner-edit stack:",
-      "- Keep the public site static on Vercel or another static host",
-      "- Add a customer-owned Firebase project for authentication and content storage",
-      "- The built-in /admin portal uses Firebase email-link sign-in and Firestore-backed content records",
-      "- Use the machine-readable manifest in assets/curb-site-package.json as the contract for future CMS packaging"
-    );
-  }
-
-  if (profile.operatingModel === "static-plus-cms-and-store") {
-    const commerceProvider = resolveStoreCommerceProvider(
-      profile.commerce.provider
-    );
-    lines.push(
-      "",
-      "Recommended owner-edit and store stack:",
-      "- Keep the public site static",
-      "- Use the built-in Firebase owner portal for content and product updates",
-      `- Start commerce with ${
-        commerceProvider === "shopify"
-          ? "Shopify checkout links"
-          : "Stripe Payment Links"
-      } instead of a custom cart or inventory backend`,
-      "- Treat products as structured records so the owner can update catalog entries without editing HTML"
-    );
-  }
-
   if (profile.operatingModel === "custom-app") {
     lines.push(
       "",
       "Important:",
-      "- Do not force this into the lightweight static pack",
-      "- Keep the marketing pages static if you want, but scope the advanced customer flow as a separate app or specialist integration"
+      "- Keep the public marketing site static",
+      "- Scope the authenticated or app-like flow as a separate application instead of extending the static bundle with fake UI"
     );
+  }
+
+  if (profile.operatingModel === "static-plus-packs") {
+    lines.push("", "Recommended provider-backed stack:");
+    lines.push("- Hosting: Cloudflare Pages");
+
+    if (includeCmsPack(profile)) {
+      lines.push(
+        `- CMS: ${
+          profile.cms.provider === "sanity" ? "Sanity" : "Storyblok"
+        }`
+      );
+    }
+
+    if (includeStorePack(profile)) {
+      lines.push(
+        `- Store: Shopify (${profile.commerce.productStrategy === "storefront-api" ? "Storefront API" : "Buy Button / checkout link"} model)`
+      );
+    }
+
+    if (includeBookingPack(profile)) {
+      lines.push(
+        `- Booking: ${
+          profile.booking.provider === "cal-com"
+            ? "Cal.com"
+            : "Square Appointments"
+        }`
+      );
+    }
+
+    if (includeMembershipPack(profile)) {
+      lines.push(
+        `- Memberships: ${
+          profile.memberships.provider === "clerk"
+            ? "Clerk"
+            : "Memberstack"
+        }`
+      );
+    }
   }
 
   return `${lines.join("\n")}\n`;
@@ -116,15 +130,15 @@ This website was generated or mirrored by Curb for a local business.
    - Ensure your server serves index.html as the default document
 
 4. Contact forms:
-   - Forms are wired for zero-backend email handoff using mailto
+   - Forms submit to the shared form endpoint configured in assets/curb-site-config.js
    - Update assets/curb-site-config.js to set the final recipient email
-   - If a visitor's mail app does not open, the site shows a copy-to-clipboard fallback
+   - Ensure the shared Cloudflare form service, Turnstile, and Resend settings are live before launch
 
 5. To customize:
    - Edit index.html with any text editor or code editor
    - Replace images in the assets/photos/ directory as needed
    - Update contact information, hours, and other business details
-   - Review assets/curb-site-package.json if this site was marked for an owner CMS or store pack
+   - Review assets/curb-site-package.json and handoff/PROVIDER_SETUP.md if this site was marked for external provider packs
 
 ${capabilitySection}## Directory Structure
 
@@ -166,8 +180,29 @@ export async function exportSite(slug: string): Promise<Buffer> {
     archive.on("end", () => resolve(Buffer.concat(chunks)));
     archive.on("error", (err: Error) => reject(err));
 
-    // Add all files from the site directory
-    archive.directory(siteDir, slug);
+    // Exclude legacy in-site admin artifacts from exports.
+    archive.glob("**/*", {
+      cwd: siteDir,
+      dot: true,
+      ignore: [
+        "admin/**",
+        ...[
+          "assets/curb-admin-pack.css",
+          "assets/curb-admin-pack.js",
+          "assets/curb-cms-schema.json",
+          "assets/curb-products.json",
+          "assets/curb-public-pack.js",
+          "assets/vendor/tabler.min.css",
+          "assets/vendor/tabler.min.js",
+          "handoff/OWNER_SETUP.md",
+          "handoff/firebase.json",
+          "handoff/firestore.indexes.json",
+          "handoff/firestore.rules",
+        ].filter((filePath) => isLegacyManagedArtifactPath(filePath)),
+      ],
+    }, {
+      prefix: slug,
+    });
 
     // Add README.txt
     archive.append(buildReadmeContent(siteDir), {

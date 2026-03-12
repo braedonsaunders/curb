@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build",
+    "migrate:legacy-sites": "node scripts/migrate-legacy-generated-sites.mjs",
     "start": "next start",
     "lint": "eslint"
   },

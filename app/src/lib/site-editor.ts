@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 
 import { getDb } from "@/lib/db";
+import { isLegacyManagedArtifactPath } from "@/lib/legacy-site-artifacts";
 import { initializeDatabase } from "@/lib/schema";
 
 const SITES_ROOT = path.resolve(process.cwd(), "..", "sites");
@@ -150,6 +151,9 @@ function resolveSitePath(siteDir: string, relativePath: string): {
   absolutePath: string;
 } {
   const normalizedPath = normalizeRelativePath(relativePath);
+  if (isLegacyManagedArtifactPath(normalizedPath)) {
+    throw new SiteEditorError("Site file not found.", 404);
+  }
   const absolutePath = path.resolve(siteDir, normalizedPath);
 
   if (!isWithinDirectory(absolutePath, siteDir)) {
@@ -164,11 +168,28 @@ function buildTreeNode(siteDir: string, absolutePath: string): SiteEditorTreeNod
   const relativePath = path.relative(siteDir, absolutePath).replaceAll("\\", "/");
   const name = path.basename(absolutePath);
 
+  if (relativePath && isLegacyManagedArtifactPath(relativePath)) {
+    throw new SiteEditorError("Site file not found.", 404);
+  }
+
   if (stat.isDirectory()) {
     const children = fs
       .readdirSync(absolutePath)
       .sort((left, right) => left.localeCompare(right))
-      .map((entry) => buildTreeNode(siteDir, path.join(absolutePath, entry)))
+      .flatMap((entry) => {
+        try {
+          return [buildTreeNode(siteDir, path.join(absolutePath, entry))];
+        } catch (error) {
+          if (
+            error instanceof SiteEditorError &&
+            error.status === 404
+          ) {
+            return [];
+          }
+
+          throw error;
+        }
+      })
       .sort((left, right) => {
         if (left.type === right.type) {
           return left.name.localeCompare(right.name);
@@ -279,7 +300,17 @@ export function listSiteFiles(siteDir: string): SiteEditorTreeNode[] {
   return fs
     .readdirSync(siteDir)
     .sort((left, right) => left.localeCompare(right))
-    .map((entry) => buildTreeNode(siteDir, path.join(siteDir, entry)))
+    .flatMap((entry) => {
+      try {
+        return [buildTreeNode(siteDir, path.join(siteDir, entry))];
+      } catch (error) {
+        if (error instanceof SiteEditorError && error.status === 404) {
+          return [];
+        }
+
+        throw error;
+      }
+    })
     .sort((left, right) => {
       if (left.type === right.type) {
         return left.name.localeCompare(right.name);

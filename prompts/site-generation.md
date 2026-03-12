@@ -156,12 +156,15 @@ Technical requirements:
   store, booking, or portal behavior.
 - When the Capability Recommendation section says `static-only`, do not invent
   login CMS UI, admin dashboards, carts, or fake store mechanics.
-- When the Capability Recommendation section recommends a lightweight CMS pack,
-  keep the public experience static but organize content into stable sections
-  and dedicated pages so an owner-edit layer can be attached cleanly later.
-- When the Capability Recommendation section recommends a lightweight store
-  pack, give products or offerings a clear dedicated page or section and keep
-  checkout assumptions simple enough for per-product payment links later.
+- When the Capability Recommendation section says `static-plus-packs`, keep the
+  public experience static but structure it so real external providers can be
+  connected cleanly after the sale.
+- If CMS is recommended, organize content into stable sections and dedicated
+  pages that can map cleanly into Storyblok or Sanity.
+- If commerce is recommended, give products or offerings a clear dedicated page
+  or section and keep the storefront simple enough to connect to Shopify later.
+- If booking is recommended, use honest booking CTAs and placeholders that can
+  later point to Square Appointments or Cal.com. Do not invent a fake scheduler.
 - If the Capability Recommendation section says `custom-app`, keep the
   marketing site excellent, but do not fake authenticated or highly dynamic app
   flows inside the static bundle.

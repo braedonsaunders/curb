@@ -10,10 +10,7 @@ function isStandaloneSiteAdmin(pathname: string | null): boolean {
     return false;
   }
 
-  return (
-    /^\/sites\/[^/]+\/admin(?:\/.*)?$/.test(pathname) ||
-    /^\/site-admin\/[^/]+(?:\/.*)?$/.test(pathname)
-  );
+  return /^\/sites\/[^/]+\/admin(?:\/.*)?$/.test(pathname);
 }
 
 export function AppFrame({

@@ -39,6 +39,7 @@ import {
   Globe,
   ExternalLink,
   Loader2,
+  Save,
   RefreshCw,
   Download,
   Mail,
@@ -69,6 +70,12 @@ import {
   type SiteCapabilityProfile,
   type StoreCommerceProvider,
 } from "@/lib/site-capabilities";
+import type {
+  ProviderActivationEntry,
+  ProviderActivationOwner,
+  ProviderActivationState,
+  ProviderActivationStatus,
+} from "@/lib/provider-activation";
 import type { DeploymentProvider } from "@/lib/config";
 
 const STATUS_OPTIONS = BUSINESS_STATUSES;
@@ -189,10 +196,10 @@ interface BusinessDetail {
   configuredCustomerDeploymentProvider: DeploymentProvider;
   configuredPreviewDeploymentProvider: DeploymentProvider;
   publicPreviewUrl: string | null;
-  publicPreviewAdminUrl: string | null;
   publicPreviewUrlProvider: DeploymentProvider | null;
   publicPreviewUrlSource: "alias" | "deployment" | "local";
   capabilityProfile: SiteCapabilityProfile | null;
+  providerActivation: ProviderActivationState;
   hours_json: string | null;
   photos_json: string | null;
   audits: AuditData[];
@@ -279,11 +286,16 @@ function buildSiteCapabilityOverrideState(
   profile: SiteCapabilityProfile | null
 ): SiteCapabilityOverrideState {
   return {
-    includeCmsPack:
-      profile?.operatingModel === "static-plus-cms" ||
-      profile?.operatingModel === "static-plus-cms-and-store",
-    includeStorePack:
-      profile?.operatingModel === "static-plus-cms-and-store",
+    includeCmsPack: Boolean(
+      profile &&
+        profile.cms.need !== "none" &&
+        profile.cms.provider !== "none"
+    ),
+    includeStorePack: Boolean(
+      profile &&
+        profile.commerce.need !== "none" &&
+        profile.commerce.provider !== "none"
+    ),
     commerceProvider: resolveStoreCommerceProvider(profile?.commerce.provider),
   };
 }
@@ -498,11 +510,13 @@ export default function BusinessDetailPage() {
   const [siteEditorOpen, setSiteEditorOpen] = useState(false);
   const [sitePreviewNonce, setSitePreviewNonce] = useState(0);
   const [customerDomainDraft, setCustomerDomainDraft] = useState("");
+  const [providerActivationDraft, setProviderActivationDraft] =
+    useState<ProviderActivationState | null>(null);
   const [siteCapabilityOverride, setSiteCapabilityOverride] =
     useState<SiteCapabilityOverrideState>({
       includeCmsPack: false,
       includeStorePack: false,
-      commerceProvider: "stripe-payment-links",
+      commerceProvider: "shopify",
     });
   const siteDialogOpen = siteDialogMode !== null;
   const audit = biz?.audits?.[0] ?? null;
@@ -530,6 +544,7 @@ export default function BusinessDetailPage() {
       setBiz(data);
       setNotes(data.notes || "");
       setCustomerDomainDraft(data.customerDomain || "");
+      setProviderActivationDraft(data.providerActivation);
     } catch {
       toast.error("Failed to load business");
     } finally {
@@ -872,7 +887,18 @@ export default function BusinessDetailPage() {
         deployment.deploymentKind === "customer" && deployment.active
     ) ?? null;
   const publicPreviewUrl = biz?.publicPreviewUrl ?? null;
-  const publicPreviewAdminUrl = biz?.publicPreviewAdminUrl ?? null;
+  const providerActivation =
+    providerActivationDraft ?? biz?.providerActivation ?? null;
+  const providerActivationEntries = providerActivation
+    ? ([
+        ["hosting", providerActivation.hosting],
+        ["forms", providerActivation.forms],
+        ["cms", providerActivation.cms],
+        ["commerce", providerActivation.commerce],
+        ["booking", providerActivation.booking],
+        ["memberships", providerActivation.memberships],
+      ] as Array<[keyof ProviderActivationState, ProviderActivationEntry | ProviderActivationState["forms"]]>)
+    : [];
   const hours: Record<string, string> = (() => {
     try {
       return biz?.hours_json ? JSON.parse(biz.hours_json) : {};
@@ -1075,6 +1101,57 @@ export default function BusinessDetailPage() {
     }
   }
 
+  function updateProviderActivationEntry(
+    key: keyof ProviderActivationState,
+    patch:
+      | Partial<ProviderActivationEntry>
+      | Partial<ProviderActivationState["forms"]>
+  ) {
+    setProviderActivationDraft((current) => {
+      if (!current) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [key]: {
+          ...current[key],
+          ...patch,
+        },
+      };
+    });
+  }
+
+  async function saveProviderActivation() {
+    if (!providerActivationDraft) {
+      return;
+    }
+
+    setActionLoading("providerActivation");
+    try {
+      const res = await fetch(`/api/businesses/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          provider_activation: providerActivationDraft,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to save provider activation");
+      }
+      toast.success("Provider activation workflow saved");
+      await fetchBusiness();
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to save provider activation"
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   async function generateEmail() {
     setActionLoading("email");
     try {
@@ -1220,11 +1297,8 @@ export default function BusinessDetailPage() {
   function capabilityModelBadge(
     operatingModel: SiteCapabilityProfile["operatingModel"]
   ) {
-    if (operatingModel === "static-plus-cms-and-store") {
+    if (operatingModel === "static-plus-packs") {
       return "bg-blue-100 text-blue-700";
-    }
-    if (operatingModel === "static-plus-cms") {
-      return "bg-emerald-100 text-emerald-700";
     }
     if (operatingModel === "custom-app") {
       return "bg-red-100 text-red-700";
@@ -1235,11 +1309,8 @@ export default function BusinessDetailPage() {
   function capabilityModelLabel(
     operatingModel: SiteCapabilityProfile["operatingModel"]
   ) {
-    if (operatingModel === "static-plus-cms-and-store") {
-      return "Static + CMS + Store";
-    }
-    if (operatingModel === "static-plus-cms") {
-      return "Static + CMS";
+    if (operatingModel === "static-plus-packs") {
+      return "Static + Provider Packs";
     }
     if (operatingModel === "custom-app") {
       return "Custom App";
@@ -1266,18 +1337,29 @@ export default function BusinessDetailPage() {
     provider:
       | SiteCapabilityProfile["cms"]["provider"]
       | SiteCapabilityProfile["commerce"]["provider"]
+      | SiteCapabilityProfile["booking"]["provider"]
+      | SiteCapabilityProfile["memberships"]["provider"]
   ) {
-    if (provider === "firebase-auth-firestore") {
-      return "Firebase content pack";
+    if (provider === "storyblok") {
+      return "Storyblok";
     }
-    if (provider === "stripe-payment-links") {
-      return "Stripe Payment Links";
+    if (provider === "sanity") {
+      return "Sanity";
     }
     if (provider === "shopify") {
-      return "Shopify checkout links";
+      return "Shopify";
     }
-    if (provider === "snipcart") {
-      return "Snipcart";
+    if (provider === "square-appointments") {
+      return "Square Appointments";
+    }
+    if (provider === "cal-com") {
+      return "Cal.com";
+    }
+    if (provider === "memberstack") {
+      return "Memberstack";
+    }
+    if (provider === "clerk") {
+      return "Clerk";
     }
     return "None";
   }
@@ -1298,13 +1380,55 @@ export default function BusinessDetailPage() {
   function strategyLabel(
     strategy: SiteCapabilityProfile["commerce"]["productStrategy"]
   ) {
-    if (strategy === "payment-links") {
-      return "Direct checkout links";
+    if (strategy === "buy-button") {
+      return "Buy Button / checkout link";
     }
-    if (strategy === "snipcart-cart") {
-      return "Snipcart cart";
+    if (strategy === "storefront-api") {
+      return "Storefront API";
     }
     return "None";
+  }
+
+  function providerActivationStatusLabel(status: ProviderActivationStatus) {
+    if (status === "in-progress") {
+      return "In Progress";
+    }
+    if (status === "configured") {
+      return "Configured";
+    }
+    if (status === "live") {
+      return "Live";
+    }
+    if (status === "not-needed") {
+      return "Not Needed";
+    }
+    return "Not Started";
+  }
+
+  function providerActivationStatusBadge(status: ProviderActivationStatus) {
+    if (status === "live") {
+      return "bg-green-100 text-green-700";
+    }
+    if (status === "configured") {
+      return "bg-blue-100 text-blue-700";
+    }
+    if (status === "in-progress") {
+      return "bg-amber-100 text-amber-700";
+    }
+    if (status === "not-needed") {
+      return "bg-slate-100 text-slate-600";
+    }
+    return "bg-muted text-muted-foreground";
+  }
+
+  function providerActivationOwnerLabel(owner: ProviderActivationOwner) {
+    if (owner === "client") {
+      return "Client";
+    }
+    if (owner === "shared") {
+      return "Shared";
+    }
+    return "Curb";
   }
 
   const generationProgressPanel =
@@ -1759,7 +1883,7 @@ export default function BusinessDetailPage() {
                 {capabilityProfile ? (
                   <Card className="lg:col-span-4">
                     <CardHeader>
-                      <CardTitle>Capability Pack Recommendation</CardTitle>
+                      <CardTitle>Provider Pack Recommendation</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="flex flex-wrap gap-2">
@@ -1789,13 +1913,27 @@ export default function BusinessDetailPage() {
                         >
                           Store {capabilityProfile.commerce.need}
                         </Badge>
+                        <Badge
+                          className={capabilityNeedBadge(
+                            capabilityProfile.booking.need
+                          )}
+                        >
+                          Booking {capabilityProfile.booking.need}
+                        </Badge>
+                        <Badge
+                          className={capabilityNeedBadge(
+                            capabilityProfile.memberships.need
+                          )}
+                        >
+                          Members {capabilityProfile.memberships.need}
+                        </Badge>
                       </div>
 
                       <p className="text-sm leading-6 text-muted-foreground">
                         {capabilityProfile.packageSummary}
                       </p>
 
-                      <div className="grid gap-4 md:grid-cols-2">
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                         <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
                           <p className="text-sm font-medium">Owner CMS</p>
                           <p className="text-sm text-muted-foreground">
@@ -1821,6 +1959,30 @@ export default function BusinessDetailPage() {
                             {strategyLabel(
                               capabilityProfile.commerce.productStrategy
                             )}
+                          </p>
+                        </div>
+
+                        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+                          <p className="text-sm font-medium">Booking</p>
+                          <p className="text-sm text-muted-foreground">
+                            Provider: {providerLabel(
+                              capabilityProfile.booking.provider
+                            )}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            Need: {capabilityProfile.booking.need}
+                          </p>
+                        </div>
+
+                        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+                          <p className="text-sm font-medium">Memberships</p>
+                          <p className="text-sm text-muted-foreground">
+                            Provider: {providerLabel(
+                              capabilityProfile.memberships.provider
+                            )}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            Need: {capabilityProfile.memberships.need}
                           </p>
                         </div>
                       </div>
@@ -1943,18 +2105,6 @@ export default function BusinessDetailPage() {
                         <Button variant="outline" size="sm">
                           <ExternalLink className="size-4" />
                           Open Public Preview
-                        </Button>
-                      </a>
-                    ) : null}
-                    {publicPreviewAdminUrl ? (
-                      <a
-                        href={publicPreviewAdminUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <Button variant="outline" size="sm">
-                          <ExternalLink className="size-4" />
-                          Open Admin Preview
                         </Button>
                       </a>
                     ) : null}
@@ -2103,14 +2253,6 @@ export default function BusinessDetailPage() {
                           {publicPreviewUrl ?? "Not deployed yet"}
                         </p>
                       </div>
-                      {publicPreviewAdminUrl ? (
-                        <div className="space-y-1">
-                          <p className="font-medium">Internal admin preview</p>
-                          <p className="break-all text-muted-foreground">
-                            {publicPreviewAdminUrl}
-                          </p>
-                        </div>
-                      ) : null}
                       <p className="text-xs text-muted-foreground">
                         Source:{" "}
                         {biz.publicPreviewUrlSource === "alias"
@@ -2120,14 +2262,15 @@ export default function BusinessDetailPage() {
                           : biz.publicPreviewUrlSource === "deployment"
                             ? `${deploymentProviderLabel(
                                 biz.publicPreviewUrlProvider
-                              )} deployment URL`
+                            )} deployment URL`
                             : "Local preview fallback"}
                       </p>
-                      {publicPreviewAdminUrl ? (
+                      {capabilityProfile?.operatingModel ===
+                      "static-plus-packs" ? (
                         <p className="text-xs text-muted-foreground">
-                          This admin URL unlocks Curb&apos;s preview session and
-                          stores edits locally for demos. It is separate from
-                          the customer-facing preview link.
+                          No internal admin preview exists. Post-sale editing
+                          should happen in the recommended provider back office,
+                          not inside the static site bundle.
                         </p>
                       ) : null}
                       {previewDeployment ? (
@@ -2299,6 +2442,212 @@ export default function BusinessDetailPage() {
                   </Card>
                 </div>
 
+                {providerActivation ? (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">
+                        Provider Activation Workflow
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <p className="text-sm text-muted-foreground">
+                        Track the real post-sale setup here. This replaces the
+                        old fake in-site admin handoff.
+                      </p>
+
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        {providerActivationEntries
+                          .filter(
+                            ([key, entry]) =>
+                              key === "hosting" ||
+                              key === "forms" ||
+                              entry.status !== "not-needed"
+                          )
+                          .map(([key, entry]) => (
+                            <div
+                              key={key}
+                              className="space-y-3 rounded-lg border bg-muted/20 p-4"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <div>
+                                  <p className="font-medium capitalize">{key}</p>
+                                  <p className="text-sm text-muted-foreground">
+                                    {entry.provider}
+                                  </p>
+                                </div>
+                                <Badge
+                                  className={providerActivationStatusBadge(
+                                    entry.status
+                                  )}
+                                >
+                                  {providerActivationStatusLabel(entry.status)}
+                                </Badge>
+                              </div>
+
+                              <div className="grid gap-3 md:grid-cols-2">
+                                <div className="space-y-2">
+                                  <Label>Status</Label>
+                                  <Select
+                                    value={entry.status}
+                                    onValueChange={(value) =>
+                                      updateProviderActivationEntry(key, {
+                                        status:
+                                          value as ProviderActivationStatus,
+                                        lastUpdatedAt: new Date().toISOString(),
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="not-started">
+                                        Not Started
+                                      </SelectItem>
+                                      <SelectItem value="in-progress">
+                                        In Progress
+                                      </SelectItem>
+                                      <SelectItem value="configured">
+                                        Configured
+                                      </SelectItem>
+                                      <SelectItem value="live">Live</SelectItem>
+                                      <SelectItem value="not-needed">
+                                        Not Needed
+                                      </SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <Label>Credential Owner</Label>
+                                  <Select
+                                    value={entry.owner}
+                                    onValueChange={(value) =>
+                                      updateProviderActivationEntry(key, {
+                                        owner:
+                                          value as ProviderActivationOwner,
+                                        lastUpdatedAt: new Date().toISOString(),
+                                      })
+                                    }
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue
+                                        placeholder={providerActivationOwnerLabel(
+                                          entry.owner
+                                        )}
+                                      />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="curb">Curb</SelectItem>
+                                      <SelectItem value="client">
+                                        Client
+                                      </SelectItem>
+                                      <SelectItem value="shared">
+                                        Shared
+                                      </SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <Label>Account Label</Label>
+                                  <Input
+                                    value={entry.accountLabel}
+                                    onChange={(event) =>
+                                      updateProviderActivationEntry(key, {
+                                        accountLabel: event.target.value,
+                                      })
+                                    }
+                                    placeholder="Workspace, store, or project name"
+                                  />
+                                </div>
+
+                                <div className="space-y-2">
+                                  <Label>Dashboard URL</Label>
+                                  <Input
+                                    value={entry.dashboardUrl}
+                                    onChange={(event) =>
+                                      updateProviderActivationEntry(key, {
+                                        dashboardUrl: event.target.value,
+                                      })
+                                    }
+                                    placeholder="https://..."
+                                  />
+                                </div>
+                              </div>
+
+                              {key === "forms" ? (
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  <div className="space-y-2">
+                                    <Label>Endpoint URL</Label>
+                                    <Input
+                                      value={
+                                        (
+                                          entry as ProviderActivationState["forms"]
+                                        ).endpointUrl
+                                      }
+                                      onChange={(event) =>
+                                        updateProviderActivationEntry(key, {
+                                          endpointUrl: event.target.value,
+                                        })
+                                      }
+                                      placeholder="https://forms.example.com/submit"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Turnstile Site Key</Label>
+                                    <Input
+                                      value={
+                                        (
+                                          entry as ProviderActivationState["forms"]
+                                        ).publicSiteKey
+                                      }
+                                      onChange={(event) =>
+                                        updateProviderActivationEntry(key, {
+                                          publicSiteKey: event.target.value,
+                                        })
+                                      }
+                                      placeholder="0x4AAAA..."
+                                    />
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              <div className="space-y-2">
+                                <Label>Notes</Label>
+                                <Textarea
+                                  value={entry.notes}
+                                  onChange={(event) =>
+                                    updateProviderActivationEntry(key, {
+                                      notes: event.target.value,
+                                    })
+                                  }
+                                  rows={3}
+                                  placeholder="Setup notes, pending tasks, or handoff details"
+                                />
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+
+                      <div className="flex justify-end">
+                        <Button
+                          variant="outline"
+                          onClick={saveProviderActivation}
+                          disabled={actionLoading === "providerActivation"}
+                        >
+                          {actionLoading === "providerActivation" ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            <Save className="size-4" />
+                          )}
+                          Save Provider Workflow
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : null}
+
                 <SitePreviewFrame
                   key={sitePreviewUrl ?? site.slug}
                   businessName={biz.name}
@@ -2383,8 +2732,9 @@ export default function BusinessDetailPage() {
                           Packaging Overrides
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          These checkboxes override the model for this
-                          generation run only. Store implies CMS.
+                          These toggles affect post-sale provider packs only.
+                          They do not generate a fake backend inside the site
+                          bundle.
                         </p>
                       </div>
                       <div className="mt-3 space-y-3">
@@ -2405,11 +2755,12 @@ export default function BusinessDetailPage() {
                           />
                           <span>
                             <span className="font-medium">
-                              Include owner CMS
+                              Include external CMS pack
                             </span>
                             <span className="block text-xs text-muted-foreground">
-                              Adds the built-in `/admin/` portal and editable
-                              content pack.
+                              Structure the site for Storyblok or Sanity after
+                              the sale instead of shipping an in-site owner
+                              portal.
                             </span>
                           </span>
                         </label>
@@ -2422,55 +2773,20 @@ export default function BusinessDetailPage() {
                               const checked = event.target.checked;
                               setSiteCapabilityOverride((current) => ({
                                 ...current,
-                                includeCmsPack:
-                                  checked || current.includeCmsPack,
                                 includeStorePack: checked,
                               }));
                             }}
                           />
                           <span>
                             <span className="font-medium">
-                              Include lightweight store
+                              Include Shopify store pack
                             </span>
                             <span className="block text-xs text-muted-foreground">
-                              Adds the product editor and a direct-checkout
-                              storefront for Stripe or Shopify.
+                              Keep the public site static now, then activate a
+                              real Shopify admin after the sale.
                             </span>
                           </span>
                         </label>
-                        {siteCapabilityOverride.includeStorePack ? (
-                          <div className="space-y-2 rounded-md border bg-muted/20 p-3">
-                            <Label htmlFor="store-provider-select">
-                              Store provider
-                            </Label>
-                            <Select
-                              value={siteCapabilityOverride.commerceProvider}
-                              onValueChange={(value) => {
-                                setSiteCapabilityOverride((current) => ({
-                                  ...current,
-                                  commerceProvider:
-                                    value as StoreCommerceProvider,
-                                }));
-                              }}
-                            >
-                              <SelectTrigger id="store-provider-select">
-                                <SelectValue placeholder="Choose store provider" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="stripe-payment-links">
-                                  Stripe Payment Links
-                                </SelectItem>
-                                <SelectItem value="shopify">
-                                  Shopify checkout links
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <p className="text-xs text-muted-foreground">
-                              The owner portal stores one checkout URL per
-                              product, so the public site stays static.
-                            </p>
-                          </div>
-                        ) : null}
                       </div>
                       {capabilityProfile ? (
                         <p className="mt-3 text-xs text-muted-foreground">

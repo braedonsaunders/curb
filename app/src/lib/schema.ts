@@ -56,6 +56,7 @@ export function initializeDatabase(): void {
       customer_domain_verification_json TEXT,
       customer_project_provider TEXT,
       customer_project_metadata_json TEXT,
+      provider_activation_json TEXT,
       vercel_customer_project_id TEXT,
       vercel_customer_project_name TEXT,
       notes TEXT,
@@ -233,6 +234,11 @@ export function initializeDatabase(): void {
     "businesses",
     "customer_project_metadata_json",
     "customer_project_metadata_json TEXT"
+  );
+  ensureColumn(
+    "businesses",
+    "provider_activation_json",
+    "provider_activation_json TEXT"
   );
   ensureColumn(
     "businesses",
