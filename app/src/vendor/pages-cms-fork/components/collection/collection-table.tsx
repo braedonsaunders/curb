@@ -41,7 +41,7 @@ import {
 import { cn } from "@/lib/utils";
 
 declare module "@tanstack/react-table" {
-  interface ColumnMeta<_TData extends RowData, _TValue> {
+  interface ColumnMeta<TData extends RowData, TValue> {
     className?: string;
   }
 }
@@ -144,8 +144,8 @@ export function CollectionTable<TData extends TableData>({
     getPaginationRowModel: getPaginationRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
-    getRowCanExpand: (row) => row.original.isNode || row.original.type === "dir",
-    getSubRows: (row) => row.subRows,
+    getRowCanExpand: (row) => row.original.node || row.original.type === "dir",
+    getSubRows: (row): TData[] | undefined => row.subRows as TData[] | undefined,
     state: {
       globalFilter: search,
       expanded,
@@ -162,7 +162,7 @@ export function CollectionTable<TData extends TableData>({
     table.getRowModel().rows.forEach((row) => {
       if (
         !row.getIsExpanded() &&
-        ((row.original.isNode &&
+        ((row.original.node &&
           row.original.parentPath &&
           path.startsWith(row.original.parentPath)) ||
           (row.original.type === "dir" && path.startsWith(row.original.path)))

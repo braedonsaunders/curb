@@ -3,6 +3,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import {
   generateText,
+  streamText,
   stepCountIs,
   tool,
   type LanguageModel,
@@ -45,6 +46,8 @@ const ANTHROPIC_OAUTH_BETAS = [
   "interleaved-thinking-2025-05-14",
 ];
 const ANTHROPIC_OAUTH_USER_AGENT = "claude-cli/2.1.2 (external, cli)";
+const OPENAI_OAUTH_BACKEND_DEFAULT_INSTRUCTIONS =
+  "Follow the provided prompt exactly and return only the requested output.";
 
 export interface BusinessData {
   name: string;
@@ -331,8 +334,39 @@ async function buildAnthropicOauthProvider(config: Config) {
   });
 }
 
+function shouldUseOpenAIChatgptBackend(config: Config): boolean {
+  return (
+    config.aiProvider === "openai" &&
+    config.openaiAuthMode === "oauth" &&
+    (!config.openaiOAuthApiKey || OPENAI_OAUTH_CODEX_MODELS.has(config.openaiModel))
+  );
+}
+
+function buildOpenAIProviderOptions(config: Config, instructions?: string) {
+  if (!shouldUseOpenAIChatgptBackend(config)) {
+    return undefined;
+  }
+
+  return {
+    openai: {
+      store: false,
+      instructions:
+        instructions?.trim() || OPENAI_OAUTH_BACKEND_DEFAULT_INSTRUCTIONS,
+    },
+  };
+}
+
+function getMaxOutputTokensForRuntime(
+  config: Config,
+  maxOutputTokens: number
+): number | undefined {
+  return shouldUseOpenAIChatgptBackend(config) ? undefined : maxOutputTokens;
+}
+
 async function buildOpenAIOauthProvider(config: Config) {
-  if (config.openaiOAuthApiKey) {
+  const shouldUseChatgptBackend = shouldUseOpenAIChatgptBackend(config);
+
+  if (!shouldUseChatgptBackend && config.openaiOAuthApiKey) {
     return {
       model: createOpenAI({ apiKey: config.openaiOAuthApiKey }),
       modelId: getConfiguredAiModel(config).trim() || DEFAULT_AI_MODELS.openai,
@@ -561,12 +595,19 @@ async function generateModelText(options: {
   maxOutputTokens: number;
 }): Promise<{ text: string; providerLabel: string; config: Config }> {
   const runtime = await getLanguageModelRuntime();
-  const result = await generateText({
+  const requestOptions = {
     model: runtime.model,
     messages: options.messages,
-    maxOutputTokens: options.maxOutputTokens,
-  });
-  const text = result.text.trim();
+    maxOutputTokens: getMaxOutputTokensForRuntime(
+      runtime.config,
+      options.maxOutputTokens
+    ),
+    providerOptions: buildOpenAIProviderOptions(runtime.config),
+  };
+  const result = shouldUseOpenAIChatgptBackend(runtime.config)
+    ? streamText(requestOptions)
+    : await generateText(requestOptions);
+  const text = (await result.text).trim();
 
   if (!text) {
     throw new Error(`${runtime.providerLabel} returned no text content.`);
@@ -1718,10 +1759,13 @@ export async function modifySiteWithTools(
     );
   }
 
-  const result = await generateText({
+  const requestOptions = {
     model: runtime.model,
-    system: systemPrompt,
+    system: shouldUseOpenAIChatgptBackend(runtime.config)
+      ? undefined
+      : systemPrompt,
     prompt: promptSections.join("\n\n"),
+    providerOptions: buildOpenAIProviderOptions(runtime.config, systemPrompt),
     tools: {
       list_site_files: tool({
         description:
@@ -1824,13 +1868,16 @@ export async function modifySiteWithTools(
         },
       }),
     },
-    toolChoice: "required",
+    toolChoice: "required" as const,
     stopWhen: stepCountIs(SITE_MODIFIER_MAX_STEPS),
-    maxOutputTokens: 1200,
-  });
+    maxOutputTokens: getMaxOutputTokensForRuntime(runtime.config, 1200),
+  };
+  const result = shouldUseOpenAIChatgptBackend(runtime.config)
+    ? streamText(requestOptions)
+    : await generateText(requestOptions);
 
   return {
-    summary: result.text.trim(),
+    summary: (await result.text).trim(),
     changedPaths: Array.from(changedPaths).sort((left, right) =>
       left.localeCompare(right)
     ),

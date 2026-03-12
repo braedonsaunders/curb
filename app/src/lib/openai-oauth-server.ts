@@ -30,6 +30,14 @@ let callbackServer: Server | null = null;
 let cleanupTimer: NodeJS.Timeout | null = null;
 let flowState: OpenAIOAuthFlowState = { status: "idle" };
 
+function isOpenAIModelReadScopeError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("(403") &&
+    error.message.includes("api.model.read")
+  );
+}
+
 function successPage(): string {
   return `<!DOCTYPE html><html><body style="font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#fafafa">
     <div style="text-align:center">
@@ -149,7 +157,7 @@ export async function startOpenAIOAuthFlow(): Promise<string> {
             }
           }
 
-          const oauthUpdates = buildOpenAIOAuthConfigUpdates(tokens, {
+          let oauthUpdates = buildOpenAIOAuthConfigUpdates(tokens, {
             refreshToken: existing.openaiOAuthRefreshToken,
             expiresAtMs: existing.openaiOAuthExpiresAtMs,
             authMode: "oauth",
@@ -157,14 +165,43 @@ export async function startOpenAIOAuthFlow(): Promise<string> {
             existingPlatformApiKey: existing.openaiOAuthApiKey,
             existingAccountId: existing.openaiOAuthAccountId,
           });
-          const provisionalConfig = {
+          let provisionalConfig = {
             ...existing,
             ...oauthUpdates,
           };
-          const providerModels = await listProviderModelsFromApi("openai", {
-            config: provisionalConfig,
-            forceRefresh: true,
-          });
+          let providerModels: Awaited<ReturnType<typeof listProviderModelsFromApi>>;
+
+          try {
+            providerModels = await listProviderModelsFromApi("openai", {
+              config: provisionalConfig,
+              forceRefresh: true,
+            });
+          } catch (error) {
+            if (!platformApiKey || !isOpenAIModelReadScopeError(error)) {
+              throw error;
+            }
+
+            // Some OAuth-derived platform keys cannot read the model list.
+            // Fall back to ChatGPT/Codex backend mode instead of failing auth.
+            platformApiKey = "";
+            oauthUpdates = buildOpenAIOAuthConfigUpdates(tokens, {
+              refreshToken: existing.openaiOAuthRefreshToken,
+              expiresAtMs: existing.openaiOAuthExpiresAtMs,
+              authMode: "oauth",
+              platformApiKey,
+              existingPlatformApiKey: existing.openaiOAuthApiKey,
+              existingAccountId: existing.openaiOAuthAccountId,
+            });
+            provisionalConfig = {
+              ...existing,
+              ...oauthUpdates,
+            };
+            providerModels = await listProviderModelsFromApi("openai", {
+              config: provisionalConfig,
+              forceRefresh: true,
+            });
+          }
+
           const preferredModel = platformApiKey
             ? existing.openaiModel
             : OPENAI_OAUTH_CODEX_MODELS.has(existing.openaiModel)

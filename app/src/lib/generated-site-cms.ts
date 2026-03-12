@@ -6,6 +6,11 @@ import { load } from "cheerio";
 import {
   CMS_SCHEMA_PATH,
   PRODUCTS_DATA_PATH,
+  STORE_ALIAS_PATH,
+  STORE_PAGE_PATH,
+  annotateManagedHtmlFile,
+  type CmsCollectionFieldSchema,
+  type CmsCollectionSchema,
   type CmsFieldSchema,
   type CmsSchema,
 } from "@/lib/site-pack";
@@ -13,6 +18,8 @@ import {
 const SITES_ROOT = path.resolve(process.cwd(), "..", "sites");
 const SITE_CONFIG_PATH = "assets/curb-site-config.js";
 const SITE_CONFIG_ASSIGNMENT = "window.CURB_SITE_CONFIG = ";
+type HtmlDoc = ReturnType<typeof load>;
+type HtmlNode = ReturnType<HtmlDoc>;
 
 export type SiteCmsFieldValue =
   | { value: string }
@@ -24,6 +31,21 @@ export type SiteCmsPageRecord = {
   path: string;
   title: string;
   fields: Array<CmsFieldSchema & { currentValue: SiteCmsFieldValue }>;
+  collections: SiteCmsCollectionRecord[];
+};
+
+export type SiteCmsCollectionItemRecord = {
+  id: string;
+  fields: Array<CmsCollectionFieldSchema & { currentValue: SiteCmsFieldValue }>;
+};
+
+export type SiteCmsCollectionRecord = CmsCollectionSchema & {
+  items: SiteCmsCollectionItemRecord[];
+};
+
+export type SiteCmsCollectionItemInput = {
+  id?: string;
+  fields: Record<string, SiteCmsFieldValue>;
 };
 
 export type SiteCmsProductRecord = {
@@ -51,6 +73,10 @@ export type SiteCmsBootstrap = {
   products: SiteCmsProductRecord[];
   settings: SiteCmsSettings;
 };
+
+function isExistingFile(filePath: string): boolean {
+  return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+}
 
 function isWithinDirectory(targetPath: string, rootPath: string): boolean {
   const relativePath = path.relative(rootPath, targetPath);
@@ -101,6 +127,25 @@ function ensureDoctype(originalContent: string, nextHtml: string): string {
   }
 
   return `${originalDoctype}\n${nextHtml}\n`;
+}
+
+function relativeHrefBetweenFiles(fromFilePath: string, toFilePath: string): string {
+  const fromSegments = fromFilePath.split("/").filter(Boolean);
+  const toSegments = toFilePath.split("/").filter(Boolean);
+  const fromDirSegments = fromSegments.slice(0, -1);
+
+  while (
+    fromDirSegments.length > 0 &&
+    toSegments.length > 0 &&
+    fromDirSegments[0] === toSegments[0]
+  ) {
+    fromDirSegments.shift();
+    toSegments.shift();
+  }
+
+  const upward = fromDirSegments.map(() => "..");
+  const relativeSegments = [...upward, ...toSegments];
+  return relativeSegments.length > 0 ? relativeSegments.join("/") : ".";
 }
 
 function normalizeCommerceProvider(
@@ -180,12 +225,10 @@ function fallbackFieldValue(field: CmsFieldSchema): SiteCmsFieldValue {
   };
 }
 
-function readFieldValueFromNode(
+function readFieldValueFromSelection(
   field: CmsFieldSchema,
-  rawFileContent: string
+  node: HtmlNode
 ): SiteCmsFieldValue {
-  const $ = load(rawFileContent);
-  const node = $(`[data-curb-key="${field.key}"]`).first();
   if (!node.length) {
     return fallbackFieldValue(field);
   }
@@ -209,6 +252,135 @@ function readFieldValueFromNode(
   };
 }
 
+function writeFieldValueToSelection(
+  field: CmsFieldSchema,
+  node: HtmlNode,
+  nextValue: SiteCmsFieldValue
+): void {
+  if (!node.length) {
+    return;
+  }
+
+  if (field.type === "link") {
+    const linkValue = nextValue as Extract<SiteCmsFieldValue, { text: string; href: string }>;
+    node.text(linkValue.text ?? "");
+    node.attr("href", linkValue.href ?? "");
+    return;
+  }
+
+  if (field.type === "image") {
+    const imageValue = nextValue as Extract<SiteCmsFieldValue, { src: string; alt: string }>;
+    node.attr("src", imageValue.src ?? "");
+    node.attr("alt", imageValue.alt ?? "");
+    return;
+  }
+
+  const textValue = nextValue as Extract<SiteCmsFieldValue, { value: string }>;
+  node.text(textValue.value ?? "");
+}
+
+function findCollectionFieldNode(itemNode: HtmlNode, fieldKey: string): HtmlNode {
+  if (itemNode.is(`[data-curb-collection-field="${fieldKey}"]`)) {
+    return itemNode;
+  }
+
+  return itemNode.find(`[data-curb-collection-field="${fieldKey}"]`).first();
+}
+
+function normalizeCollectionItemId(
+  collectionKey: string,
+  candidateId: unknown,
+  index: number
+): string {
+  const normalized = String(candidateId ?? "").trim();
+  return normalized || `${collectionKey}-item-${index + 1}`;
+}
+
+function readCollectionItemsFromDocument(
+  $: HtmlDoc,
+  collection: CmsCollectionSchema
+): SiteCmsCollectionItemRecord[] {
+  return $(`[data-curb-collection-item="${collection.key}"]`)
+    .toArray()
+    .map((element, index: number) => {
+      const itemNode = $(element);
+
+      return {
+        id: normalizeCollectionItemId(
+          collection.key,
+          itemNode.attr("data-curb-collection-item-id"),
+          index
+        ),
+        fields: collection.fields.map((field) => ({
+          ...field,
+          currentValue: readFieldValueFromSelection(
+            field,
+            findCollectionFieldNode(itemNode, field.key)
+          ),
+        })),
+      };
+    });
+}
+
+function ensureSiteCmsSchema(siteSlug: string): CmsSchema {
+  const siteDir = resolveSiteDir(siteSlug);
+  const schemaPath = path.join(siteDir, ...CMS_SCHEMA_PATH.split("/"));
+  const currentSchema = readJsonFile<CmsSchema | null>(schemaPath, null);
+  if (!currentSchema) {
+    throw new Error(`CMS schema was not found for "${siteSlug}".`);
+  }
+
+  let didChange = false;
+  const nextPages = currentSchema.pages.map((page) => {
+    if (
+      !/\.html$/i.test(page.path) ||
+      page.path === STORE_PAGE_PATH ||
+      page.path === STORE_ALIAS_PATH
+    ) {
+      return page;
+    }
+
+    const filePath = path.join(siteDir, ...page.path.split("/"));
+    if (!isExistingFile(filePath)) {
+      return page;
+    }
+
+    const originalContent = fs.readFileSync(filePath, "utf8");
+    const annotated = annotateManagedHtmlFile(
+      {
+        path: page.path,
+        content: originalContent,
+      },
+      currentSchema.storePagePath
+        ? relativeHrefBetweenFiles(page.path, currentSchema.storePagePath)
+        : null
+    );
+
+    if (annotated.file.content !== originalContent) {
+      fs.writeFileSync(filePath, annotated.file.content, "utf8");
+      didChange = true;
+    }
+
+    if (JSON.stringify(annotated.page) !== JSON.stringify(page)) {
+      didChange = true;
+    }
+
+    return annotated.page;
+  });
+
+  if (!didChange) {
+    return currentSchema;
+  }
+
+  const nextSchema: CmsSchema = {
+    ...currentSchema,
+    pages: nextPages,
+  };
+
+  fs.writeFileSync(schemaPath, `${JSON.stringify(nextSchema, null, 2)}\n`, "utf8");
+  return nextSchema;
+}
+
 function normalizeProductRecord(
   product: Partial<SiteCmsProductRecord> | null | undefined,
   index: number
@@ -227,14 +399,7 @@ function normalizeProductRecord(
 }
 
 export function readSiteCmsSchema(siteSlug: string): CmsSchema {
-  const siteDir = resolveSiteDir(siteSlug);
-  const schemaPath = path.join(siteDir, ...CMS_SCHEMA_PATH.split("/"));
-  const schema = readJsonFile<CmsSchema | null>(schemaPath, null);
-  if (!schema) {
-    throw new Error(`CMS schema was not found for "${siteSlug}".`);
-  }
-
-  return schema;
+  return ensureSiteCmsSchema(siteSlug);
 }
 
 export function readSiteCmsSettings(siteSlug: string): SiteCmsSettings {
@@ -255,6 +420,28 @@ export function readSiteCmsSettings(siteSlug: string): SiteCmsSettings {
     commerceEnabled: Boolean(commerceConfig.enabled),
     commerceProvider: normalizeCommerceProvider(commerceConfig.provider),
   };
+}
+
+export function hasSiteCms(siteSlug: string): boolean {
+  try {
+    const siteDir = resolveSiteDir(siteSlug);
+    const configPath = path.join(siteDir, ...SITE_CONFIG_PATH.split("/"));
+    const rawConfig = fs.readFileSync(configPath, "utf8");
+    const parsed = parseSiteConfigScript(rawConfig);
+    if (!parsed) {
+      return false;
+    }
+
+    const cmsConfig = (parsed.config.cms ?? {}) as Record<string, unknown>;
+    if (!Boolean(cmsConfig.enabled)) {
+      return false;
+    }
+
+    const schemaPath = path.join(siteDir, ...CMS_SCHEMA_PATH.split("/"));
+    return isExistingFile(schemaPath);
+  } catch {
+    return false;
+  }
 }
 
 export function writeSiteCmsSettings(
@@ -298,6 +485,7 @@ export function readSiteCmsPages(siteSlug: string): SiteCmsPageRecord[] {
   return schema.pages.map((page) => {
     const filePath = path.join(siteDir, ...page.path.split("/"));
     const fileContent = fs.readFileSync(filePath, "utf8");
+    const doc = load(fileContent);
 
     return {
       pageKey: page.pageKey,
@@ -305,7 +493,14 @@ export function readSiteCmsPages(siteSlug: string): SiteCmsPageRecord[] {
       title: page.title,
       fields: page.fields.map((field) => ({
         ...field,
-        currentValue: readFieldValueFromNode(field, fileContent),
+        currentValue: readFieldValueFromSelection(
+          field,
+          doc(`[data-curb-key="${field.key}"]`).first()
+        ),
+      })),
+      collections: (page.collections ?? []).map((collection) => ({
+        ...collection,
+        items: readCollectionItemsFromDocument(doc, collection),
       })),
     };
   });
@@ -314,7 +509,8 @@ export function readSiteCmsPages(siteSlug: string): SiteCmsPageRecord[] {
 export function writeSiteCmsPage(
   siteSlug: string,
   pageKey: string,
-  nextFields: Record<string, SiteCmsFieldValue>
+  nextFields: Record<string, SiteCmsFieldValue>,
+  nextCollections?: Record<string, SiteCmsCollectionItemInput[]>
 ): SiteCmsPageRecord {
   const siteDir = resolveSiteDir(siteSlug);
   const schema = readSiteCmsSchema(siteSlug);
@@ -339,22 +535,49 @@ export function writeSiteCmsPage(
       continue;
     }
 
-    if (field.type === "link") {
-      const linkValue = nextValue as Extract<SiteCmsFieldValue, { text: string; href: string }>;
-      node.text(linkValue.text ?? "");
-      node.attr("href", linkValue.href ?? "");
+    writeFieldValueToSelection(field, node, nextValue);
+  }
+
+  for (const collection of page.collections ?? []) {
+    if (!nextCollections || !Array.isArray(nextCollections[collection.key])) {
       continue;
     }
 
-    if (field.type === "image") {
-      const imageValue = nextValue as Extract<SiteCmsFieldValue, { src: string; alt: string }>;
-      node.attr("src", imageValue.src ?? "");
-      node.attr("alt", imageValue.alt ?? "");
+    const container = $(`[data-curb-collection="${collection.key}"]`).first();
+    if (!container.length) {
       continue;
     }
 
-    const textValue = nextValue as Extract<SiteCmsFieldValue, { value: string }>;
-    node.text(textValue.value ?? "");
+    container.children(`[data-curb-collection-item="${collection.key}"]`).remove();
+
+    nextCollections[collection.key].forEach((itemInput, index) => {
+      const template = load(collection.itemTemplateHtml);
+      const itemNode = template.root().children().first();
+      if (!itemNode.length) {
+        return;
+      }
+
+      itemNode.attr("data-curb-collection-item", collection.key);
+      itemNode.attr(
+        "data-curb-collection-item-id",
+        normalizeCollectionItemId(collection.key, itemInput?.id, index)
+      );
+
+      for (const field of collection.fields) {
+        const fieldNode = findCollectionFieldNode(itemNode, field.key);
+        if (!fieldNode.length) {
+          continue;
+        }
+
+        writeFieldValueToSelection(
+          field,
+          fieldNode,
+          itemInput?.fields?.[field.key] ?? fallbackFieldValue(field)
+        );
+      }
+
+      container.append(itemNode);
+    });
   }
 
   fs.writeFileSync(filePath, ensureDoctype(originalContent, $.html()), "utf8");

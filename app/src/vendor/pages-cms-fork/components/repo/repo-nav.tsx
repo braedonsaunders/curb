@@ -1,12 +1,19 @@
 "use client";
 
-import { type ReactNode, useMemo } from "react";
+import { type ReactElement, type ReactNode, useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { FileStack, FileText, Settings } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useConfig } from "@/vendor/pages-cms-fork/contexts/config-context";
+
+type RepoNavLink = {
+  key: string;
+  icon: ReactElement;
+  href: string;
+  label: string;
+};
 
 const RepoNavItem = ({
   children,
@@ -43,7 +50,7 @@ const RepoNav = ({
   const { config } = useConfig();
   const pathname = usePathname();
 
-  const items = useMemo(() => {
+  const items = useMemo<RepoNavLink[]>(() => {
     if (!config || !config.object) {
       return [];
     }
@@ -62,7 +69,7 @@ const RepoNav = ({
         label: item.label || item.name,
       })) || [];
 
-    const settingsItem = !configObject.settings?.hide
+    const settingsItem: RepoNavLink | null = !configObject.settings?.hide
       ? {
           key: "settings",
           icon: <Settings className="mr-2 h-5 w-5" />,
@@ -71,7 +78,11 @@ const RepoNav = ({
         }
       : null;
 
-    return [...contentItems, settingsItem].filter(Boolean);
+    if (settingsItem) {
+      contentItems.push(settingsItem);
+    }
+
+    return contentItems;
   }, [config]);
 
   if (!items.length) {

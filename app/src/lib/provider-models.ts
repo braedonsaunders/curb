@@ -11,6 +11,8 @@ import {
 } from "./config";
 import {
   buildOpenAIOAuthConfigUpdates,
+  DEFAULT_OPENAI_OAUTH_MODEL,
+  OPENAI_OAUTH_CODEX_MODELS,
   refreshOpenAIToken,
 } from "./openai-oauth";
 
@@ -108,6 +110,26 @@ function parseModelIds(payload: unknown): string[] {
   return [];
 }
 
+function isOpenAIModelReadScopeError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("(403") &&
+    error.message.includes("api.model.read")
+  );
+}
+
+function getOpenAIOauthBackendModels(): string[] {
+  return Array.from(OPENAI_OAUTH_CODEX_MODELS);
+}
+
+function isOpenAIOauthBackendModelList(models: string[]): boolean {
+  const oauthModels = getOpenAIOauthBackendModels();
+  return (
+    models.length === oauthModels.length &&
+    models.every((model) => OPENAI_OAUTH_CODEX_MODELS.has(model))
+  );
+}
+
 async function fetchJson(
   url: string,
   init?: RequestInit
@@ -145,6 +167,29 @@ function getProviderModel(config: Config, provider: AiProvider): string {
     default:
       return config.anthropicModel;
   }
+}
+
+function getSelectedProviderModel(
+  provider: AiProvider,
+  config: Config,
+  models: string[]
+): string | null {
+  const selectedModel = getProviderModel(config, provider).trim();
+  if (selectedModel && models.includes(selectedModel)) {
+    return selectedModel;
+  }
+
+  if (
+    provider === "openai" &&
+    config.openaiAuthMode === "oauth" &&
+    config.openaiOAuthAccessToken &&
+    isOpenAIOauthBackendModelList(models) &&
+    models.includes(DEFAULT_OPENAI_OAUTH_MODEL)
+  ) {
+    return DEFAULT_OPENAI_OAUTH_MODEL;
+  }
+
+  return models[0] ?? null;
 }
 
 function createCacheKey(provider: AiProvider, config: Config): string {
@@ -287,13 +332,28 @@ async function fetchAnthropicModels(config: Config): Promise<string[]> {
 }
 
 async function fetchOpenAIModels(config: Config): Promise<string[]> {
-  const payload = await fetchJson("https://api.openai.com/v1/models", {
-    headers: {
-      Authorization: await resolveOpenAIAuthHeader(config),
-    },
-  });
+  const canUseOauthBackendFallback =
+    config.openaiAuthMode === "oauth" && Boolean(config.openaiOAuthAccessToken);
 
-  return parseModelIds(payload);
+  if (canUseOauthBackendFallback && !config.openaiOAuthApiKey) {
+    return getOpenAIOauthBackendModels();
+  }
+
+  try {
+    const payload = await fetchJson("https://api.openai.com/v1/models", {
+      headers: {
+        Authorization: await resolveOpenAIAuthHeader(config),
+      },
+    });
+
+    return parseModelIds(payload);
+  } catch (error) {
+    if (canUseOauthBackendFallback && isOpenAIModelReadScopeError(error)) {
+      return getOpenAIOauthBackendModels();
+    }
+
+    throw error;
+  }
 }
 
 async function fetchGoogleModels(config: Config): Promise<string[]> {
@@ -401,12 +461,13 @@ export async function listProviderModelsFromApi(
   if (!options?.forceRefresh) {
     const cached = modelCache.get(cacheKey);
     if (cached && Date.now() - cached.fetchedAt < MODEL_LIST_CACHE_TTL_MS) {
-      const selectedModel = getProviderModel(config, provider).trim();
       return {
         models: cached.models,
-        selectedModel: cached.models.includes(selectedModel)
-          ? selectedModel
-          : (cached.models[0] ?? null),
+        selectedModel: getSelectedProviderModel(
+          provider,
+          config,
+          cached.models
+        ),
       };
     }
   }
@@ -426,7 +487,6 @@ export async function listProviderModelsFromApi(
   })();
 
   const uniqueModels = uniqueSorted(models);
-  const selectedModel = getProviderModel(config, provider).trim();
 
   modelCache.set(cacheKey, {
     fetchedAt: Date.now(),
@@ -435,8 +495,6 @@ export async function listProviderModelsFromApi(
 
   return {
     models: uniqueModels,
-    selectedModel: uniqueModels.includes(selectedModel)
-      ? selectedModel
-      : (uniqueModels[0] ?? null),
+    selectedModel: getSelectedProviderModel(provider, config, uniqueModels),
   };
 }

@@ -357,10 +357,15 @@ export function SiteFileEditor({
         }
 
         if (payload.site) {
-          setSiteMeta((currentSiteMeta) => ({
-            ...(currentSiteMeta ?? {}),
-            ...payload.site,
-          }));
+          const nextSiteMeta = payload.site;
+          setSiteMeta((currentSiteMeta) =>
+            currentSiteMeta
+              ? {
+                  ...currentSiteMeta,
+                  ...nextSiteMeta,
+                }
+              : nextSiteMeta
+          );
         }
 
         const nextFile = payload.file;

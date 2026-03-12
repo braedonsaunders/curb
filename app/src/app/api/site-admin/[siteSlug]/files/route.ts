@@ -11,6 +11,7 @@ import {
   writeSiteBinaryFile,
   writeSiteTextFile,
 } from "@/lib/site-editor";
+import { isSiteAdminRequestAuthorized } from "@/lib/site-admin-access";
 
 type RouteContext = { params: Promise<{ siteSlug: string }> };
 
@@ -52,6 +53,10 @@ function assertMatchingUploadExtension(
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const { siteSlug } = await context.params;
+    if (!isSiteAdminRequestAuthorized(request, siteSlug)) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
+
     const site = getLatestGeneratedSiteForSlug(siteSlug);
     const relativePath = getEditorPath(request);
 
@@ -93,6 +98,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
 export async function PUT(request: NextRequest, context: RouteContext) {
   try {
     const { siteSlug } = await context.params;
+    if (!isSiteAdminRequestAuthorized(request, siteSlug)) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
+
     const relativePath = getEditorPath(request);
 
     if (!relativePath) {

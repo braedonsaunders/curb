@@ -4,15 +4,20 @@ import {
   readSiteCmsSettings,
   writeSiteCmsSettings,
 } from "@/lib/generated-site-cms";
+import { isSiteAdminRequestAuthorized } from "@/lib/site-admin-access";
 
 type RouteContext = { params: Promise<{ siteSlug: string }> };
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: RouteContext
 ) {
   try {
     const { siteSlug } = await context.params;
+    if (!isSiteAdminRequestAuthorized(request, siteSlug)) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
+
     return NextResponse.json({ settings: readSiteCmsSettings(siteSlug) });
   } catch (error) {
     const message =
@@ -27,6 +32,10 @@ export async function PUT(
 ) {
   try {
     const { siteSlug } = await context.params;
+    if (!isSiteAdminRequestAuthorized(request, siteSlug)) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
+
     const body = (await request.json()) as {
       ownerEmail?: unknown;
       commerceProvider?: unknown;

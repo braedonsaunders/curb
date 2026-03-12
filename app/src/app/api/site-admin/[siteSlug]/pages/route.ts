@@ -3,17 +3,23 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   readSiteCmsPages,
   writeSiteCmsPage,
+  type SiteCmsCollectionItemInput,
   type SiteCmsFieldValue,
 } from "@/lib/generated-site-cms";
+import { isSiteAdminRequestAuthorized } from "@/lib/site-admin-access";
 
 type RouteContext = { params: Promise<{ siteSlug: string }> };
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: RouteContext
 ) {
   try {
     const { siteSlug } = await context.params;
+    if (!isSiteAdminRequestAuthorized(request, siteSlug)) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
+
     return NextResponse.json({ pages: readSiteCmsPages(siteSlug) });
   } catch (error) {
     const message =
@@ -28,9 +34,14 @@ export async function PUT(
 ) {
   try {
     const { siteSlug } = await context.params;
+    if (!isSiteAdminRequestAuthorized(request, siteSlug)) {
+      return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+    }
+
     const body = (await request.json()) as {
       pageKey?: unknown;
       fields?: unknown;
+      collections?: unknown;
     };
 
     if (typeof body.pageKey !== "string" || !body.pageKey.trim()) {
@@ -47,10 +58,21 @@ export async function PUT(
       );
     }
 
+    if (
+      body.collections !== undefined &&
+      (!body.collections || typeof body.collections !== "object")
+    ) {
+      return NextResponse.json(
+        { error: "Collection updates must be an object." },
+        { status: 400 }
+      );
+    }
+
     const page = writeSiteCmsPage(
       siteSlug,
       body.pageKey,
-      body.fields as Record<string, SiteCmsFieldValue>
+      body.fields as Record<string, SiteCmsFieldValue>,
+      body.collections as Record<string, SiteCmsCollectionItemInput[]>
     );
 
     return NextResponse.json({ page });

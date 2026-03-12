@@ -12,7 +12,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { ChevronLeft, ExternalLink, Plus, Search } from "lucide-react";
+import { ChevronLeft, ExternalLink, Plus, Search, Trash2 } from "lucide-react";
 
 import { SiteFileEditor } from "@/components/site-file-editor";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -22,11 +22,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type {
   SiteCmsBootstrap,
+  SiteCmsCollectionItemInput,
+  SiteCmsCollectionRecord,
   SiteCmsFieldValue,
   SiteCmsPageRecord,
   SiteCmsProductRecord,
   SiteCmsSettings,
 } from "@/lib/generated-site-cms";
+import {
+  SITE_ADMIN_PREVIEW_QUERY_PARAM,
+  SITE_ADMIN_SESSION_COOKIE,
+} from "@/lib/site-admin-session";
 import { CollectionTable, type TableData } from "@/vendor/pages-cms-fork/components/collection/collection-table";
 import { Message } from "@/vendor/pages-cms-fork/components/message";
 import { RepoLayout } from "@/vendor/pages-cms-fork/components/repo/repo-layout";
@@ -38,6 +44,8 @@ import type { Repo } from "@/vendor/pages-cms-fork/types/repo";
 type SiteAdminAppProps = {
   initialData: SiteCmsBootstrap;
   initialPath: string[];
+  previewAccessToken: string | null;
+  previewAccessSessionValue: string | null;
 };
 
 type AdminRoute =
@@ -73,6 +81,21 @@ type ProductRow = TableData & {
   priceLabel: string;
   checkoutState: string;
   position: number;
+};
+
+type EditableCmsField = {
+  key: string;
+  label: string;
+  type: "text" | "textarea" | "link" | "image";
+  role?: string;
+  defaultValue?: string;
+  defaultHref?: string;
+  defaultAlt?: string;
+};
+
+type PageDraftState = {
+  fields: Record<string, SiteCmsFieldValue>;
+  collections: Record<string, SiteCmsCollectionItemInput[]>;
 };
 
 function decodePathSegment(segment: string | undefined): string | undefined {
@@ -115,15 +138,241 @@ function normalizeRoute(path: string[] | undefined): AdminRoute {
 
 function buildPageDraft(
   page: SiteCmsPageRecord | null
-): Record<string, SiteCmsFieldValue> {
+): PageDraftState {
   if (!page) {
-    return {};
+    return {
+      fields: {},
+      collections: {},
+    };
   }
 
-  return page.fields.reduce<Record<string, SiteCmsFieldValue>>((draft, field) => {
-    draft[field.key] = field.currentValue;
-    return draft;
-  }, {});
+  return {
+    fields: page.fields.reduce<Record<string, SiteCmsFieldValue>>((draft, field) => {
+      draft[field.key] = field.currentValue;
+      return draft;
+    }, {}),
+    collections: (page.collections ?? []).reduce<
+      Record<string, SiteCmsCollectionItemInput[]>
+    >((draft, collection) => {
+      draft[collection.key] = collection.items.map((item) => ({
+        id: item.id,
+        fields: item.fields.reduce<Record<string, SiteCmsFieldValue>>(
+          (fieldDraft, field) => {
+            fieldDraft[field.key] = field.currentValue;
+            return fieldDraft;
+          },
+          {}
+        ),
+      }));
+      return draft;
+    }, {}),
+  };
+}
+
+function createDefaultFieldValue(field: EditableCmsField): SiteCmsFieldValue {
+  if (field.type === "link") {
+    return {
+      text: field.defaultValue || "",
+      href: field.defaultHref || "",
+    };
+  }
+
+  if (field.type === "image") {
+    return {
+      src: field.defaultValue || "",
+      alt: field.defaultAlt || "",
+    };
+  }
+
+  return {
+    value: field.defaultValue || "",
+  };
+}
+
+function buildCollectionItemDraft(
+  collection: SiteCmsCollectionRecord
+): SiteCmsCollectionItemInput {
+  return {
+    id: `new-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    fields: collection.fields.reduce<Record<string, SiteCmsFieldValue>>(
+      (draft, field) => {
+        draft[field.key] = createDefaultFieldValue(field);
+        return draft;
+      },
+      {}
+    ),
+  };
+}
+
+function getValueLabel(value: SiteCmsFieldValue | undefined): string {
+  if (!value) {
+    return "";
+  }
+
+  if ("value" in value) {
+    return value.value.trim();
+  }
+
+  if ("text" in value) {
+    return value.text.trim();
+  }
+
+  return value.alt.trim() || value.src.trim();
+}
+
+function getCollectionItemLabel(
+  collection: SiteCmsCollectionRecord,
+  item: SiteCmsCollectionItemInput,
+  index: number
+): string {
+  const nameFieldKey = collection.itemNameFieldKey || collection.fields[0]?.key;
+  const name = nameFieldKey ? getValueLabel(item.fields[nameFieldKey]) : "";
+  return name || `${collection.itemLabel} ${index + 1}`;
+}
+
+function CmsFieldEditor({
+  field,
+  value,
+  onChange,
+  showKey = true,
+}: {
+  field: EditableCmsField;
+  value: SiteCmsFieldValue | undefined;
+  onChange: (nextValue: SiteCmsFieldValue) => void;
+  showKey?: boolean;
+}) {
+  if (field.type === "link") {
+    const linkValue =
+      value && "text" in value ? value : createDefaultFieldValue(field);
+    const normalizedLinkValue = linkValue as Extract<
+      SiteCmsFieldValue,
+      { text: string; href: string }
+    >;
+
+    return (
+      <div className="space-y-3">
+        <div>
+          <div className="text-sm font-medium">{field.label}</div>
+          {showKey ? (
+            <div className="text-xs text-muted-foreground">{field.key}</div>
+          ) : null}
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label>Label</Label>
+            <Input
+              value={normalizedLinkValue.text}
+              onChange={(event) =>
+                onChange({
+                  text: event.target.value,
+                  href: normalizedLinkValue.href,
+                })
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Destination</Label>
+            <Input
+              value={normalizedLinkValue.href}
+              onChange={(event) =>
+                onChange({
+                  text: normalizedLinkValue.text,
+                  href: event.target.value,
+                })
+              }
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (field.type === "image") {
+    const imageValue =
+      value && "src" in value ? value : createDefaultFieldValue(field);
+    const normalizedImageValue = imageValue as Extract<
+      SiteCmsFieldValue,
+      { src: string; alt: string }
+    >;
+
+    return (
+      <div className="space-y-3">
+        <div>
+          <div className="text-sm font-medium">{field.label}</div>
+          {showKey ? (
+            <div className="text-xs text-muted-foreground">{field.key}</div>
+          ) : null}
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label>Image source</Label>
+            <Input
+              value={normalizedImageValue.src}
+              onChange={(event) =>
+                onChange({
+                  src: event.target.value,
+                  alt: normalizedImageValue.alt,
+                })
+              }
+            />
+          </div>
+          <div className="space-y-2">
+            <Label>Alt text</Label>
+            <Input
+              value={normalizedImageValue.alt}
+              onChange={(event) =>
+                onChange({
+                  src: normalizedImageValue.src,
+                  alt: event.target.value,
+                })
+              }
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const textValue =
+    value && "value" in value ? value : createDefaultFieldValue(field);
+  const normalizedTextValue = textValue as Extract<
+    SiteCmsFieldValue,
+    { value: string }
+  >;
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-sm font-medium">{field.label}</div>
+        {showKey ? (
+          <div className="text-xs text-muted-foreground">{field.key}</div>
+        ) : null}
+      </div>
+      <div className="space-y-2">
+        <Label>{field.type === "textarea" ? "Content" : "Value"}</Label>
+        {field.type === "textarea" ? (
+          <Textarea
+            rows={8}
+            value={normalizedTextValue.value}
+            onChange={(event) =>
+              onChange({
+                value: event.target.value,
+              })
+            }
+          />
+        ) : (
+          <Input
+            value={normalizedTextValue.value}
+            onChange={(event) =>
+              onChange({
+                value: event.target.value,
+              })
+            }
+          />
+        )}
+      </div>
+    </div>
+  );
 }
 
 function sortProducts(products: SiteCmsProductRecord[]): SiteCmsProductRecord[] {
@@ -181,26 +430,67 @@ function buildProductDraft(
   };
 }
 
-function buildSiteAdminHref(siteSlug: string, suffix?: string): string {
-  const base = `/sites/${encodeURIComponent(siteSlug)}/admin`;
-  if (!suffix) {
-    return base;
+function appendPreviewAccess(
+  href: string,
+  previewAccessToken?: string | null
+): string {
+  if (!previewAccessToken) {
+    return href;
   }
 
-  return `${base}/${suffix.replace(/^\/+/, "")}`;
+  const url = new URL(href, "http://local-preview.invalid");
+  url.searchParams.set(SITE_ADMIN_PREVIEW_QUERY_PARAM, previewAccessToken);
+
+  if (/^https?:\/\//i.test(href)) {
+    return url.toString();
+  }
+
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
-function buildPageEditorHref(siteSlug: string, pageKey: string): string {
+function buildSiteAdminHref(
+  siteSlug: string,
+  suffix?: string,
+  previewAccessToken?: string | null
+): string {
+  const base = `/sites/${encodeURIComponent(siteSlug)}/admin`;
+  const href = !suffix ? base : `${base}/${suffix.replace(/^\/+/, "")}`;
+
+  return appendPreviewAccess(href, previewAccessToken);
+}
+
+function buildPageEditorHref(
+  siteSlug: string,
+  pageKey: string,
+  previewAccessToken?: string | null
+): string {
   return buildSiteAdminHref(
     siteSlug,
-    `content/${encodeURIComponent(pageKey)}`
+    `content/${encodeURIComponent(pageKey)}`,
+    previewAccessToken
   );
 }
 
-function buildProductEditorHref(siteSlug: string, productId: string): string {
+function buildProductEditorHref(
+  siteSlug: string,
+  productId: string,
+  previewAccessToken?: string | null
+): string {
   return buildSiteAdminHref(
     siteSlug,
-    `products/${encodeURIComponent(productId)}`
+    `products/${encodeURIComponent(productId)}`,
+    previewAccessToken
+  );
+}
+
+function buildSiteAdminApiHref(
+  siteSlug: string,
+  section: "files" | "pages" | "products" | "settings",
+  previewAccessToken?: string | null
+): string {
+  return appendPreviewAccess(
+    `/api/site-admin/${encodeURIComponent(siteSlug)}/${section}`,
+    previewAccessToken
   );
 }
 
@@ -384,6 +674,8 @@ function SettingsForm({
 export function SiteAdminApp({
   initialData,
   initialPath,
+  previewAccessToken: initialPreviewAccessToken,
+  previewAccessSessionValue,
 }: SiteAdminAppProps) {
   const router = useRouter();
   const route = useMemo(() => normalizeRoute(initialPath), [initialPath]);
@@ -391,9 +683,7 @@ export function SiteAdminApp({
   const [pages, setPages] = useState(initialData.pages);
   const [products, setProducts] = useState(sortProducts(initialData.products));
   const [settings, setSettings] = useState(initialData.settings);
-  const [pageDraft, setPageDraft] = useState<Record<string, SiteCmsFieldValue>>(
-    {}
-  );
+  const [pageDraft, setPageDraft] = useState<PageDraftState>(buildPageDraft(null));
   const [productDraft, setProductDraft] = useState<SiteCmsProductRecord>(
     buildProductDraft(null, initialData.products)
   );
@@ -405,6 +695,9 @@ export function SiteAdminApp({
   const [productQuery, setProductQuery] = useState("");
   const [status, setStatus] = useState<StatusState>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [previewAccessToken, setPreviewAccessToken] = useState<string | null>(
+    initialPreviewAccessToken
+  );
 
   useEffect(() => {
     setPages(initialData.pages);
@@ -415,6 +708,34 @@ export function SiteAdminApp({
       commerceProvider: initialData.settings.commerceProvider,
     });
   }, [initialData]);
+
+  useEffect(() => {
+    setPreviewAccessToken(initialPreviewAccessToken);
+  }, [initialPreviewAccessToken]);
+
+  useEffect(() => {
+    if (!previewAccessSessionValue || typeof document === "undefined") {
+      return;
+    }
+
+    document.cookie = `${SITE_ADMIN_SESSION_COOKIE}=${encodeURIComponent(
+      previewAccessSessionValue
+    )}; path=/; SameSite=Lax${
+      window.location.protocol === "https:" ? "; Secure" : ""
+    }`;
+
+    const currentUrl = new URL(window.location.href);
+    if (currentUrl.searchParams.has(SITE_ADMIN_PREVIEW_QUERY_PARAM)) {
+      currentUrl.searchParams.delete(SITE_ADMIN_PREVIEW_QUERY_PARAM);
+      window.history.replaceState(
+        {},
+        document.title,
+        `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`
+      );
+    }
+
+    setPreviewAccessToken(null);
+  }, [previewAccessSessionValue]);
 
   const currentPage =
     route.section === "content" && route.pageKey
@@ -463,12 +784,48 @@ export function SiteAdminApp({
     );
   }, [deferredProductQuery, products]);
 
-  const pageIndexHref = buildSiteAdminHref(initialData.siteSlug, "content");
-  const productIndexHref = buildSiteAdminHref(initialData.siteSlug, "products");
-  const filesHref = buildSiteAdminHref(initialData.siteSlug, "files");
-  const settingsHref = buildSiteAdminHref(initialData.siteSlug, "settings");
+  const pageIndexHref = buildSiteAdminHref(
+    initialData.siteSlug,
+    "content",
+    previewAccessToken
+  );
+  const productIndexHref = buildSiteAdminHref(
+    initialData.siteSlug,
+    "products",
+    previewAccessToken
+  );
+  const filesHref = buildSiteAdminHref(
+    initialData.siteSlug,
+    "files",
+    previewAccessToken
+  );
+  const settingsHref = buildSiteAdminHref(
+    initialData.siteSlug,
+    "settings",
+    previewAccessToken
+  );
   const siteHref = buildPreviewHref(initialData.siteSlug);
   const shopHref = buildPreviewHref(initialData.siteSlug, "shop/index.html");
+  const pagesApiHref = buildSiteAdminApiHref(
+    initialData.siteSlug,
+    "pages",
+    previewAccessToken
+  );
+  const productsApiHref = buildSiteAdminApiHref(
+    initialData.siteSlug,
+    "products",
+    previewAccessToken
+  );
+  const settingsApiHref = buildSiteAdminApiHref(
+    initialData.siteSlug,
+    "settings",
+    previewAccessToken
+  );
+  const filesApiHref = buildSiteAdminApiHref(
+    initialData.siteSlug,
+    "files",
+    previewAccessToken
+  );
 
   const config = useMemo(
     () =>
@@ -502,7 +859,7 @@ export function SiteAdminApp({
         type: "file",
         pageKey: page.pageKey,
         title: page.title,
-        fieldCount: page.fields.length,
+        fieldCount: page.fields.length + page.collections.length,
       })),
     [filteredPages]
   );
@@ -533,7 +890,11 @@ export function SiteAdminApp({
         cell: ({ row }: { row: { original: PageRow } }) => (
           <Link
             className="truncate font-medium"
-            href={buildPageEditorHref(initialData.siteSlug, row.original.pageKey)}
+            href={buildPageEditorHref(
+              initialData.siteSlug,
+              row.original.pageKey,
+              previewAccessToken
+            )}
             prefetch
           >
             {row.original.title}
@@ -551,14 +912,14 @@ export function SiteAdminApp({
       },
       {
         accessorKey: "fieldCount",
-        header: "Fields",
+        header: "Editable",
         meta: {
           className: "w-[96px]",
         },
         cell: ({ row }: { row: { original: PageRow } }) => row.original.fieldCount,
       },
     ],
-    [initialData.siteSlug]
+    [initialData.siteSlug, previewAccessToken]
   );
 
   const productColumns = useMemo(
@@ -572,7 +933,11 @@ export function SiteAdminApp({
         cell: ({ row }: { row: { original: ProductRow } }) => (
           <Link
             className="truncate font-medium"
-            href={buildProductEditorHref(initialData.siteSlug, row.original.productId)}
+            href={buildProductEditorHref(
+              initialData.siteSlug,
+              row.original.productId,
+              previewAccessToken
+            )}
             prefetch
           >
             {row.original.title}
@@ -598,7 +963,7 @@ export function SiteAdminApp({
         cell: ({ row }: { row: { original: ProductRow } }) => row.original.position,
       },
     ],
-    [initialData.siteSlug]
+    [initialData.siteSlug, previewAccessToken]
   );
 
   async function savePage() {
@@ -611,7 +976,7 @@ export function SiteAdminApp({
 
     try {
       const response = await fetch(
-        `/api/site-admin/${encodeURIComponent(initialData.siteSlug)}/pages`,
+        pagesApiHref,
         {
           method: "PUT",
           headers: {
@@ -619,7 +984,8 @@ export function SiteAdminApp({
           },
           body: JSON.stringify({
             pageKey: currentPage.pageKey,
-            fields: pageDraft,
+            fields: pageDraft.fields,
+            collections: pageDraft.collections,
           }),
         }
       );
@@ -653,6 +1019,79 @@ export function SiteAdminApp({
     }
   }
 
+  function updatePageField(fieldKey: string, nextValue: SiteCmsFieldValue) {
+    setPageDraft((currentDraft) => ({
+      ...currentDraft,
+      fields: {
+        ...currentDraft.fields,
+        [fieldKey]: nextValue,
+      },
+    }));
+  }
+
+  function addCollectionItem(collection: SiteCmsCollectionRecord) {
+    setPageDraft((currentDraft) => ({
+      ...currentDraft,
+      collections: {
+        ...currentDraft.collections,
+        [collection.key]: [
+          ...(currentDraft.collections[collection.key] ?? []),
+          buildCollectionItemDraft(collection),
+        ],
+      },
+    }));
+  }
+
+  function updateCollectionField(
+    collectionKey: string,
+    itemId: string | undefined,
+    itemIndex: number,
+    fieldKey: string,
+    nextValue: SiteCmsFieldValue
+  ) {
+    setPageDraft((currentDraft) => ({
+      ...currentDraft,
+      collections: {
+        ...currentDraft.collections,
+        [collectionKey]: (currentDraft.collections[collectionKey] ?? []).map(
+          (item, index) => {
+            const matchesItem =
+              (itemId && item.id === itemId) || (!itemId && index === itemIndex);
+
+            if (!matchesItem) {
+              return item;
+            }
+
+            return {
+              ...item,
+              fields: {
+                ...item.fields,
+                [fieldKey]: nextValue,
+              },
+            };
+          }
+        ),
+      },
+    }));
+  }
+
+  function removeCollectionItem(
+    collectionKey: string,
+    itemId: string | undefined,
+    itemIndex: number
+  ) {
+    setPageDraft((currentDraft) => ({
+      ...currentDraft,
+      collections: {
+        ...currentDraft.collections,
+        [collectionKey]: (currentDraft.collections[collectionKey] ?? []).filter(
+          (item, index) =>
+            itemId ? item.id !== itemId : index !== itemIndex
+        ),
+      },
+    }));
+  }
+
   async function persistProducts(
     nextProducts: SiteCmsProductRecord[],
     message: string,
@@ -662,18 +1101,15 @@ export function SiteAdminApp({
     setStatus(null);
 
     try {
-      const response = await fetch(
-        `/api/site-admin/${encodeURIComponent(initialData.siteSlug)}/products`,
-        {
-          method: "PUT",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            products: sortProducts(nextProducts),
-          }),
-        }
-      );
+      const response = await fetch(productsApiHref, {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          products: sortProducts(nextProducts),
+        }),
+      });
 
       const payload = (await response.json()) as {
         error?: string;
@@ -694,7 +1130,13 @@ export function SiteAdminApp({
         });
       } else if (nextRouteProductId) {
         startTransition(() => {
-          router.push(buildProductEditorHref(initialData.siteSlug, nextRouteProductId));
+          router.push(
+            buildProductEditorHref(
+              initialData.siteSlug,
+              nextRouteProductId,
+              previewAccessToken
+            )
+          );
         });
       }
     } catch (error) {
@@ -760,7 +1202,7 @@ export function SiteAdminApp({
 
     try {
       const response = await fetch(
-        `/api/site-admin/${encodeURIComponent(initialData.siteSlug)}/settings`,
+        settingsApiHref,
         {
           method: "PUT",
           headers: {
@@ -861,7 +1303,7 @@ export function SiteAdminApp({
   }
 
   function renderPagesEditor() {
-    if (!route.pageKey || !currentPage) {
+    if (route.section !== "content" || !route.pageKey || !currentPage) {
       return (
         <Message
           title="Page missing"
@@ -915,148 +1357,120 @@ export function SiteAdminApp({
         mobileActions={mobileActions}
         sidebar={null}
       >
-        {currentPage.fields.map((field) => {
-          const value = pageDraft[field.key];
-
-          if (field.type === "link") {
-            const linkValue =
-              "text" in (value || {})
-                ? (value as Extract<SiteCmsFieldValue, { text: string; href: string }>)
-                : { text: "", href: "" };
-
-            return (
-              <div key={field.key} className="space-y-3">
-                <div>
-                  <div className="text-sm font-medium">{field.label}</div>
-                  <div className="text-xs text-muted-foreground">{field.key}</div>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Label</Label>
-                    <Input
-                      value={linkValue.text}
-                      onChange={(event) =>
-                        setPageDraft((currentDraft) => ({
-                          ...currentDraft,
-                          [field.key]: {
-                            text: event.target.value,
-                            href: linkValue.href,
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Destination</Label>
-                    <Input
-                      value={linkValue.href}
-                      onChange={(event) =>
-                        setPageDraft((currentDraft) => ({
-                          ...currentDraft,
-                          [field.key]: {
-                            text: linkValue.text,
-                            href: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-              </div>
-            );
-          }
-
-          if (field.type === "image") {
-            const imageValue =
-              "src" in (value || {})
-                ? (value as Extract<SiteCmsFieldValue, { src: string; alt: string }>)
-                : { src: "", alt: "" };
-
-            return (
-              <div key={field.key} className="space-y-3">
-                <div>
-                  <div className="text-sm font-medium">{field.label}</div>
-                  <div className="text-xs text-muted-foreground">{field.key}</div>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Image source</Label>
-                    <Input
-                      value={imageValue.src}
-                      onChange={(event) =>
-                        setPageDraft((currentDraft) => ({
-                          ...currentDraft,
-                          [field.key]: {
-                            src: event.target.value,
-                            alt: imageValue.alt,
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Alt text</Label>
-                    <Input
-                      value={imageValue.alt}
-                      onChange={(event) =>
-                        setPageDraft((currentDraft) => ({
-                          ...currentDraft,
-                          [field.key]: {
-                            src: imageValue.src,
-                            alt: event.target.value,
-                          },
-                        }))
-                      }
-                    />
-                  </div>
-                </div>
-              </div>
-            );
-          }
-
-          const textValue =
-            "value" in (value || {})
-              ? (value as Extract<SiteCmsFieldValue, { value: string }>)
-              : { value: "" };
-
-          return (
-            <div key={field.key} className="space-y-3">
-              <div>
-                <div className="text-sm font-medium">{field.label}</div>
-                <div className="text-xs text-muted-foreground">{field.key}</div>
-              </div>
-              <div className="space-y-2">
-                <Label>{field.type === "textarea" ? "Content" : "Value"}</Label>
-                {field.type === "textarea" ? (
-                  <Textarea
-                    rows={8}
-                    value={textValue.value}
-                    onChange={(event) =>
-                      setPageDraft((currentDraft) => ({
-                        ...currentDraft,
-                        [field.key]: {
-                          value: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                ) : (
-                  <Input
-                    value={textValue.value}
-                    onChange={(event) =>
-                      setPageDraft((currentDraft) => ({
-                        ...currentDraft,
-                        [field.key]: {
-                          value: event.target.value,
-                        },
-                      }))
-                    }
-                  />
-                )}
-              </div>
+        {currentPage.collections.length > 0 ? (
+          <section className="space-y-5 rounded-xl border bg-background p-5 shadow-sm">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold">Repeatable sections</h2>
+              <p className="text-sm text-muted-foreground">
+                Use these for schedules, services, reviews, menus, team members,
+                and similar repeatable cards.
+              </p>
             </div>
-          );
-        })}
+            {currentPage.collections.map((collection) => {
+              const items = pageDraft.collections[collection.key] ?? [];
+
+              return (
+                <div
+                  key={collection.key}
+                  className="space-y-4 rounded-xl border bg-muted/20 p-4"
+                >
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <div className="text-sm font-semibold">{collection.label}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {items.length} editable {items.length === 1 ? "item" : "items"}
+                      </div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => addCollectionItem(collection)}
+                    >
+                      <Plus className="mr-1.5 h-4 w-4" />
+                      Add {collection.itemLabel.toLowerCase()}
+                    </Button>
+                  </div>
+                  {items.length > 0 ? (
+                    items.map((item, itemIndex) => (
+                      <div
+                        key={item.id ?? `${collection.key}-${itemIndex}`}
+                        className="space-y-5 rounded-lg border bg-background p-4"
+                      >
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <div className="text-sm font-medium">
+                              {getCollectionItemLabel(collection, item, itemIndex)}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {collection.itemLabel} {itemIndex + 1}
+                            </div>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              removeCollectionItem(
+                                collection.key,
+                                item.id,
+                                itemIndex
+                              )
+                            }
+                          >
+                            <Trash2 className="mr-1.5 h-4 w-4" />
+                            Remove
+                          </Button>
+                        </div>
+                        <div className="space-y-6">
+                          {collection.fields.map((field) => (
+                            <CmsFieldEditor
+                              key={`${collection.key}-${item.id ?? itemIndex}-${field.key}`}
+                              field={field}
+                              value={item.fields[field.key]}
+                              showKey={false}
+                              onChange={(nextValue) =>
+                                updateCollectionField(
+                                  collection.key,
+                                  item.id,
+                                  itemIndex,
+                                  field.key,
+                                  nextValue
+                                )
+                              }
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-lg border border-dashed px-4 py-6 text-sm text-muted-foreground">
+                      No {collection.itemLabel.toLowerCase()} entries yet. Add one
+                      to populate this section.
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </section>
+        ) : null}
+        {currentPage.fields.length > 0 ? (
+          <section className="space-y-5 rounded-xl border bg-background p-5 shadow-sm">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold">Page content</h2>
+              <p className="text-sm text-muted-foreground">
+                Edit the standalone headings, paragraphs, links, and images on
+                this page.
+              </p>
+            </div>
+            {currentPage.fields.map((field) => (
+              <CmsFieldEditor
+                key={field.key}
+                field={field}
+                value={pageDraft.fields[field.key]}
+                onChange={(nextValue) => updatePageField(field.key, nextValue)}
+              />
+            ))}
+          </section>
+        ) : null}
       </EntryShell>
     );
   }
@@ -1079,7 +1493,11 @@ export function SiteAdminApp({
             </a>
             <Link
               className={buttonVariants({ variant: "default", size: "sm" })}
-              href={buildProductEditorHref(initialData.siteSlug, "new")}
+              href={buildProductEditorHref(
+                initialData.siteSlug,
+                "new",
+                previewAccessToken
+              )}
               prefetch
             >
               <Plus className="mr-1.5 h-4 w-4" />
@@ -1112,7 +1530,10 @@ export function SiteAdminApp({
   }
 
   function renderProductEditor() {
-    if (route.productId && route.productId !== "new" && !currentProduct) {
+    if (
+      route.section !== "products" ||
+      (route.productId && route.productId !== "new" && !currentProduct)
+    ) {
       return (
         <Message
           title="Product missing"
@@ -1344,7 +1765,7 @@ export function SiteAdminApp({
       <div className="mx-auto flex w-full max-w-screen-xl flex-1 flex-col">
         <div className="h-[calc(100dvh-8rem)] min-h-[40rem] lg:h-[calc(100dvh-4rem)]">
           <SiteFileEditor
-            filesApiPath={`/api/site-admin/${encodeURIComponent(initialData.siteSlug)}/files`}
+            filesApiPath={filesApiHref}
             siteSlug={initialData.siteSlug}
             title="Files"
             description="Browse and edit the generated site files. A backup is created automatically on the first save."

@@ -31,11 +31,36 @@ export interface CmsFieldSchema {
   defaultAlt?: string;
 }
 
+export interface CmsCollectionFieldSchema extends CmsFieldSchema {
+  role?:
+    | "title"
+    | "subtitle"
+    | "tag"
+    | "details"
+    | "author"
+    | "source"
+    | "date"
+    | "time"
+    | "link"
+    | "image";
+}
+
+export interface CmsCollectionSchema {
+  key: string;
+  label: string;
+  kind: "generic" | "events" | "services" | "reviews" | "menu" | "team";
+  itemLabel: string;
+  itemNameFieldKey?: string;
+  itemTemplateHtml: string;
+  fields: CmsCollectionFieldSchema[];
+}
+
 export interface CmsPageSchema {
   pageKey: string;
   path: string;
   title: string;
   fields: CmsFieldSchema[];
+  collections?: CmsCollectionSchema[];
 }
 
 export interface CmsSchema {
@@ -76,6 +101,8 @@ export const HANDOFF_OWNERSHIP_PATH = "handoff/OWNER_SETUP.md";
 const MAX_TEXT_FIELDS_PER_PAGE = 24;
 const MAX_LINK_FIELDS_PER_PAGE = 12;
 const MAX_IMAGE_FIELDS_PER_PAGE = 12;
+const MAX_COLLECTIONS_PER_PAGE = 6;
+const MAX_COLLECTION_FIELDS_PER_ITEM = 5;
 const TABLER_DIST_DIR = path.resolve(
   process.cwd(),
   "node_modules",
@@ -85,6 +112,8 @@ const TABLER_DIST_DIR = path.resolve(
 );
 const vendorAssetCache = new Map<string, string>();
 type AdminView = "overview" | "access" | "content" | "store" | "products";
+type HtmlDoc = ReturnType<typeof load>;
+type HtmlNode = ReturnType<HtmlDoc>;
 
 function readVendorAsset(relativePath: string): string {
   const cached = vendorAssetCache.get(relativePath);
@@ -114,6 +143,705 @@ function relativeHrefForIndexPage(fromFilePath: string, toFilePath: string): str
 
 function normalizeText(value: string | null | undefined): string {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+const COLLECTION_CONTAINER_HINT_RE =
+  /(grid|cards?|list|items?|features?|services?|reviews?|testimonials?|events?|schedule|lineup|menu|team|members?|staff|offerings?|highlights?|packages?|pricing|plans|faq|questions)/i;
+const COLLECTION_EXCLUDED_HINT_RE =
+  /(nav|navigation|header|footer|breadcrumbs?|pagination|social|toolbar|filters?|tabs?|accordion|form|actions?)/i;
+const COLLECTION_ITEM_HINT_RE =
+  /(card|item|service|review|testimonial|member|team|event|schedule|menu|feature|plan|package|faq|question|story|info|highlight)/i;
+const EVENT_HINT_RE = /(event|events|schedule|lineup|calendar|music|show|gig)/i;
+const SERVICE_HINT_RE =
+  /(service|services|offering|offerings|repair|repairs|treatment|treatments)/i;
+const REVIEW_HINT_RE = /(review|reviews|testimonial|testimonials|quote|quotes)/i;
+const MENU_HINT_RE = /(menu|dish|food|drink|drinks|special|specials)/i;
+const TEAM_HINT_RE = /(team|staff|member|members|people|crew)/i;
+const FAQ_HINT_RE = /(faq|question|questions)/i;
+const TAG_HINT_RE =
+  /(tag|label|eyebrow|kicker|badge|pill|category|overline|meta|price)/i;
+const AUTHOR_HINT_RE = /(author|byline)/i;
+const SOURCE_HINT_RE = /(source|company|location|venue)/i;
+const SUBTITLE_HINT_RE = /(subtitle|subheading|role|position|location|venue|price)/i;
+const MEDIA_HINT_RE = /(image|media|photo|thumb|logo|avatar|artwork|icon|emoji)/i;
+const DATE_TEXT_RE =
+  /\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b|\b\d{1,2}(?:st|nd|rd|th)?\b/i;
+const TIME_TEXT_RE =
+  /\b\d{1,2}(?::\d{2})?\s?(?:am|pm)\b|\b(?:noon|midnight)\b/i;
+const DECORATIVE_TEXT_RE = /^[^A-Za-z0-9]+$/;
+const ITEM_CLASS_NOISE_RE = /^(?:reveal|rd\d+|wow|animate(?:__\w+)?|aos-\w+|active|current|selected|open)$/i;
+const SHARED_TOKEN_IGNORE_RE =
+  /^(?:container|grid|list|cards?|items?|content|wrapper|inner|row|column|col)$/i;
+
+type CollectionFieldCandidate = {
+  node: HtmlNode;
+  key: string;
+  label: string;
+  type: CmsCollectionFieldSchema["type"];
+  role?: CmsCollectionFieldSchema["role"];
+  defaultValue?: string;
+  defaultHref?: string;
+  defaultAlt?: string;
+};
+
+function clearExistingCmsFieldAnnotations($: HtmlDoc): void {
+  $("[data-curb-key], [data-curb-type]").each((_, element) => {
+    const node = $(element);
+    node.removeAttr("data-curb-key");
+    node.removeAttr("data-curb-type");
+  });
+}
+
+function getNodeHint(node: HtmlNode): string {
+  return [
+    node.attr("class"),
+    node.attr("id"),
+    node.attr("data-section"),
+    node.attr("aria-label"),
+  ]
+    .map((value) => normalizeText(value))
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function stripCmsAnnotationAttributes(node: HtmlNode): void {
+  node.removeAttr("data-curb-key");
+  node.removeAttr("data-curb-type");
+  node.removeAttr("data-curb-collection-field");
+  node.removeAttr("data-curb-collection-field-type");
+}
+
+function clearCollectionFieldValue(
+  node: HtmlNode,
+  fieldType: CmsCollectionFieldSchema["type"]
+): void {
+  if (fieldType === "link") {
+    node.text("");
+    node.attr("href", "");
+    return;
+  }
+
+  if (fieldType === "image") {
+    node.attr("src", "");
+    node.attr("alt", "");
+    return;
+  }
+
+  node.text("");
+}
+
+function isWithinMediaBlock(node: HtmlNode, item: HtmlNode): boolean {
+  const itemElement = item.get(0);
+  let mediaAncestor: unknown = null;
+  const ancestors = node.parents();
+
+  for (let index = 0; index < ancestors.length; index += 1) {
+    const ancestorNode = ancestors.eq(index);
+    const ancestor = ancestorNode.get(0);
+    if (ancestor === itemElement) {
+      break;
+    }
+
+    if (MEDIA_HINT_RE.test(getNodeHint(ancestorNode))) {
+      mediaAncestor = ancestor;
+      break;
+    }
+  }
+
+  return Boolean(mediaAncestor);
+}
+
+function normalizeClassTokens(node: HtmlNode): string[] {
+  return normalizeText(node.attr("class"))
+    .split(/\s+/)
+    .map((token) => token.trim().toLowerCase())
+    .filter(
+      (token) =>
+        token.length > 1 &&
+        !ITEM_CLASS_NOISE_RE.test(token) &&
+        !/^\d+$/.test(token)
+    );
+}
+
+function getTagName(node: HtmlNode): string {
+  const element = node.get(0);
+  if (!element || !("tagName" in element) || typeof element.tagName !== "string") {
+    return "";
+  }
+
+  return element.tagName.toLowerCase();
+}
+
+function inferCollectionKind(
+  containerHint: string
+): CmsCollectionSchema["kind"] {
+  if (EVENT_HINT_RE.test(containerHint)) {
+    return "events";
+  }
+
+  if (SERVICE_HINT_RE.test(containerHint)) {
+    return "services";
+  }
+
+  if (REVIEW_HINT_RE.test(containerHint)) {
+    return "reviews";
+  }
+
+  if (MENU_HINT_RE.test(containerHint)) {
+    return "menu";
+  }
+
+  if (TEAM_HINT_RE.test(containerHint)) {
+    return "team";
+  }
+
+  return "generic";
+}
+
+function inferCollectionLabels(
+  kind: CmsCollectionSchema["kind"],
+  containerHint: string
+): Pick<CmsCollectionSchema, "label" | "itemLabel"> {
+  if (kind === "events") {
+    return { label: "Events", itemLabel: "Event" };
+  }
+
+  if (kind === "services") {
+    return { label: "Services", itemLabel: "Service" };
+  }
+
+  if (kind === "reviews") {
+    return { label: "Reviews", itemLabel: "Review" };
+  }
+
+  if (kind === "menu") {
+    return { label: "Highlights", itemLabel: "Item" };
+  }
+
+  if (kind === "team") {
+    return { label: "Team", itemLabel: "Member" };
+  }
+
+  if (FAQ_HINT_RE.test(containerHint)) {
+    return { label: "Questions", itemLabel: "Question" };
+  }
+
+  return { label: "Items", itemLabel: "Item" };
+}
+
+function buildCollectionTemplateHtml(
+  item: HtmlNode,
+  fields: CmsCollectionFieldSchema[]
+): string {
+  const template = item.clone();
+  template.attr("data-curb-collection-item-id", "__new__");
+
+  for (const field of fields) {
+    const fieldNode = template
+      .find(`[data-curb-collection-field="${field.key}"]`)
+      .first();
+    if (!fieldNode.length) {
+      continue;
+    }
+
+    clearCollectionFieldValue(fieldNode, field.type);
+  }
+
+  return template.toString();
+}
+
+function isNodeInEditableContext(node: HtmlNode, item: HtmlNode): boolean {
+  if (node.parents("script,style,svg,button,label").length > 0) {
+    return false;
+  }
+
+  if (MEDIA_HINT_RE.test(getNodeHint(node))) {
+    return false;
+  }
+
+  if (node.attr("aria-hidden") === "true") {
+    return false;
+  }
+
+  if (isWithinMediaBlock(node, item)) {
+    return false;
+  }
+
+  const text = normalizeText(node.text());
+  if (!text || text.length < 2 || DECORATIVE_TEXT_RE.test(text)) {
+    return false;
+  }
+
+  return true;
+}
+
+function findMeaningfulTextNodes(item: HtmlNode): HtmlNode[] {
+  const selector =
+    "h1,h2,h3,h4,h5,h6,p,blockquote,cite,a[href],span,small,div,li,strong,em";
+  const candidates: HtmlNode[] = [];
+  const foundNodes = item.find(selector);
+
+  foundNodes.each((index) => {
+    const node = foundNodes.eq(index);
+    if (!isNodeInEditableContext(node, item)) {
+      return;
+    }
+
+    candidates.push(node);
+  });
+
+  return candidates.filter((node, index) => {
+    const element = node.get(0);
+    if (!element) {
+      return false;
+    }
+
+    return !candidates.some((other, otherIndex) => {
+      if (otherIndex === index) {
+        return false;
+      }
+
+      const otherElement = other.get(0);
+      if (!otherElement) {
+        return false;
+      }
+
+      return (
+        other.parents().toArray().some((ancestor) => ancestor === element) &&
+        otherElement !== element
+      );
+    });
+  });
+}
+
+function inferFieldTypeForTextNode(
+  node: HtmlNode,
+  text: string
+): "text" | "textarea" {
+  const tagName = getTagName(node);
+  if (
+    text.length > 120 ||
+    tagName === "p" ||
+    tagName === "blockquote" ||
+    tagName === "li"
+  ) {
+    return "textarea";
+  }
+
+  return "text";
+}
+
+function buildCollectionFieldCandidate(
+  node: HtmlNode,
+  kind: CmsCollectionSchema["kind"],
+  existingRoles: Set<string>,
+  fallbackIndex: number
+): CollectionFieldCandidate | null {
+  const tagName = getTagName(node);
+  const hint = getNodeHint(node);
+  const text = normalizeText(node.text());
+
+  if (
+    tagName === "a" &&
+    !existingRoles.has("link") &&
+    !shouldIgnoreLink(String(node.attr("href") ?? "").trim())
+  ) {
+    return {
+      node,
+      key: "link",
+      label: "Link",
+      type: "link",
+      role: "link",
+      defaultValue: text,
+      defaultHref: String(node.attr("href") ?? "").trim(),
+    };
+  }
+
+  if (/^h[1-6]$/.test(tagName) && !existingRoles.has("title")) {
+    return {
+      node,
+      key: "title",
+      label:
+        kind === "events"
+          ? "Event name"
+          : kind === "services"
+            ? "Service name"
+            : kind === "team"
+              ? "Name"
+              : "Title",
+      type: "text",
+      role: "title",
+      defaultValue: text,
+    };
+  }
+
+  if (
+    (kind === "events" || /date/.test(hint)) &&
+    !existingRoles.has("date") &&
+    DATE_TEXT_RE.test(text)
+  ) {
+    return {
+      node,
+      key: "date",
+      label: "Date",
+      type: "text",
+      role: "date",
+      defaultValue: text,
+    };
+  }
+
+  if (
+    (kind === "events" || /time/.test(hint)) &&
+    !existingRoles.has("time") &&
+    TIME_TEXT_RE.test(text)
+  ) {
+    return {
+      node,
+      key: "time",
+      label: "Time",
+      type: "text",
+      role: "time",
+      defaultValue: text,
+    };
+  }
+
+  if (!existingRoles.has("tag") && TAG_HINT_RE.test(hint)) {
+    return {
+      node,
+      key: "tag",
+      label: "Tag",
+      type: "text",
+      role: "tag",
+      defaultValue: text,
+    };
+  }
+
+  if (
+    kind === "reviews" &&
+    !existingRoles.has("author") &&
+    (AUTHOR_HINT_RE.test(hint) || /^[-—–]/.test(text))
+  ) {
+    return {
+      node,
+      key: "author",
+      label: "Author",
+      type: "text",
+      role: "author",
+      defaultValue: text.replace(/^[-—–]\s*/, ""),
+    };
+  }
+
+  if (
+    kind === "reviews" &&
+    !existingRoles.has("source") &&
+    SOURCE_HINT_RE.test(hint)
+  ) {
+    return {
+      node,
+      key: "source",
+      label: "Source",
+      type: "text",
+      role: "source",
+      defaultValue: text,
+    };
+  }
+
+  if (!existingRoles.has("title") && text.length <= 80) {
+    return {
+      node,
+      key: "title",
+      label:
+        kind === "team"
+          ? "Name"
+          : kind === "events"
+            ? "Event name"
+            : "Title",
+      type: "text",
+      role: "title",
+      defaultValue: text,
+    };
+  }
+
+  if (
+    !existingRoles.has("subtitle") &&
+    (SUBTITLE_HINT_RE.test(hint) || (text.length <= 80 && tagName !== "p"))
+  ) {
+    return {
+      node,
+      key: "subtitle",
+      label: kind === "team" ? "Role" : "Subtitle",
+      type: "text",
+      role: "subtitle",
+      defaultValue: text,
+    };
+  }
+
+  if (!existingRoles.has("details")) {
+    return {
+      node,
+      key: "details",
+      label: kind === "reviews" ? "Quote" : "Description",
+      type: inferFieldTypeForTextNode(node, text),
+      role: "details",
+      defaultValue: text,
+    };
+  }
+
+  return {
+    node,
+    key: `text-${fallbackIndex}`,
+    label: `Text ${fallbackIndex}`,
+    type: inferFieldTypeForTextNode(node, text),
+    defaultValue: text,
+  };
+}
+
+function extractCollectionFieldCandidates(
+  item: HtmlNode,
+  kind: CmsCollectionSchema["kind"]
+): CollectionFieldCandidate[] {
+  const candidates: CollectionFieldCandidate[] = [];
+  const existingRoles = new Set<string>();
+  const imageNode = item.find("img[src]").first();
+
+  if (imageNode.length) {
+    candidates.push({
+      node: imageNode,
+      key: "image",
+      label: "Image",
+      type: "image",
+      role: "image",
+      defaultValue: String(imageNode.attr("src") ?? "").trim(),
+      defaultAlt: normalizeText(imageNode.attr("alt")),
+    });
+    existingRoles.add("image");
+  }
+
+  const textNodes = findMeaningfulTextNodes(item);
+  let fallbackIndex = 1;
+
+  for (const node of textNodes) {
+    if (candidates.length >= MAX_COLLECTION_FIELDS_PER_ITEM) {
+      break;
+    }
+
+    const candidate = buildCollectionFieldCandidate(
+      node,
+      kind,
+      existingRoles,
+      fallbackIndex
+    );
+
+    if (!candidate) {
+      continue;
+    }
+
+    candidates.push(candidate);
+    existingRoles.add(candidate.role ?? candidate.key);
+    fallbackIndex += 1;
+  }
+
+  return candidates;
+}
+
+function mapCollectionCandidatesToFields(
+  candidates: CollectionFieldCandidate[],
+  fields: CmsCollectionFieldSchema[]
+): Array<{ field: CmsCollectionFieldSchema; node: HtmlNode | null }> {
+  const remaining = [...candidates];
+
+  return fields.map((field) => {
+    let matchIndex = remaining.findIndex(
+      (candidate) => candidate.role && candidate.role === field.role
+    );
+
+    if (matchIndex < 0) {
+      matchIndex = remaining.findIndex((candidate) => candidate.type === field.type);
+    }
+
+    if (matchIndex < 0) {
+      matchIndex = 0;
+    }
+
+    const match =
+      matchIndex >= 0 && matchIndex < remaining.length
+        ? remaining.splice(matchIndex, 1)[0]
+        : null;
+
+    return {
+      field,
+      node: match?.node ?? null,
+    };
+  });
+}
+
+function isSimpleLinkListItem(item: HtmlNode): boolean {
+  const directLink = item.children("a[href]").first();
+  if (!directLink.length || item.find("img, h1, h2, h3, h4, h5, h6, p, blockquote").length) {
+    return false;
+  }
+
+  return normalizeText(item.text()) === normalizeText(directLink.text());
+}
+
+function findCollectionItemNodes(container: HtmlNode): HtmlNode[] {
+  const directChildren = container.children("article,div,li,section");
+  const children: HtmlNode[] = [];
+
+  directChildren.each((index) => {
+    const item = directChildren.eq(index);
+    if (!normalizeText(item.text()) && item.find("img[src]").length === 0) {
+      return;
+    }
+
+    children.push(item);
+  });
+
+  if (children.length < 2 || children.length > 18) {
+    return [];
+  }
+
+  if (children.every((item) => isSimpleLinkListItem(item))) {
+    return [];
+  }
+
+  const sharedTokens = children.reduce<string[] | null>((common, item) => {
+    const tokens = normalizeClassTokens(item);
+    if (!common) {
+      return tokens;
+    }
+
+    return common.filter((token) => tokens.includes(token));
+  }, null);
+  const containerHint = getNodeHint(container);
+  const sharedItemTokens =
+    sharedTokens?.filter(
+      (token) =>
+        !SHARED_TOKEN_IGNORE_RE.test(token) &&
+        COLLECTION_ITEM_HINT_RE.test(token)
+    ) ?? [];
+
+  if (
+    !container.is("ul,ol") &&
+    sharedItemTokens.length === 0 &&
+    !(
+      COLLECTION_CONTAINER_HINT_RE.test(containerHint) &&
+      children.length >= 3
+    )
+  ) {
+    return [];
+  }
+
+  return children;
+}
+
+function detectStructuredCollections($: HtmlDoc): CmsCollectionSchema[] {
+  $(
+    "[data-curb-collection], [data-curb-collection-item], [data-curb-collection-item-id], [data-curb-collection-field], [data-curb-collection-field-type]"
+  ).each((_, element) => {
+    const node = $(element);
+    node.removeAttr("data-curb-collection");
+    node.removeAttr("data-curb-collection-item");
+    node.removeAttr("data-curb-collection-item-id");
+    node.removeAttr("data-curb-collection-field");
+    node.removeAttr("data-curb-collection-field-type");
+  });
+
+  const collections: CmsCollectionSchema[] = [];
+  let collectionIndex = 0;
+  const claimedElements = new Set<unknown>();
+
+  $("section, div, ul, ol").each((_, element) => {
+    const container = $(element);
+    const containerElement = container.get(0);
+    const containerHint = getNodeHint(container);
+
+    if (
+      container.parents("header,nav,footer,form").length > 0 ||
+      claimedElements.has(containerElement)
+    ) {
+      return;
+    }
+
+    if (
+      COLLECTION_EXCLUDED_HINT_RE.test(containerHint) &&
+      !COLLECTION_CONTAINER_HINT_RE.test(containerHint)
+    ) {
+      return;
+    }
+
+    const items = findCollectionItemNodes(container);
+    if (items.length < 2 || collections.length >= MAX_COLLECTIONS_PER_PAGE) {
+      return;
+    }
+
+    if (items.some((item) => item.parents("[data-curb-collection-item]").length > 0)) {
+      return;
+    }
+
+    const kind = inferCollectionKind(
+      `${containerHint} ${getNodeHint(items[0])}`.trim()
+    );
+    const fieldCandidates = extractCollectionFieldCandidates(items[0], kind);
+    if (fieldCandidates.length < 2) {
+      return;
+    }
+
+    const fields: CmsCollectionFieldSchema[] = fieldCandidates.map((candidate) => ({
+      key: candidate.key,
+      label: candidate.label,
+      type: candidate.type,
+      role: candidate.role,
+      defaultValue: candidate.defaultValue,
+      defaultHref: candidate.defaultHref,
+      defaultAlt: candidate.defaultAlt,
+    }));
+
+    if (fields.length < 2) {
+      return;
+    }
+
+    collectionIndex += 1;
+    const collectionKey = `collection-${collectionIndex}`;
+    const labels = inferCollectionLabels(kind, containerHint);
+    container.attr("data-curb-collection", collectionKey);
+
+    items.forEach((item, itemIndex) => {
+      item.attr("data-curb-collection-item", collectionKey);
+      item.attr("data-curb-collection-item-id", `${collectionKey}-item-${itemIndex + 1}`);
+
+      const itemCandidates = extractCollectionFieldCandidates(item, kind);
+      const fieldNodes = mapCollectionCandidatesToFields(itemCandidates, fields);
+      fieldNodes.forEach(({ field, node }) => {
+        if (!node?.length) {
+          return;
+        }
+
+        stripCmsAnnotationAttributes(node);
+        node.attr("data-curb-collection-field", field.key);
+        node.attr("data-curb-collection-field-type", field.type);
+      });
+    });
+
+    claimedElements.add(containerElement);
+    items.forEach((item) => claimedElements.add(item.get(0)));
+
+    collections.push({
+      key: collectionKey,
+      label: labels.label,
+      kind,
+      itemLabel: labels.itemLabel,
+      itemNameFieldKey:
+        fields.find((field) => field.role === "title")?.key ??
+        fields.find((field) => field.role === "author")?.key ??
+        fields[0]?.key,
+      itemTemplateHtml: buildCollectionTemplateHtml(items[0], fields),
+      fields,
+    });
+  });
+
+  return collections;
 }
 
 function getStoreCommerceProvider(
@@ -361,11 +1089,19 @@ function createStoreAliasPage(): string {
 `;
 }
 
-function annotateManagedHtmlFile(
+function isWithinStructuredCollection(node: HtmlNode): boolean {
+  return (
+    node.attr("data-curb-collection-field") !== undefined ||
+    node.parents("[data-curb-collection-item]").length > 0
+  );
+}
+
+export function annotateManagedHtmlFile(
   file: StaticSiteFile,
   shopHref: string | null
 ): { file: StaticSiteFile; page: CmsPageSchema } {
   const $ = load(file.content);
+  clearExistingCmsFieldAnnotations($);
   const title = normalizeText($("title").first().text()) || pathToPageTitle(file.path);
   const body = $("body").first();
   if (body.length > 0) {
@@ -375,6 +1111,7 @@ function annotateManagedHtmlFile(
     }
   }
 
+  const collections = detectStructuredCollections($);
   const fields: CmsFieldSchema[] = [];
   let textIndex = 0;
   let linkIndex = 0;
@@ -386,7 +1123,7 @@ function annotateManagedHtmlFile(
     }
 
     const node = $(element);
-    if (node.attr("data-curb-key")) {
+    if (node.attr("data-curb-key") || isWithinStructuredCollection(node)) {
       return;
     }
 
@@ -396,7 +1133,7 @@ function annotateManagedHtmlFile(
     }
 
     const key = `text-${textIndex + 1}`;
-    const labelBase = node[0]?.tagName?.toUpperCase() ?? "TEXT";
+    const labelBase = getTagName(node).toUpperCase() || "TEXT";
     const fieldType =
       text.length > 120 || /^(P|BLOCKQUOTE|LI)$/i.test(labelBase)
         ? "textarea"
@@ -418,7 +1155,7 @@ function annotateManagedHtmlFile(
     }
 
     const node = $(element);
-    if (node.attr("data-curb-key")) {
+    if (node.attr("data-curb-key") || isWithinStructuredCollection(node)) {
       return;
     }
 
@@ -447,7 +1184,7 @@ function annotateManagedHtmlFile(
     }
 
     const node = $(element);
-    if (node.attr("data-curb-key")) {
+    if (node.attr("data-curb-key") || isWithinStructuredCollection(node)) {
       return;
     }
 
@@ -482,6 +1219,7 @@ function annotateManagedHtmlFile(
       path: file.path,
       title,
       fields,
+      collections: collections.length > 0 ? collections : undefined,
     },
   };
 }

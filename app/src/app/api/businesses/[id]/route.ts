@@ -7,8 +7,8 @@ import { initializeDatabase } from '@/lib/schema';
 import { getDb } from '@/lib/db';
 import { getConfig } from '@/lib/config';
 import { normalizeEmailRecord } from '@/lib/email-record';
+import { hasSiteCms } from '@/lib/generated-site-cms';
 import {
-  includeCmsPack,
   normalizeSiteCapabilityProfile,
 } from '@/lib/site-capabilities';
 import { buildPreviewAdminUrl } from '@/lib/site-preview-access';
@@ -214,10 +214,11 @@ export async function GET(
       updatedAt: deployment.updatedAt,
     }));
 
+    const businessSlug = String(business.slug ?? "");
     const capabilityProfile = normalizedAudits[0]?.capabilityProfile ?? null;
     const previewAdminUrl =
-      capabilityProfile && includeCmsPack(capabilityProfile)
-        ? buildPreviewAdminUrl(previewLink.url, String(business.slug ?? ""))
+      businessSlug && hasSiteCms(businessSlug)
+        ? buildPreviewAdminUrl(previewLink.url, businessSlug)
         : null;
 
     return NextResponse.json({
