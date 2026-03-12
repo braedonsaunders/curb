@@ -99,6 +99,10 @@ async function sendWithResend(
     throw new Error("The form submission did not include any fields.");
   }
 
+  const fromDisplayName = claims.businessName
+    ? `${claims.businessName.replace(/[<>"]/g, "").trim()} via Curb`
+    : "Curb Leads";
+
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -106,7 +110,7 @@ async function sendWithResend(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: fromEmail,
+      from: `${fromDisplayName} <${fromEmail}>`,
       to: [claims.recipientEmail],
       reply_to: findReplyToEmail(submission.fields) ?? undefined,
       subject: buildSharedFormEmailSubject(claims),
@@ -146,4 +150,3 @@ export async function submitSharedFormRequest(
   await verifyTurnstileToken(submission.turnstileToken, remoteIp, config);
   await sendWithResend(submission, config);
 }
-

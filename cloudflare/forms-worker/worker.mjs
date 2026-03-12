@@ -221,6 +221,11 @@ async function sendWithResend(claims, submission, env) {
     throw new Error("Configure Resend before using the form worker.");
   }
 
+  var cleanBusinessName = text(claims.businessName).replace(/[<>"]/g, "").trim();
+  var fromDisplayName = cleanBusinessName
+    ? cleanBusinessName + " via Curb"
+    : "Curb Leads";
+
   var response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -228,7 +233,7 @@ async function sendWithResend(claims, submission, env) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: env.RESEND_FROM_EMAIL,
+      from: fromDisplayName + " <" + env.RESEND_FROM_EMAIL + ">",
       to: [claims.recipientEmail],
       reply_to: findReplyTo(submission.fields) || undefined,
       subject: "New website lead for " + claims.businessName,
@@ -328,4 +333,3 @@ export default {
     }
   },
 };
-

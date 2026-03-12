@@ -227,8 +227,8 @@ const DEFAULT_SETTINGS: SettingsData = {
     siteBaseUrl: "http://localhost:3000/sites",
   },
   deployments: {
-    previewProvider: "vercel",
-    customerProvider: "vercel",
+    previewProvider: "cloudflare-pages",
+    customerProvider: "cloudflare-pages",
     vercel: {
       token: "",
       teamId: "",
@@ -273,9 +273,9 @@ const DEFAULT_SETTINGS: SettingsData = {
 };
 
 const DEPLOYMENT_PROVIDER_LABELS: Record<DeploymentProvider, string> = {
-  vercel: "Vercel",
   "cloudflare-pages": "Cloudflare Pages",
   "ssh-static": "Shared Server",
+  vercel: "Vercel",
 };
 
 const PROVIDER_MODEL_FIELDS = {
@@ -1277,12 +1277,16 @@ export default function SettingsPage() {
               </div>
 
               <div className="grid gap-4 xl:grid-cols-3">
-                <div className="space-y-4 rounded-xl border p-4">
+                <div className="order-3 space-y-4 rounded-xl border p-4">
                   <div className="space-y-1">
-                    <p className="font-medium">Vercel</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium">Vercel</p>
+                      <Badge variant="outline">Optional</Badge>
+                    </div>
                     <p className="text-xs text-muted-foreground">
-                      Best when you want shared preview projects and per-customer
-                      dedicated projects managed fully inside Vercel.
+                      Keep this only if you intentionally want Vercel. Curb now
+                      defaults to Cloudflare Pages for both preview and customer
+                      deployments.
                     </p>
                   </div>
                   <div className="space-y-2">
@@ -1350,9 +1354,12 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="space-y-4 rounded-xl border p-4">
+                <div className="order-1 space-y-4 rounded-xl border p-4">
                   <div className="space-y-1">
-                    <p className="font-medium">Cloudflare Pages</p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium">Cloudflare Pages</p>
+                      <Badge>Default</Badge>
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       Uses direct uploads through a pinned local Wrangler binary
                       and can create dedicated customer projects automatically.
@@ -1462,7 +1469,7 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                <div className="space-y-4 rounded-xl border p-4">
+                <div className="order-2 space-y-4 rounded-xl border p-4">
                   <div className="space-y-1">
                     <p className="font-medium">Shared Server</p>
                     <p className="text-xs text-muted-foreground">
@@ -1798,8 +1805,11 @@ export default function SettingsPage() {
                   <div className="space-y-1">
                     <p className="font-medium">Email Delivery</p>
                     <p className="text-xs text-muted-foreground">
-                      Resend is used to deliver the shared form submission to
-                      the business recipient stored in each site bundle.
+                      Use one verified sender on a Curb-controlled domain.
+                      Curb sends each submission to the site-specific business
+                      recipient and sets reply-to from the visitor when
+                      available. You do not need a separate Resend sender per
+                      client website domain unless you want per-domain branding.
                     </p>
                   </div>
 
@@ -1833,14 +1843,16 @@ export default function SettingsPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="resendFromEmail">From Email</Label>
+                      <Label htmlFor="resendFromEmail">
+                        Platform Sender Email
+                      </Label>
                       <Input
                         id="resendFromEmail"
                         value={settings.forms.resendFromEmail}
                         onChange={(e) =>
                           updateForms("resendFromEmail", e.target.value)
                         }
-                        placeholder="leads@yourdomain.com"
+                        placeholder="forms@your-platform-domain.com"
                       />
                     </div>
                   </div>

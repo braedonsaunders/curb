@@ -4,10 +4,7 @@ import archiver from "archiver";
 import { getDb } from "../db";
 import { isLegacyManagedArtifactPath } from "../legacy-site-artifacts";
 import {
-  includeBookingPack,
   includeCmsPack,
-  includeMembershipPack,
-  includeStorePack,
   normalizeSiteCapabilityProfile,
   SITE_CAPABILITY_MANIFEST_PATH,
   type SiteCapabilityProfile,
@@ -68,40 +65,16 @@ function buildCapabilitySection(profile: SiteCapabilityProfile | null): string {
   if (profile.operatingModel === "static-plus-packs") {
     lines.push("", "Recommended provider-backed stack:");
     lines.push("- Hosting: Cloudflare Pages");
+    lines.push("- Forms: Shared Cloudflare form endpoint with Turnstile and Resend");
+    lines.push("- Sales: Stripe payment links and managed billing");
 
     if (includeCmsPack(profile)) {
-      lines.push(
-        `- CMS: ${
-          profile.cms.provider === "sanity" ? "Sanity" : "Storyblok"
-        }`
-      );
+      lines.push("- CMS: Sanity");
     }
 
-    if (includeStorePack(profile)) {
-      lines.push(
-        `- Store: Shopify (${profile.commerce.productStrategy === "storefront-api" ? "Storefront API" : "Buy Button / checkout link"} model)`
-      );
-    }
-
-    if (includeBookingPack(profile)) {
-      lines.push(
-        `- Booking: ${
-          profile.booking.provider === "cal-com"
-            ? "Cal.com"
-            : "Square Appointments"
-        }`
-      );
-    }
-
-    if (includeMembershipPack(profile)) {
-      lines.push(
-        `- Memberships: ${
-          profile.memberships.provider === "clerk"
-            ? "Clerk"
-            : "Memberstack"
-        }`
-      );
-    }
+    lines.push(
+      "- Advanced workflows: store, booking, and memberships are custom managed add-ons"
+    );
   }
 
   return `${lines.join("\n")}\n`;
@@ -138,7 +111,7 @@ This website was generated or mirrored by Curb for a local business.
    - Edit index.html with any text editor or code editor
    - Replace images in the assets/photos/ directory as needed
    - Update contact information, hours, and other business details
-   - Review assets/curb-site-package.json and handoff/PROVIDER_SETUP.md if this site was marked for external provider packs
+   - Review assets/curb-site-package.json and handoff/PROVIDER_SETUP.md if this site was marked for managed CMS or custom add-on follow-up
 
 ${capabilitySection}## Directory Structure
 

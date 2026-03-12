@@ -408,50 +408,35 @@ function syncManagedProviderActivation(
     };
   }
 
-  if (providerActivation.commerce.status !== "not-needed") {
-    providerActivation.commerce = {
-      ...providerActivation.commerce,
-      lastUpdatedAt: now,
-      notes:
-        providerActivation.commerce.notes ||
-        "Commerce is a managed add-on. Finish product and checkout setup in the external provider before launch.",
-      owner: "curb",
-      status:
-        providerActivation.commerce.status === "live"
-          ? "live"
-          : "in-progress",
-    };
-  }
+  providerActivation.commerce = {
+    ...providerActivation.commerce,
+    lastUpdatedAt: now,
+    notes:
+      "Commerce is no longer part of the standard Curb stack. Scope it as a separate managed upsell if sold.",
+    owner: "curb",
+    provider: "Custom managed add-on",
+    status: "not-needed",
+  };
 
-  if (providerActivation.booking.status !== "not-needed") {
-    providerActivation.booking = {
-      ...providerActivation.booking,
-      lastUpdatedAt: now,
-      notes:
-        providerActivation.booking.notes ||
-        "Booking is sold as a managed add-on. Complete the provider-side availability setup before sending clients to book.",
-      owner: "curb",
-      status:
-        providerActivation.booking.status === "live"
-          ? "live"
-          : "in-progress",
-    };
-  }
+  providerActivation.booking = {
+    ...providerActivation.booking,
+    lastUpdatedAt: now,
+    notes:
+      "Booking is no longer part of the standard Curb stack. Scope it as a separate managed upsell if sold.",
+    owner: "curb",
+    provider: "Custom managed add-on",
+    status: "not-needed",
+  };
 
-  if (providerActivation.memberships.status !== "not-needed") {
-    providerActivation.memberships = {
-      ...providerActivation.memberships,
-      lastUpdatedAt: now,
-      notes:
-        providerActivation.memberships.notes ||
-        "Memberships are managed separately from the brochure launch. Keep this tracked until the access flow is fully wired.",
-      owner: "curb",
-      status:
-        providerActivation.memberships.status === "live"
-          ? "live"
-          : "in-progress",
-    };
-  }
+  providerActivation.memberships = {
+    ...providerActivation.memberships,
+    lastUpdatedAt: now,
+    notes:
+      "Memberships are no longer part of the standard Curb stack. Scope them as a separate managed upsell if sold.",
+    owner: "curb",
+    provider: "Custom managed add-on",
+    status: "not-needed",
+  };
 
   updateBusinessProviderActivation(context.businessId, providerActivation);
   return providerActivation;

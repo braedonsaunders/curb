@@ -217,71 +217,7 @@ function normalizeCmsProvider(value) {
     return "none";
   }
 
-  if (normalized === "sanity") {
-    return "sanity";
-  }
-
-  return "storyblok";
-}
-
-function normalizeCommerceProvider(value) {
-  const normalized = text(value).toLowerCase();
-
-  if (!normalized || normalized === "none") {
-    return "none";
-  }
-
-  return "shopify";
-}
-
-function normalizeProductStrategy(value) {
-  const normalized = text(value).toLowerCase();
-
-  if (normalized === "storefront-api") {
-    return "storefront-api";
-  }
-
-  if (!normalized || normalized === "none") {
-    return "none";
-  }
-
-  return "buy-button";
-}
-
-function normalizeBookingProvider(value) {
-  const normalized = text(value).toLowerCase();
-
-  if (
-    normalized === "cal-com" ||
-    normalized === "cal.com" ||
-    normalized === "cal"
-  ) {
-    return "cal-com";
-  }
-
-  if (
-    normalized === "square-appointments" ||
-    normalized === "square appointments" ||
-    normalized === "square"
-  ) {
-    return "square-appointments";
-  }
-
-  return "none";
-}
-
-function normalizeMembershipProvider(value) {
-  const normalized = text(value).toLowerCase();
-
-  if (normalized === "clerk") {
-    return "clerk";
-  }
-
-  if (normalized === "memberstack") {
-    return "memberstack";
-  }
-
-  return "none";
+  return "sanity";
 }
 
 function uniqueStrings(values) {
@@ -294,54 +230,34 @@ function buildPackageSummary(profile) {
   if (profile.operatingModel === "custom-app") {
     return [
       "Keep the public marketing site static on Cloudflare Pages.",
-      "Do not fake authenticated dashboards, portals, or member flows in the brochure bundle.",
-      profile.memberships.provider === "clerk"
-        ? "If the advanced customer flow moves forward, run it as a separate app with Clerk-managed auth."
-        : "Scope the advanced customer flow as a separate app or specialist integration.",
+      "Use the shared Cloudflare form endpoint and Stripe for lead capture and payments.",
+      "Do not fake storefronts, booking flows, dashboards, portals, or member areas inside the brochure bundle.",
+      "Treat advanced workflows as custom managed add-ons instead of standard Curb packs.",
     ].join(" ");
   }
 
   if (profile.operatingModel === "static-only") {
     return [
       "Keep the generated site fully static on Cloudflare Pages.",
-      "Do not attach a fake admin, login, cart, or dashboard inside the site bundle.",
+      "Use the shared Cloudflare form endpoint and Stripe sales flow only when needed.",
+      "Do not attach a fake admin, login, cart, booking flow, or dashboard inside the site bundle.",
     ].join(" ");
   }
 
-  const lines = ["Keep the public site static on Cloudflare Pages."];
+  const lines = [
+    "Keep the public site static on Cloudflare Pages.",
+    "Use the shared Cloudflare form endpoint and Stripe for the default operating model.",
+  ];
 
   if (profile.cms.need !== "none" && profile.cms.provider !== "none") {
     lines.push(
-      `Use ${profile.cms.provider === "sanity" ? "Sanity" : "Storyblok"} as the end-user content admin instead of an in-site /admin portal.`
+      "Use Sanity as the only standard external content admin instead of an in-site /admin portal."
     );
   }
 
-  if (profile.commerce.need !== "none" && profile.commerce.provider !== "none") {
-    lines.push(
-      profile.commerce.productStrategy === "storefront-api"
-        ? "Use Shopify Storefront API after the sale instead of a generated in-site store runtime."
-        : "Use Shopify Buy Button embeds or checkout links after the sale instead of a generated in-site store runtime."
-    );
-  }
-
-  if (profile.booking.need !== "none" && profile.booking.provider !== "none") {
-    lines.push(
-      `Use ${
-        profile.booking.provider === "cal-com" ? "Cal.com" : "Square Appointments"
-      } for booking and appointment management.`
-    );
-  }
-
-  if (
-    profile.memberships.need !== "none" &&
-    profile.memberships.provider !== "none"
-  ) {
-    lines.push(
-      `Use ${
-        profile.memberships.provider === "clerk" ? "Clerk" : "Memberstack"
-      } for member access instead of generating a custom login flow.`
-    );
-  }
+  lines.push(
+    "Treat store, booking, and membership requests as custom managed upsells, not default provider packs."
+  );
 
   return lines.join(" ");
 }
@@ -352,12 +268,6 @@ function normalizeCapabilityProfile(rawProfile, siteConfig) {
     Boolean(siteConfig?.cms?.enabled) ||
     text(source.cms?.provider) !== "none" ||
     text(source.cms?.need) !== "none";
-  const legacyCommerceEnabled =
-    Boolean(siteConfig?.commerce?.enabled) ||
-    text(source.commerce?.provider) !== "none" ||
-    text(source.commerce?.need) !== "none" ||
-    text(siteConfig?.commerce?.shopPath);
-
   const cmsProvider = legacyCmsEnabled
     ? normalizeCmsProvider(source.cms?.provider || siteConfig?.cms?.provider)
     : "none";
@@ -368,37 +278,10 @@ function normalizeCapabilityProfile(rawProfile, siteConfig) {
     Array.isArray(source.cms?.editableAreas) ? source.cms.editableAreas : []
   );
 
-  const commerceProvider = legacyCommerceEnabled
-    ? normalizeCommerceProvider(
-        source.commerce?.provider || siteConfig?.commerce?.provider
-      )
-    : "none";
-  const commerceNeed = legacyCommerceEnabled
-    ? normalizeNeed(source.commerce?.need, "recommended")
-    : "none";
-  const productStrategy = legacyCommerceEnabled
-    ? normalizeProductStrategy(source.commerce?.productStrategy || "buy-button")
-    : "none";
-
-  const bookingProvider = normalizeBookingProvider(source.booking?.provider);
-  const bookingNeed =
-    bookingProvider === "none" ? "none" : normalizeNeed(source.booking?.need, "recommended");
-
-  const membershipsProvider = normalizeMembershipProvider(
-    source.memberships?.provider
-  );
-  const membershipsNeed =
-    membershipsProvider === "none"
-      ? "none"
-      : normalizeNeed(source.memberships?.need, "recommended");
-
   const operatingModel = normalizeOperatingModel(
     source.operatingModel,
-    membershipsNeed !== "none",
-    cmsNeed !== "none" ||
-      commerceNeed !== "none" ||
-      bookingNeed !== "none" ||
-      membershipsNeed !== "none"
+    false,
+    cmsNeed !== "none"
   );
 
   const reasons = uniqueStrings(
@@ -411,9 +294,13 @@ function normalizeCapabilityProfile(rawProfile, siteConfig) {
     );
   }
 
-  if (commerceNeed !== "none") {
+  if (
+    text(source.commerce?.need) !== "none" ||
+    text(source.booking?.need) !== "none" ||
+    text(source.memberships?.need) !== "none"
+  ) {
     reasons.push(
-      "Commerce should move to Shopify after the sale instead of relying on the retired generated store pack."
+      "Advanced workflows are now custom managed add-ons instead of standard provider packs."
     );
   }
 
@@ -432,17 +319,17 @@ function normalizeCapabilityProfile(rawProfile, siteConfig) {
             : ["homepage", "contact"],
     },
     commerce: {
-      need: commerceNeed,
-      provider: commerceNeed === "none" ? "none" : commerceProvider,
-      productStrategy: commerceNeed === "none" ? "none" : productStrategy,
+      need: "none",
+      provider: "none",
+      productStrategy: "none",
     },
     booking: {
-      need: bookingNeed,
-      provider: bookingNeed === "none" ? "none" : bookingProvider,
+      need: "none",
+      provider: "none",
     },
     memberships: {
-      need: membershipsNeed,
-      provider: membershipsNeed === "none" ? "none" : membershipsProvider,
+      need: "none",
+      provider: "none",
     },
     reasons,
     packageSummary: buildPackageSummary({
@@ -452,17 +339,17 @@ function normalizeCapabilityProfile(rawProfile, siteConfig) {
         provider: cmsNeed === "none" ? "none" : cmsProvider,
       },
       commerce: {
-        need: commerceNeed,
-        provider: commerceNeed === "none" ? "none" : commerceProvider,
-        productStrategy: commerceNeed === "none" ? "none" : productStrategy,
+        need: "none",
+        provider: "none",
+        productStrategy: "none",
       },
       booking: {
-        need: bookingNeed,
-        provider: bookingNeed === "none" ? "none" : bookingProvider,
+        need: "none",
+        provider: "none",
       },
       memberships: {
-        need: membershipsNeed,
-        provider: membershipsNeed === "none" ? "none" : membershipsProvider,
+        need: "none",
+        provider: "none",
       },
     }),
   };
@@ -472,20 +359,6 @@ function includeCmsPack(profile) {
   return profile.cms.need !== "none" && profile.cms.provider !== "none";
 }
 
-function includeStorePack(profile) {
-  return profile.commerce.need !== "none" && profile.commerce.provider !== "none";
-}
-
-function includeBookingPack(profile) {
-  return profile.booking.need !== "none" && profile.booking.provider !== "none";
-}
-
-function includeMembershipPack(profile) {
-  return (
-    profile.memberships.need !== "none" && profile.memberships.provider !== "none"
-  );
-}
-
 function buildRecommendedPacks(profile) {
   return {
     hosting: {
@@ -493,21 +366,12 @@ function buildRecommendedPacks(profile) {
     },
     cms: {
       enabled: includeCmsPack(profile),
-      provider: profile.cms.provider,
+      provider: includeCmsPack(profile) ? "sanity" : profile.cms.provider,
       editableAreas: profile.cms.editableAreas,
     },
-    commerce: {
-      enabled: includeStorePack(profile),
-      provider: profile.commerce.provider,
-      strategy: profile.commerce.productStrategy,
-    },
-    booking: {
-      enabled: includeBookingPack(profile),
-      provider: profile.booking.provider,
-    },
-    memberships: {
-      enabled: includeMembershipPack(profile),
-      provider: profile.memberships.provider,
+    managedAddOns: {
+      customOnly: ["commerce", "booking", "memberships"],
+      note: "Advanced workflows are sold separately and are not part of the standard Curb stack.",
     },
   };
 }
@@ -588,30 +452,12 @@ function buildProviderPackSummaryLines(profile) {
   ];
 
   if (includeCmsPack(profile)) {
-    lines.push(
-      `- CMS: ${profile.cms.provider === "sanity" ? "Sanity" : "Storyblok"}`
-    );
+    lines.push("- CMS: Sanity");
   }
 
-  if (includeStorePack(profile)) {
-    lines.push("- Store admin: Shopify");
-  }
-
-  if (includeBookingPack(profile)) {
-    lines.push(
-      `- Booking: ${
-        profile.booking.provider === "cal-com" ? "Cal.com" : "Square Appointments"
-      }`
-    );
-  }
-
-  if (includeMembershipPack(profile)) {
-    lines.push(
-      `- Memberships: ${
-        profile.memberships.provider === "clerk" ? "Clerk" : "Memberstack"
-      }`
-    );
-  }
+  lines.push(
+    "- Advanced workflows: store, booking, and memberships are custom managed add-ons"
+  );
 
   return lines;
 }
@@ -639,7 +485,8 @@ function buildProviderHandoffReadme(businessName, profile) {
     "",
     "1. Deploy the public site to Cloudflare Pages.",
     "2. Keep the outreach preview static and believable.",
-    "3. After the sale, activate only the provider packs this business actually needs.",
+    "3. After the sale, activate only the standard stack pieces you actually sold.",
+    "4. Scope store, booking, and membership requests as separate managed add-ons.",
     "",
   ].join("\n");
 }
@@ -648,7 +495,7 @@ function buildProviderSetupGuide(profile) {
   const lines = [
     "# Provider Activation Checklist",
     "",
-    "Use this after the customer buys. The public site stays static; owner workflows live in provider-managed back offices.",
+    "Use this after the customer buys. The public site stays static, and the standard stack stays narrow: Cloudflare, shared forms, Stripe, and optional Sanity.",
     "",
     "## Base",
     "",
@@ -663,57 +510,18 @@ function buildProviderSetupGuide(profile) {
       "",
       "## CMS",
       "",
-      profile.cms.provider === "sanity"
-        ? "1. Create a Sanity project owned by the customer or your agency workspace."
-        : "1. Create a Storyblok space owned by the customer or your agency workspace.",
+      "1. Create a Sanity project owned by the customer or your agency workspace.",
       "2. Model the editable sections listed in `assets/curb-site-package.json`.",
       "3. Connect preview and publishing workflows to the static site.",
       "4. Train the customer in the provider UI instead of a custom /admin portal."
     );
   }
 
-  if (includeStorePack(profile)) {
-    lines.push(
-      "",
-      "## Store",
-      "",
-      "1. Create a Shopify store for the customer.",
-      profile.commerce.productStrategy === "storefront-api"
-        ? "2. Connect the generated storefront to Shopify Storefront API."
-        : "2. Start with Shopify Buy Button embeds or checkout links for the first launch.",
-      "3. Manage products, pricing, inventory, and orders inside Shopify admin."
-    );
-  }
-
-  if (includeBookingPack(profile)) {
-    lines.push(
-      "",
-      "## Booking",
-      "",
-      profile.booking.provider === "cal-com"
-        ? "1. Create a Cal.com account and embed the booking flow on the relevant pages."
-        : "1. Create a Square Appointments account and embed the booking flow on the relevant pages.",
-      "2. Keep scheduling, staff availability, and confirmations inside the booking provider."
-    );
-  }
-
-  if (includeMembershipPack(profile)) {
-    lines.push(
-      "",
-      "## Memberships",
-      "",
-      profile.memberships.provider === "clerk"
-        ? "1. Build the authenticated flow as a separate app and use Clerk for auth."
-        : "1. Add Memberstack only if a light member area is genuinely required after the sale.",
-      "2. Do not simulate member dashboards in the static marketing bundle."
-    );
-  }
-
   lines.push(
     "",
-    "## Rule",
+    "## Custom Add-Ons",
     "",
-    "If a requested feature needs real app logic, scope it as a separate build instead of extending the static site with fake UI."
+    "If the customer wants ecommerce, booking, memberships, or other app-like behavior, sell and scope it as a separate managed add-on instead of extending the static site with fake UI."
   );
 
   return `${lines.join("\n")}\n`;
@@ -793,11 +601,11 @@ function rewriteLegacyHtml(content) {
   );
   next = next.replace(
     /Products are managed from the built-in owner portal\. Each item can point directly to a checkout link, so the public storefront stays static and cheap to host\./gi,
-    "This is a static storefront preview. Activate Shopify after the sale to publish products, pricing, and checkout from a real store admin."
+    "This is a static storefront preview. If ecommerce is sold later, scope it as a separate managed add-on instead of restoring the retired in-site store runtime."
   );
   next = next.replace(
     /No live products have been published yet\. Add products in the owner portal and they will appear here automatically\./gi,
-    "This preview does not ship with a live in-site catalog. Activate Shopify after the sale to publish products and checkout."
+    "This preview does not ship with a live in-site catalog. Treat ecommerce as a custom managed add-on if the client later needs it."
   );
 
   return next;

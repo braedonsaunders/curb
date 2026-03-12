@@ -28,10 +28,7 @@ import { captureWebsiteScreenshot } from "../website-screenshot";
 import {
   applySiteCapabilityPackOverride,
   buildSiteCapabilityManifest,
-  includeBookingPack,
   includeCmsPack,
-  includeMembershipPack,
-  includeStorePack,
   normalizeSiteCapabilityProfile,
   SITE_CAPABILITY_MANIFEST_PATH,
   type SiteCapabilityInferenceContext,
@@ -2004,21 +2001,14 @@ function buildPortableContactConfig(
       },
       cms: {
         enabled: includeCmsPack(siteCapabilityProfile),
-        provider: siteCapabilityProfile.cms.provider,
+        provider: includeCmsPack(siteCapabilityProfile)
+          ? "sanity"
+          : siteCapabilityProfile.cms.provider,
         editableAreas: siteCapabilityProfile.cms.editableAreas,
       },
-      commerce: {
-        enabled: includeStorePack(siteCapabilityProfile),
-        provider: siteCapabilityProfile.commerce.provider,
-        strategy: siteCapabilityProfile.commerce.productStrategy,
-      },
-      booking: {
-        enabled: includeBookingPack(siteCapabilityProfile),
-        provider: siteCapabilityProfile.booking.provider,
-      },
-      memberships: {
-        enabled: includeMembershipPack(siteCapabilityProfile),
-        provider: siteCapabilityProfile.memberships.provider,
+      managedAddOns: {
+        customOnly: ["commerce", "booking", "memberships"],
+        note: "Advanced workflows are sold separately and are not part of the standard Curb stack.",
       },
     },
   };
@@ -2039,40 +2029,12 @@ function buildProviderPackSummaryLines(
   ];
 
   if (includeCmsPack(siteCapabilityProfile)) {
-    lines.push(
-      `- CMS: ${
-        siteCapabilityProfile.cms.provider === "sanity" ? "Sanity" : "Storyblok"
-      }`
-    );
+    lines.push("- CMS: Sanity");
   }
 
-  if (includeStorePack(siteCapabilityProfile)) {
-    lines.push("- Store admin: Shopify");
-  }
-
-  if (includeBookingPack(siteCapabilityProfile)) {
-    lines.push(
-      `- Booking: ${
-        siteCapabilityProfile.booking.provider === "cal-com"
-          ? "Cal.com"
-          : "Square Appointments"
-      }`
-    );
-  }
-
-  if (includeMembershipPack(siteCapabilityProfile)) {
-    lines.push(
-      `- Memberships: ${
-        siteCapabilityProfile.memberships.provider === "clerk"
-          ? "Clerk"
-          : "Memberstack"
-      }`
-    );
-  }
-
-  if (lines.length === 1) {
-    lines.push("- No external admin packs are recommended for this site.");
-  }
+  lines.push(
+    "- Advanced workflows: store, booking, and memberships are custom managed add-ons"
+  );
 
   return lines;
 }
@@ -2103,7 +2065,8 @@ function buildProviderHandoffReadme(
     "",
     "1. Deploy the public site to Cloudflare Pages.",
     "2. Keep the outreach preview static and believable.",
-    "3. After the sale, activate only the provider packs this business actually needs.",
+    "3. After the sale, activate only the standard stack pieces you actually sold.",
+    "4. Scope store, booking, and membership requests as separate managed add-ons.",
     "",
   ].join("\n");
 }
@@ -2114,7 +2077,7 @@ function buildProviderSetupGuide(
   const lines = [
     "# Provider Activation Checklist",
     "",
-    "Use this after the customer buys. The public site stays static; owner workflows live in provider-managed back offices.",
+    "Use this after the customer buys. The public site stays static, and the standard stack stays narrow: Cloudflare, shared forms, Stripe, and optional Sanity.",
     "",
     "## Base",
     "",
@@ -2129,57 +2092,18 @@ function buildProviderSetupGuide(
       "",
       "## CMS",
       "",
-      siteCapabilityProfile.cms.provider === "sanity"
-        ? "1. Create a Sanity project owned by the customer or your agency workspace."
-        : "1. Create a Storyblok space owned by the customer or your agency workspace.",
+      "1. Create a Sanity project owned by the customer or your agency workspace.",
       "2. Model the editable sections listed in `assets/curb-site-package.json`.",
       "3. Connect preview and publishing workflows to the static site.",
       "4. Train the customer in the provider UI instead of a custom /admin portal."
     );
   }
 
-  if (includeStorePack(siteCapabilityProfile)) {
-    lines.push(
-      "",
-      "## Store",
-      "",
-      "1. Create a Shopify store for the customer.",
-      siteCapabilityProfile.commerce.productStrategy === "storefront-api"
-        ? "2. Connect the generated storefront to Shopify Storefront API."
-        : "2. Start with Shopify Buy Button embeds or checkout links for the first launch.",
-      "3. Manage products, pricing, inventory, and orders inside Shopify admin."
-    );
-  }
-
-  if (includeBookingPack(siteCapabilityProfile)) {
-    lines.push(
-      "",
-      "## Booking",
-      "",
-      siteCapabilityProfile.booking.provider === "cal-com"
-        ? "1. Create a Cal.com account and embed the booking flow on the relevant pages."
-        : "1. Create a Square Appointments account and embed the booking flow on the relevant pages.",
-      "2. Keep scheduling, staff availability, and confirmations inside the booking provider."
-    );
-  }
-
-  if (includeMembershipPack(siteCapabilityProfile)) {
-    lines.push(
-      "",
-      "## Memberships",
-      "",
-      siteCapabilityProfile.memberships.provider === "clerk"
-        ? "1. Build the authenticated flow as a separate app and use Clerk for auth."
-        : "1. Add Memberstack only if a light member area is genuinely required after the sale.",
-      "2. Do not simulate member dashboards in the static marketing bundle."
-    );
-  }
-
   lines.push(
     "",
-    "## Rule",
+    "## Custom Add-Ons",
     "",
-    "If a requested feature needs real app logic, scope it as a separate build instead of extending the static site with fake UI."
+    "If the customer wants ecommerce, booking, memberships, or other app-like behavior, sell and scope it as a separate managed add-on instead of extending the static site with fake UI."
   );
 
   return `${lines.join("\n")}\n`;

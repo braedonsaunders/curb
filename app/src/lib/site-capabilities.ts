@@ -146,16 +146,6 @@ const BOOKING_CATEGORY_KEYWORDS = [
   "yoga",
 ];
 
-const CAL_COM_CATEGORY_KEYWORDS = [
-  "agency",
-  "attorney",
-  "coach",
-  "consultant",
-  "lawyer",
-  "photographer",
-  "studio",
-];
-
 const MEMBERSHIP_PAGE_HINTS = [
   "account",
   "community",
@@ -267,7 +257,7 @@ function normalizeCmsProvider(
   }
 
   if (normalized === "storyblok") {
-    return "storyblok";
+    return "sanity";
   }
 
   if (normalized === "sanity") {
@@ -283,23 +273,7 @@ function normalizeCmsProvider(
     normalized === "firebase auth firestore" ||
     normalized === "firecms"
   ) {
-    return "storyblok";
-  }
-
-  return null;
-}
-
-function normalizeCommerceProvider(
-  value: unknown
-): CommerceProviderRecommendation | null {
-  const managedProvider = normalizeManagedCommerceProvider(value);
-  if (managedProvider) {
-    return managedProvider;
-  }
-
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (normalized === "none" || !normalized) {
-    return "none";
+    return "sanity";
   }
 
   return null;
@@ -334,86 +308,6 @@ export function resolveStoreCommerceProvider(
   return "shopify";
 }
 
-function normalizeProductStrategy(
-  value: unknown
-): CommerceProductStrategy | null {
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (
-    normalized === "none" ||
-    normalized === "buy-button" ||
-    normalized === "storefront-api"
-  ) {
-    return normalized;
-  }
-
-  if (
-    normalized === "payment-links" ||
-    normalized === "stripe" ||
-    normalized === "stripe payment links" ||
-    normalized === "shopify buy button" ||
-    normalized === "shopify-buy-button" ||
-    normalized === "snipcart-cart"
-  ) {
-    return "buy-button";
-  }
-
-  if (
-    normalized === "storefront" ||
-    normalized === "storefront api" ||
-    normalized === "storefront-api"
-  ) {
-    return "storefront-api";
-  }
-
-  return null;
-}
-
-function normalizeBookingProvider(
-  value: unknown
-): BookingProviderRecommendation | null {
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (normalized === "none" || !normalized) {
-    return "none";
-  }
-
-  if (
-    normalized === "square" ||
-    normalized === "square appointments" ||
-    normalized === "square-appointments"
-  ) {
-    return "square-appointments";
-  }
-
-  if (
-    normalized === "cal" ||
-    normalized === "cal.com" ||
-    normalized === "cal-com"
-  ) {
-    return "cal-com";
-  }
-
-  return null;
-}
-
-function normalizeMembershipProvider(
-  value: unknown
-): MembershipProviderRecommendation | null {
-  const normalized = String(value ?? "").trim().toLowerCase();
-  if (normalized === "none" || !normalized) {
-    return "none";
-  }
-
-  if (normalized === "memberstack") {
-    return "memberstack";
-  }
-
-  if (normalized === "clerk") {
-    return "clerk";
-  }
-
-  return null;
-}
-
 function withNeedStrength(
   current: SiteCapabilityNeed,
   next: SiteCapabilityNeed
@@ -428,13 +322,9 @@ function withNeedStrength(
   return order.indexOf(next) > order.indexOf(current) ? next : current;
 }
 
-function buildEditableAreas(
-  pageSlugs: string[],
-  wantsCms: boolean,
-  wantsStore: boolean
-): string[] {
+function buildEditableAreas(pageSlugs: string[], wantsCms: boolean): string[] {
   if (!wantsCms) {
-    return wantsStore ? ["products"] : [];
+    return [];
   }
 
   const areas = new Set<string>(["homepage", "contact"]);
@@ -459,30 +349,21 @@ function buildEditableAreas(
     areas.add("menu");
   }
 
-  if (wantsStore) {
-    areas.add("products");
-  }
-
   return Array.from(areas);
 }
 
 function buildDefaultEditableAreasForPack(
   wantsCms: boolean,
-  wantsStore: boolean,
   existingAreas: string[]
 ): string[] {
   if (!wantsCms) {
-    return wantsStore ? ["products"] : [];
+    return [];
   }
 
   const areas = new Set<string>(existingAreas.filter(Boolean));
   if (areas.size === 0) {
     areas.add("homepage");
     areas.add("contact");
-  }
-
-  if (wantsStore) {
-    areas.add("products");
   }
 
   return Array.from(areas);
@@ -492,21 +373,9 @@ function selectCmsProvider(
   pageSlugs: string[],
   sourcePageEstimate: number
 ): CmsProviderRecommendation {
-  const hasEditorialSignals = pageSlugs.some((slug) =>
-    /blog|news|journal|resource|resources|insight|insights/.test(slug)
-  );
-
-  if (hasEditorialSignals && sourcePageEstimate >= 12) {
-    return "sanity";
-  }
-
-  return "storyblok";
-}
-
-function selectBookingProvider(category: string): BookingProviderRecommendation {
-  return includesAny(category, CAL_COM_CATEGORY_KEYWORDS)
-    ? "cal-com"
-    : "square-appointments";
+  void pageSlugs;
+  void sourcePageEstimate;
+  return "sanity";
 }
 
 function hasMembershipPageSignal(pageSlugs: string[]): boolean {
@@ -519,55 +388,34 @@ function buildPackageSummary(profile: SiteCapabilityProfile): string {
   if (profile.operatingModel === "custom-app") {
     return [
       "Keep the public marketing site static on Cloudflare Pages.",
-      "Do not fake authenticated dashboards, portals, or member flows in the brochure bundle.",
-      profile.memberships.provider === "clerk"
-        ? "If the advanced customer flow moves forward, run it as a separate app with Clerk-managed auth."
-        : "Scope the advanced customer flow as a separate app or specialist integration.",
+      "Use the shared Cloudflare form endpoint and Stripe for lead capture and payments.",
+      "Do not fake storefronts, booking flows, dashboards, portals, or member areas inside the brochure bundle.",
+      "Treat advanced workflows as custom managed add-ons instead of standard Curb packs.",
     ].join(" ");
   }
 
   if (profile.operatingModel === "static-only") {
     return [
       "Keep the generated site fully static on Cloudflare Pages.",
-      "Do not attach a fake admin, login, cart, or dashboard inside the site bundle.",
+      "Use the shared Cloudflare form endpoint and Stripe sales flow only when needed.",
+      "Do not attach a fake admin, login, cart, booking flow, or dashboard inside the site bundle.",
     ].join(" ");
   }
 
-  const packLines = ["Keep the public site static on Cloudflare Pages."];
+  const packLines = [
+    "Keep the public site static on Cloudflare Pages.",
+    "Use the shared Cloudflare form endpoint and Stripe for the default operating model.",
+  ];
 
   if (includeCmsPack(profile)) {
     packLines.push(
-      `Use ${profile.cms.provider === "sanity" ? "Sanity" : "Storyblok"} as the end-user content admin instead of an in-site /admin portal.`
+      "Use Sanity as the only standard external content admin instead of an in-site /admin portal."
     );
   }
 
-  if (includeStorePack(profile)) {
-    packLines.push(
-      `Use Shopify as the end-user store admin and ${
-        profile.commerce.productStrategy === "storefront-api"
-          ? "wire the generated site to Shopify Storefront API after the sale."
-          : "start with Shopify Buy Button embeds or checkout links after the sale."
-      }`
-    );
-  }
-
-  if (includeBookingPack(profile)) {
-    packLines.push(
-      `Use ${
-        profile.booking.provider === "cal-com"
-          ? "Cal.com"
-          : "Square Appointments"
-      } for booking and appointment management.`
-    );
-  }
-
-  if (includeMembershipPack(profile)) {
-    packLines.push(
-      `Use ${
-        profile.memberships.provider === "clerk" ? "Clerk" : "Memberstack"
-      } for member access instead of generating a custom login flow.`
-    );
-  }
+  packLines.push(
+    "Treat store, booking, and membership requests as custom managed upsells, not default provider packs."
+  );
 
   return packLines.join(" ");
 }
@@ -639,32 +487,29 @@ export function inferSiteCapabilityProfile(
 
   if (hasStore) {
     commerceNeed = "required";
+    operatingModel = "custom-app";
+    confidence = "high";
     reasons.push(
-      "The current site appears to sell products online, so the replacement should point to a real store admin instead of a fake cart."
+      "The current site appears to sell products online, so ecommerce should be scoped as a custom managed add-on instead of a default pack."
     );
   } else if (hasCommerceCategory) {
-    commerceNeed = sourcePageEstimate >= 4 ? "recommended" : "optional";
+    commerceNeed = sourcePageEstimate >= 4 ? "optional" : "none";
     reasons.push(
-      "The business looks retail-oriented, so a Shopify-backed catalog or store pack is likely useful after the sale."
+      "The business looks retail-oriented, but the default Curb stack stays brochure-first unless a custom commerce upsell is explicitly sold."
     );
   }
 
   if (hasBooking) {
     bookingNeed = "required";
+    operatingModel = "custom-app";
+    confidence = "high";
     reasons.push(
-      "The current site already signals booking behavior, so the replacement should hook into a real booking system."
+      "The current site already signals booking behavior, so scheduling should be handled as a custom managed workflow instead of a default pack."
     );
   } else if (hasBookingCategory) {
     bookingNeed = "optional";
     reasons.push(
-      "This service category often benefits from appointment booking, even if the first outreach preview can stay brochure-first."
-    );
-  }
-
-  if (commerceNeed === "required" || commerceNeed === "recommended") {
-    cmsNeed = withNeedStrength(cmsNeed, "recommended");
-    reasons.push(
-      "If products, collections, or merchandising change over time, an external content admin keeps the static site handoff clean."
+      "This service category may justify a managed booking upsell later, but booking is not part of the default stack."
     );
   }
 
@@ -689,21 +534,11 @@ export function inferSiteCapabilityProfile(
     );
   }
 
-  if (
-    operatingModel !== "custom-app" &&
-    (cmsNeed !== "none" ||
-      commerceNeed !== "none" ||
-      bookingNeed !== "none" ||
-      membershipsNeed !== "none")
-  ) {
+  if (operatingModel !== "custom-app" && cmsNeed !== "none") {
     operatingModel = "static-plus-packs";
   }
 
-  if (
-    operatingModel !== "custom-app" &&
-    commerceNeed === "required" &&
-    sourcePageEstimate >= 16
-  ) {
+  if (operatingModel !== "custom-app" && cmsNeed === "required") {
     confidence = "high";
   }
 
@@ -717,35 +552,20 @@ export function inferSiteCapabilityProfile(
         cmsNeed === "none"
           ? "none"
           : selectCmsProvider(pageSlugs, sourcePageEstimate),
-      editableAreas: buildEditableAreas(
-        pageSlugs,
-        cmsNeed !== "none",
-        commerceNeed !== "none"
-      ),
+      editableAreas: buildEditableAreas(pageSlugs, cmsNeed !== "none"),
     },
     commerce: {
       need: commerceNeed,
-      provider: commerceNeed === "none" ? "none" : "shopify",
-      productStrategy:
-        commerceNeed === "none"
-          ? "none"
-          : sourcePageEstimate >= 16
-            ? "storefront-api"
-            : "buy-button",
+      provider: "none",
+      productStrategy: "none",
     },
     booking: {
       need: bookingNeed,
-      provider:
-        bookingNeed === "none" ? "none" : selectBookingProvider(category),
+      provider: "none",
     },
     memberships: {
       need: membershipsNeed,
-      provider:
-        membershipsNeed === "none"
-          ? "none"
-          : operatingModel === "custom-app"
-            ? "clerk"
-            : "memberstack",
+      provider: "none",
     },
     reasons: dedupeStrings(reasons).slice(0, 7),
     packageSummary: "",
@@ -780,18 +600,6 @@ export function normalizeSiteCapabilityProfile(
     source.cms && typeof source.cms === "object"
       ? (source.cms as Record<string, unknown>)
       : null;
-  const commerceSource =
-    source.commerce && typeof source.commerce === "object"
-      ? (source.commerce as Record<string, unknown>)
-      : null;
-  const bookingSource =
-    source.booking && typeof source.booking === "object"
-      ? (source.booking as Record<string, unknown>)
-      : null;
-  const membershipsSource =
-    source.memberships && typeof source.memberships === "object"
-      ? (source.memberships as Record<string, unknown>)
-      : null;
 
   const candidate: SiteCapabilityProfile = {
     profileVersion: 2,
@@ -809,26 +617,17 @@ export function normalizeSiteCapabilityProfile(
       ),
     },
     commerce: {
-      need: normalizeNeed(commerceSource?.need) ?? fallback.commerce.need,
-      provider:
-        normalizeCommerceProvider(commerceSource?.provider) ??
-        fallback.commerce.provider,
-      productStrategy:
-        normalizeProductStrategy(commerceSource?.productStrategy) ??
-        fallback.commerce.productStrategy,
+      need: fallback.commerce.need,
+      provider: fallback.commerce.provider,
+      productStrategy: fallback.commerce.productStrategy,
     },
     booking: {
-      need: normalizeNeed(bookingSource?.need) ?? fallback.booking.need,
-      provider:
-        normalizeBookingProvider(bookingSource?.provider) ??
-        fallback.booking.provider,
+      need: fallback.booking.need,
+      provider: fallback.booking.provider,
     },
     memberships: {
-      need:
-        normalizeNeed(membershipsSource?.need) ?? fallback.memberships.need,
-      provider:
-        normalizeMembershipProvider(membershipsSource?.provider) ??
-        fallback.memberships.provider,
+      need: fallback.memberships.need,
+      provider: fallback.memberships.provider,
     },
     reasons: dedupeStrings(
       Array.isArray(source.reasons)
@@ -838,50 +637,19 @@ export function normalizeSiteCapabilityProfile(
     packageSummary: "",
   };
 
+  candidate.operatingModel =
+    fallback.operatingModel === "custom-app"
+      ? "custom-app"
+      : candidate.cms.need !== "none"
+        ? "static-plus-packs"
+        : "static-only";
+
   if (fallback.operatingModel === "custom-app") {
-    candidate.operatingModel = "custom-app";
-    candidate.memberships = fallback.memberships;
     candidate.confidence = "high";
-  } else if (
-    candidate.operatingModel === "static-only" &&
-    (candidate.cms.need !== "none" ||
-      candidate.commerce.need !== "none" ||
-      candidate.booking.need !== "none" ||
-      candidate.memberships.need !== "none")
-  ) {
-    candidate.operatingModel = "static-plus-packs";
   }
 
   if (candidate.cms.need !== "none" && candidate.cms.provider === "none") {
     candidate.cms.provider = fallback.cms.provider;
-  }
-
-  if (
-    candidate.commerce.need !== "none" &&
-    candidate.commerce.provider === "none"
-  ) {
-    candidate.commerce.provider = "shopify";
-  }
-
-  if (
-    candidate.commerce.need !== "none" &&
-    candidate.commerce.productStrategy === "none"
-  ) {
-    candidate.commerce.productStrategy = fallback.commerce.productStrategy;
-  }
-
-  if (
-    candidate.booking.need !== "none" &&
-    candidate.booking.provider === "none"
-  ) {
-    candidate.booking.provider = fallback.booking.provider;
-  }
-
-  if (
-    candidate.memberships.need !== "none" &&
-    candidate.memberships.provider === "none"
-  ) {
-    candidate.memberships.provider = fallback.memberships.provider;
   }
 
   if (candidate.reasons.length === 0) {
@@ -909,10 +677,6 @@ export function applySiteCapabilityPackOverride(
     override.includeCmsPack !== undefined
       ? override.includeCmsPack
       : includeCmsPack(profile);
-  const includeStore =
-    override.includeStorePack !== undefined
-      ? override.includeStorePack
-      : includeStorePack(profile);
 
   const nextProfile: SiteCapabilityProfile = {
     ...profile,
@@ -926,10 +690,9 @@ export function applySiteCapabilityPackOverride(
   nextProfile.cms = includeCms
     ? {
         need: profile.cms.need === "none" ? "recommended" : profile.cms.need,
-        provider: profile.cms.provider === "none" ? "storyblok" : profile.cms.provider,
+        provider: "sanity",
         editableAreas: buildDefaultEditableAreasForPack(
           true,
-          includeStore,
           profile.cms.editableAreas
         ),
       }
@@ -939,32 +702,22 @@ export function applySiteCapabilityPackOverride(
         editableAreas: [],
       };
 
-  nextProfile.commerce = includeStore
-    ? {
-        need:
-          profile.commerce.need === "none"
-            ? "recommended"
-            : profile.commerce.need,
-        provider:
-          normalizeManagedCommerceProvider(
-            override.commerceProvider ?? profile.commerce.provider
-          ) ?? "shopify",
-        productStrategy:
-          profile.commerce.productStrategy === "none"
-            ? "buy-button"
-            : profile.commerce.productStrategy,
-      }
-    : {
-        need: "none",
-        provider: "none",
-        productStrategy: "none",
-      };
+  nextProfile.commerce = {
+    need: "none",
+    provider: "none",
+    productStrategy: "none",
+  };
+  nextProfile.booking = {
+    need: "none",
+    provider: "none",
+  };
+  nextProfile.memberships = {
+    need: "none",
+    provider: "none",
+  };
 
   nextProfile.operatingModel =
-    nextProfile.cms.need !== "none" ||
-    nextProfile.commerce.need !== "none" ||
-    nextProfile.booking.need !== "none" ||
-    nextProfile.memberships.need !== "none"
+    nextProfile.cms.need !== "none"
       ? "static-plus-packs"
       : "static-only";
 
@@ -980,14 +733,9 @@ export function applySiteCapabilityPackOverride(
     );
   }
 
-  if (
-    override.includeStorePack !== undefined &&
-    override.includeStorePack !== includeStorePack(profile)
-  ) {
+  if (override.includeStorePack) {
     overrideReasons.push(
-      override.includeStorePack
-        ? "A Curb operator manually enabled the Shopify store pack for this generation run."
-        : "A Curb operator manually disabled the Shopify store pack for this generation run."
+      "Store packs are no longer part of the standard Curb stack. Scope commerce as a separate managed upsell instead."
     );
   }
 
@@ -1014,6 +762,8 @@ export function buildSiteCapabilityPromptSummary(
         ? profile.cms.editableAreas.join(", ")
         : "none"
     }`,
+    "Standard stack: cloudflare-pages + shared-forms + stripe",
+    "Standard managed CMS: sanity",
     `Commerce need: ${profile.commerce.need}`,
     `Commerce provider: ${profile.commerce.provider}`,
     `Commerce strategy: ${profile.commerce.productStrategy}`,
@@ -1023,7 +773,8 @@ export function buildSiteCapabilityPromptSummary(
     `Membership provider: ${profile.memberships.provider}`,
     ...profile.reasons.map((reason) => `- ${reason}`),
     `Packaging guidance: ${profile.packageSummary}`,
-    "- Recommend real provider back offices only. Do not invent /admin/ screens, fake account portals, or fake checkout flows inside the static bundle.",
+    "- Recommend real provider back offices only. Do not invent /admin/ screens, fake account portals, fake store checkouts, or fake booking flows inside the static bundle.",
+    "- Store, booking, and membership functionality are custom managed add-ons, not default packs.",
   ].join("\n");
 }
 
@@ -1049,20 +800,18 @@ export function includeCmsPack(profile: SiteCapabilityProfile): boolean {
 }
 
 export function includeStorePack(profile: SiteCapabilityProfile): boolean {
-  return (
-    profile.commerce.need !== "none" && profile.commerce.provider !== "none"
-  );
+  void profile;
+  return false;
 }
 
 export function includeBookingPack(profile: SiteCapabilityProfile): boolean {
-  return profile.booking.need !== "none" && profile.booking.provider !== "none";
+  void profile;
+  return false;
 }
 
 export function includeMembershipPack(
   profile: SiteCapabilityProfile
 ): boolean {
-  return (
-    profile.memberships.need !== "none" &&
-    profile.memberships.provider !== "none"
-  );
+  void profile;
+  return false;
 }

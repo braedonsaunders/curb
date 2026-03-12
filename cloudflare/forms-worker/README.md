@@ -3,6 +3,11 @@
 This worker receives contact form submissions from generated Curb sites and
 forwards them to the business owner using Resend.
 
+Use one verified sender on a Curb-controlled domain, for example
+`forms@your-platform-domain.com`. The worker varies the display name per
+business and sends each submission to that site's business recipient, so you do
+not need a separate sender identity for every client website domain.
+
 ## Required secrets
 
 - `CURB_FORM_SIGNING_SECRET`
@@ -27,8 +32,7 @@ Use the same values in Curb:
 - `Forms -> Turnstile Site Key`
 - `Forms -> Turnstile Secret Key`
 - `Forms -> Resend API Key`
-- `Forms -> From Email`
+- `Forms -> Platform Sender Email`
 
 The signing secret in Curb must exactly match `CURB_FORM_SIGNING_SECRET` in the
 worker.
-

@@ -107,8 +107,8 @@ const DEFAULT_CONFIG: Config = {
   businessAddress: "",
   businessEmail: "",
   siteBaseUrl: "http://localhost:3000/sites",
-  previewDeploymentProvider: "vercel",
-  customerDeploymentProvider: "vercel",
+  previewDeploymentProvider: "cloudflare-pages",
+  customerDeploymentProvider: "cloudflare-pages",
   vercelToken: "",
   vercelTeamId: "",
   vercelPreviewProjectId: "",
@@ -224,7 +224,7 @@ function parseSetting(
     return ((rawValue === "cloudflare-pages" ||
       rawValue === "ssh-static"
       ? rawValue
-      : "vercel") as Config[SettingKey]);
+      : "cloudflare-pages") as Config[SettingKey]);
   }
 
   if (ARRAY_KEYS.has(key)) {
@@ -269,6 +269,47 @@ export function initializeSettingsStore(): void {
 
   seedDefaults();
   db.prepare("DELETE FROM settings WHERE key = ?").run("googlePageSpeedApiKey");
+
+  const deploymentRows = db
+    .prepare(
+      `SELECT key, value
+      FROM settings
+      WHERE key IN (
+        'previewDeploymentProvider',
+        'customerDeploymentProvider',
+        'vercelToken',
+        'vercelTeamId',
+        'vercelPreviewProjectId',
+        'vercelPreviewRootDomain'
+      )`
+    )
+    .all() as Array<{ key: string; value: string }>;
+  const deploymentValues = new Map(
+    deploymentRows.map((row) => [row.key, row.value])
+  );
+  const hasVercelConfig = [
+    deploymentValues.get("vercelToken"),
+    deploymentValues.get("vercelTeamId"),
+    deploymentValues.get("vercelPreviewProjectId"),
+    deploymentValues.get("vercelPreviewRootDomain"),
+  ].some((value) => String(value ?? "").trim().length > 0);
+
+  if (!hasVercelConfig) {
+    for (const key of [
+      "previewDeploymentProvider",
+      "customerDeploymentProvider",
+    ] as const satisfies Array<"previewDeploymentProvider" | "customerDeploymentProvider">) {
+      if (String(deploymentValues.get(key) ?? "").trim() === "vercel") {
+        db.prepare(
+          `
+            UPDATE settings
+            SET value = ?, updated_at = datetime('now')
+            WHERE key = ?
+          `
+        ).run("cloudflare-pages", key);
+      }
+    }
+  }
 
   const previewAdminSecretRow = db
     .prepare("SELECT value FROM settings WHERE key = ?")

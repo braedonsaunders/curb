@@ -4,10 +4,7 @@ import {
   generateSiteForBusiness,
   type SiteGenerationMode,
 } from '@/lib/core/generate';
-import {
-  normalizeManagedCommerceProvider,
-  type SiteCapabilityPackOverride,
-} from '@/lib/site-capabilities';
+import { type SiteCapabilityPackOverride } from '@/lib/site-capabilities';
 import {
   deployPreviewForBusiness,
   isPreviewDeploymentConfigured,
@@ -27,26 +24,13 @@ function parseSiteCapabilityOverride(
     typeof source.includeCmsPack === "boolean"
       ? source.includeCmsPack
       : undefined;
-  const includeStorePack =
-    typeof source.includeStorePack === "boolean"
-      ? source.includeStorePack
-      : undefined;
-  const commerceProvider = normalizeManagedCommerceProvider(
-    source.commerceProvider
-  ) ?? undefined;
 
-  if (
-    includeCmsPack === undefined &&
-    includeStorePack === undefined &&
-    commerceProvider === undefined
-  ) {
+  if (includeCmsPack === undefined) {
     return undefined;
   }
 
   return {
     includeCmsPack,
-    includeStorePack,
-    commerceProvider,
   };
 }
 

@@ -69,9 +69,7 @@ import {
 } from "@/lib/datetime";
 import { buildMailtoUrl } from "@/lib/mailto";
 import {
-  resolveStoreCommerceProvider,
   type SiteCapabilityProfile,
-  type StoreCommerceProvider,
 } from "@/lib/site-capabilities";
 import type {
   ProviderActivationEntry,
@@ -297,8 +295,6 @@ const TERMINAL_GENERATION_STAGES = new Set(["completed", "failed"]);
 type SiteDialogMode = "generate" | "modify" | "regenerate";
 type SiteCapabilityOverrideState = {
   includeCmsPack: boolean;
-  includeStorePack: boolean;
-  commerceProvider: StoreCommerceProvider;
 };
 
 function centsToInput(value: number): string {
@@ -373,12 +369,6 @@ function buildSiteCapabilityOverrideState(
         profile.cms.need !== "none" &&
         profile.cms.provider !== "none"
     ),
-    includeStorePack: Boolean(
-      profile &&
-        profile.commerce.need !== "none" &&
-        profile.commerce.provider !== "none"
-    ),
-    commerceProvider: resolveStoreCommerceProvider(profile?.commerce.provider),
   };
 }
 
@@ -600,8 +590,6 @@ export default function BusinessDetailPage() {
   const [siteCapabilityOverride, setSiteCapabilityOverride] =
     useState<SiteCapabilityOverrideState>({
       includeCmsPack: false,
-      includeStorePack: false,
-      commerceProvider: "shopify",
     });
   const siteDialogOpen = siteDialogMode !== null;
   const audit = biz?.audits?.[0] ?? null;
@@ -879,14 +867,8 @@ export default function BusinessDetailPage() {
           : undefined;
       const shouldSendSiteCapabilityOverride = capabilityProfile
         ? siteCapabilityOverride.includeCmsPack !==
-            recommendedSiteCapabilityOverride.includeCmsPack ||
-          siteCapabilityOverride.includeStorePack !==
-            recommendedSiteCapabilityOverride.includeStorePack ||
-          (siteCapabilityOverride.includeStorePack &&
-            siteCapabilityOverride.commerceProvider !==
-              recommendedSiteCapabilityOverride.commerceProvider)
-        : siteCapabilityOverride.includeCmsPack ||
-          siteCapabilityOverride.includeStorePack;
+            recommendedSiteCapabilityOverride.includeCmsPack
+        : siteCapabilityOverride.includeCmsPack;
 
       const res = await fetch(`/api/businesses/${id}/generate`, {
         method: "POST",
@@ -983,9 +965,6 @@ export default function BusinessDetailPage() {
         ["hosting", providerActivation.hosting],
         ["forms", providerActivation.forms],
         ["cms", providerActivation.cms],
-        ["commerce", providerActivation.commerce],
-        ["booking", providerActivation.booking],
-        ["memberships", providerActivation.memberships],
       ] as Array<[keyof ProviderActivationState, ProviderActivationEntry | ProviderActivationState["forms"]]>)
     : [];
   const hours: Record<string, string> = (() => {
@@ -1509,7 +1488,7 @@ export default function BusinessDetailPage() {
     operatingModel: SiteCapabilityProfile["operatingModel"]
   ) {
     if (operatingModel === "static-plus-packs") {
-      return "Static + Provider Packs";
+      return "Static + Managed CMS";
     }
     if (operatingModel === "custom-app") {
       return "Custom App";
@@ -1539,26 +1518,8 @@ export default function BusinessDetailPage() {
       | SiteCapabilityProfile["booking"]["provider"]
       | SiteCapabilityProfile["memberships"]["provider"]
   ) {
-    if (provider === "storyblok") {
-      return "Storyblok";
-    }
     if (provider === "sanity") {
       return "Sanity";
-    }
-    if (provider === "shopify") {
-      return "Shopify";
-    }
-    if (provider === "square-appointments") {
-      return "Square Appointments";
-    }
-    if (provider === "cal-com") {
-      return "Cal.com";
-    }
-    if (provider === "memberstack") {
-      return "Memberstack";
-    }
-    if (provider === "clerk") {
-      return "Clerk";
     }
     return "None";
   }
@@ -1576,16 +1537,20 @@ export default function BusinessDetailPage() {
     return "Vercel";
   }
 
-  function strategyLabel(
-    strategy: SiteCapabilityProfile["commerce"]["productStrategy"]
-  ) {
-    if (strategy === "buy-button") {
-      return "Buy Button / checkout link";
+  function advancedWorkflowNeeds(profile: SiteCapabilityProfile) {
+    const labels: string[] = [];
+
+    if (profile.commerce.need !== "none") {
+      labels.push(`Commerce (${profile.commerce.need})`);
     }
-    if (strategy === "storefront-api") {
-      return "Storefront API";
+    if (profile.booking.need !== "none") {
+      labels.push(`Booking (${profile.booking.need})`);
     }
-    return "None";
+    if (profile.memberships.need !== "none") {
+      labels.push(`Memberships (${profile.memberships.need})`);
+    }
+
+    return labels;
   }
 
   function providerActivationStatusLabel(status: ProviderActivationStatus) {
@@ -1890,6 +1855,7 @@ export default function BusinessDetailPage() {
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="audit">Audit</TabsTrigger>
           <TabsTrigger value="site">Site</TabsTrigger>
+          <TabsTrigger value="launch">Launch</TabsTrigger>
           <TabsTrigger value="sales">Sales</TabsTrigger>
           <TabsTrigger value="outreach">Outreach</TabsTrigger>
         </TabsList>
@@ -2134,7 +2100,7 @@ export default function BusinessDetailPage() {
                 {capabilityProfile ? (
                   <Card className="lg:col-span-4">
                     <CardHeader>
-                      <CardTitle>Provider Pack Recommendation</CardTitle>
+                      <CardTitle>Stack Recommendation</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
                       <div className="flex flex-wrap gap-2">
@@ -2157,36 +2123,20 @@ export default function BusinessDetailPage() {
                         >
                           CMS {capabilityProfile.cms.need}
                         </Badge>
-                        <Badge
-                          className={capabilityNeedBadge(
-                            capabilityProfile.commerce.need
-                          )}
-                        >
-                          Store {capabilityProfile.commerce.need}
-                        </Badge>
-                        <Badge
-                          className={capabilityNeedBadge(
-                            capabilityProfile.booking.need
-                          )}
-                        >
-                          Booking {capabilityProfile.booking.need}
-                        </Badge>
-                        <Badge
-                          className={capabilityNeedBadge(
-                            capabilityProfile.memberships.need
-                          )}
-                        >
-                          Members {capabilityProfile.memberships.need}
-                        </Badge>
+                        {advancedWorkflowNeeds(capabilityProfile).length > 0 ? (
+                          <Badge className="bg-amber-100 text-amber-700">
+                            Custom add-ons detected
+                          </Badge>
+                        ) : null}
                       </div>
 
                       <p className="text-sm leading-6 text-muted-foreground">
                         {capabilityProfile.packageSummary}
                       </p>
 
-                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="grid gap-4 md:grid-cols-2">
                         <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
-                          <p className="text-sm font-medium">Owner CMS</p>
+                          <p className="text-sm font-medium">Managed CMS</p>
                           <p className="text-sm text-muted-foreground">
                             Provider: {providerLabel(capabilityProfile.cms.provider)}
                           </p>
@@ -2199,41 +2149,17 @@ export default function BusinessDetailPage() {
                         </div>
 
                         <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
-                          <p className="text-sm font-medium">Store</p>
-                          <p className="text-sm text-muted-foreground">
-                            Provider: {providerLabel(
-                              capabilityProfile.commerce.provider
-                            )}
+                          <p className="text-sm font-medium">
+                            Advanced Workflows
                           </p>
                           <p className="text-sm text-muted-foreground">
-                            Strategy:{" "}
-                            {strategyLabel(
-                              capabilityProfile.commerce.productStrategy
-                            )}
-                          </p>
-                        </div>
-
-                        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
-                          <p className="text-sm font-medium">Booking</p>
-                          <p className="text-sm text-muted-foreground">
-                            Provider: {providerLabel(
-                              capabilityProfile.booking.provider
-                            )}
+                            {advancedWorkflowNeeds(capabilityProfile).length > 0
+                              ? advancedWorkflowNeeds(capabilityProfile).join(", ")
+                              : "None detected"}
                           </p>
                           <p className="text-sm text-muted-foreground">
-                            Need: {capabilityProfile.booking.need}
-                          </p>
-                        </div>
-
-                        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
-                          <p className="text-sm font-medium">Memberships</p>
-                          <p className="text-sm text-muted-foreground">
-                            Provider: {providerLabel(
-                              capabilityProfile.memberships.provider
-                            )}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            Need: {capabilityProfile.memberships.need}
+                            Anything beyond the default stack is a custom managed
+                            add-on, not a standard pack.
                           </p>
                         </div>
                       </div>
@@ -2424,6 +2350,13 @@ export default function BusinessDetailPage() {
                   </div>
                 </div>
 
+                <SitePreviewFrame
+                  key={sitePreviewUrl ?? site.slug}
+                  businessName={biz.name}
+                  sitePreviewUrl={sitePreviewUrl}
+                  siteSlug={site.slug}
+                />
+
                 {siteGenerationWarnings.length > 0 ? (
                   <Card className="border-amber-300 bg-amber-50/60">
                     <CardHeader>
@@ -2492,419 +2425,6 @@ export default function BusinessDetailPage() {
                   </Card>
                 ) : null}
 
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-base">Public Preview</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3 text-sm">
-                      <div className="space-y-1">
-                        <p className="font-medium">Current public URL</p>
-                        <p className="break-all text-muted-foreground">
-                          {publicPreviewUrl ?? "Not deployed yet"}
-                        </p>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Source:{" "}
-                        {biz.publicPreviewUrlSource === "alias"
-                          ? `${deploymentProviderLabel(
-                              biz.publicPreviewUrlProvider
-                            )} alias`
-                          : biz.publicPreviewUrlSource === "deployment"
-                            ? `${deploymentProviderLabel(
-                                biz.publicPreviewUrlProvider
-                            )} deployment URL`
-                            : "Local preview fallback"}
-                      </p>
-                      {capabilityProfile?.operatingModel ===
-                      "static-plus-packs" ? (
-                        <p className="text-xs text-muted-foreground">
-                          No internal admin preview exists. Post-sale editing
-                          should happen in the recommended provider back office,
-                          not inside the static site bundle.
-                        </p>
-                      ) : null}
-                      {previewDeployment ? (
-                        <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
-                          <p className="font-medium">Latest deployment</p>
-                          <p className="break-all text-xs text-muted-foreground">
-                            {previewDeployment.aliasUrl ||
-                              previewDeployment.deploymentUrl}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            Provider:{" "}
-                            {deploymentProviderLabel(
-                              previewDeployment.deploymentProvider
-                            )}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            State: {previewDeployment.readyState ?? "Unknown"}
-                          </p>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">
-                          Deploy this site to the configured preview provider to
-                          replace the local-only preview link in outreach. The
-                          current preview target is{" "}
-                          {deploymentProviderLabel(
-                            biz.configuredPreviewDeploymentProvider
-                          )}
-                          .
-                        </p>
-                      )}
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-base">
-                        Customer Project
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3 text-sm">
-                      <div className="space-y-2">
-                        <Label htmlFor="customerDomain">Customer Domain</Label>
-                        <Input
-                          id="customerDomain"
-                          value={customerDomainDraft}
-                          onChange={(event) =>
-                            setCustomerDomainDraft(event.target.value)
-                          }
-                          placeholder="www.customerdomain.com"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Optional. When set, Curb attaches the domain to the
-                          dedicated customer project and returns any DNS
-                          verification records that are still missing.
-                        </p>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={saveCustomerDomain}
-                          disabled={actionLoading === "deployCustomer"}
-                        >
-                          <Check className="size-4" />
-                          Save Domain
-                        </Button>
-                        <Button
-                          size="sm"
-                          onClick={deployCustomerProject}
-                          disabled={
-                            generationRunning || actionLoading === "deployCustomer"
-                          }
-                        >
-                          {actionLoading === "deployCustomer" ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <Globe className="size-4" />
-                          )}
-                          {biz.customerProjectId
-                            ? "Redeploy Customer Site"
-                            : biz.configuredCustomerDeploymentProvider ===
-                                  "ssh-static"
-                              ? "Deploy Customer Site"
-                              : "Create Customer Project"}
-                        </Button>
-                        {customerDeployment ? (
-                          <a
-                            href={
-                              customerDeployment.aliasUrl ||
-                              customerDeployment.deploymentUrl
-                            }
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            <Button variant="outline" size="sm">
-                              <ExternalLink className="size-4" />
-                              Open Customer Site
-                            </Button>
-                          </a>
-                        ) : null}
-                      </div>
-
-                      {biz.customerProjectId ? (
-                        <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
-                          <p className="font-medium">
-                            {biz.customerProjectName || "Dedicated project"}
-                          </p>
-                          <p className="break-all text-xs text-muted-foreground">
-                            Provider:{" "}
-                            {deploymentProviderLabel(
-                              biz.customerProjectProvider
-                            )}
-                          </p>
-                          <p className="break-all text-xs text-muted-foreground">
-                            Project ID: {biz.customerProjectId}
-                          </p>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">
-                          Use this after a deal is closed and you want a
-                          dedicated live deployment for the customer site. The
-                          current customer target is{" "}
-                          {deploymentProviderLabel(
-                            biz.configuredCustomerDeploymentProvider
-                          )}
-                          .
-                        </p>
-                      )}
-
-                      {biz.customerDomain &&
-                      biz.customerDomainVerification.length > 0 &&
-                      !biz.customerDomainVerified ? (
-                        <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-                          <div className="flex items-start gap-2">
-                            <CircleAlert className="mt-0.5 size-4" />
-                            <div className="space-y-1">
-                              <p className="font-medium">
-                                DNS verification required for {biz.customerDomain}
-                              </p>
-                              {biz.customerDomainVerification.map((challenge) => (
-                                <div
-                                  key={`${challenge.type}-${challenge.domain}-${challenge.value}`}
-                                  className="space-y-1 text-xs"
-                                >
-                                  <p>
-                                    Add a {challenge.type} record on{" "}
-                                    {challenge.domain}
-                                  </p>
-                                  <p className="break-all font-mono">
-                                    {challenge.value}
-                                  </p>
-                                  {challenge.reason ? (
-                                    <p>{challenge.reason}</p>
-                                  ) : null}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      ) : biz.customerDomain ? (
-                        <p className="text-xs text-muted-foreground">
-                          {biz.customerDomainVerified
-                            ? `${biz.customerDomain} is verified on the customer project.`
-                            : `${biz.customerDomain} is saved for the next customer deployment.`}
-                        </p>
-                      ) : null}
-                    </CardContent>
-                  </Card>
-                </div>
-
-                {providerActivation ? (
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-base">
-                        Provider Activation Workflow
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                      <p className="text-sm text-muted-foreground">
-                        Track the real post-sale setup here. This replaces the
-                        old fake in-site admin handoff.
-                      </p>
-
-                      <div className="grid gap-4 xl:grid-cols-2">
-                        {providerActivationEntries
-                          .filter(
-                            ([key, entry]) =>
-                              key === "hosting" ||
-                              key === "forms" ||
-                              entry.status !== "not-needed"
-                          )
-                          .map(([key, entry]) => (
-                            <div
-                              key={key}
-                              className="space-y-3 rounded-lg border bg-muted/20 p-4"
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <div>
-                                  <p className="font-medium capitalize">{key}</p>
-                                  <p className="text-sm text-muted-foreground">
-                                    {entry.provider}
-                                  </p>
-                                </div>
-                                <Badge
-                                  className={providerActivationStatusBadge(
-                                    entry.status
-                                  )}
-                                >
-                                  {providerActivationStatusLabel(entry.status)}
-                                </Badge>
-                              </div>
-
-                              <div className="grid gap-3 md:grid-cols-2">
-                                <div className="space-y-2">
-                                  <Label>Status</Label>
-                                  <Select
-                                    value={entry.status}
-                                    onValueChange={(value) =>
-                                      updateProviderActivationEntry(key, {
-                                        status:
-                                          value as ProviderActivationStatus,
-                                        lastUpdatedAt: new Date().toISOString(),
-                                      })
-                                    }
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="not-started">
-                                        Not Started
-                                      </SelectItem>
-                                      <SelectItem value="in-progress">
-                                        In Progress
-                                      </SelectItem>
-                                      <SelectItem value="configured">
-                                        Configured
-                                      </SelectItem>
-                                      <SelectItem value="live">Live</SelectItem>
-                                      <SelectItem value="not-needed">
-                                        Not Needed
-                                      </SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-
-                                <div className="space-y-2">
-                                  <Label>Credential Owner</Label>
-                                  <Select
-                                    value={entry.owner}
-                                    onValueChange={(value) =>
-                                      updateProviderActivationEntry(key, {
-                                        owner:
-                                          value as ProviderActivationOwner,
-                                        lastUpdatedAt: new Date().toISOString(),
-                                      })
-                                    }
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue
-                                        placeholder={providerActivationOwnerLabel(
-                                          entry.owner
-                                        )}
-                                      />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="curb">Curb</SelectItem>
-                                      <SelectItem value="client">
-                                        Client
-                                      </SelectItem>
-                                      <SelectItem value="shared">
-                                        Shared
-                                      </SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-
-                                <div className="space-y-2">
-                                  <Label>Account Label</Label>
-                                  <Input
-                                    value={entry.accountLabel}
-                                    onChange={(event) =>
-                                      updateProviderActivationEntry(key, {
-                                        accountLabel: event.target.value,
-                                      })
-                                    }
-                                    placeholder="Workspace, store, or project name"
-                                  />
-                                </div>
-
-                                <div className="space-y-2">
-                                  <Label>Dashboard URL</Label>
-                                  <Input
-                                    value={entry.dashboardUrl}
-                                    onChange={(event) =>
-                                      updateProviderActivationEntry(key, {
-                                        dashboardUrl: event.target.value,
-                                      })
-                                    }
-                                    placeholder="https://..."
-                                  />
-                                </div>
-                              </div>
-
-                              {key === "forms" ? (
-                                <div className="grid gap-3 md:grid-cols-2">
-                                  <div className="space-y-2">
-                                    <Label>Endpoint URL</Label>
-                                    <Input
-                                      value={
-                                        (
-                                          entry as ProviderActivationState["forms"]
-                                        ).endpointUrl
-                                      }
-                                      onChange={(event) =>
-                                        updateProviderActivationEntry(key, {
-                                          endpointUrl: event.target.value,
-                                        })
-                                      }
-                                      placeholder="https://forms.example.com/submit"
-                                    />
-                                  </div>
-                                  <div className="space-y-2">
-                                    <Label>Turnstile Site Key</Label>
-                                    <Input
-                                      value={
-                                        (
-                                          entry as ProviderActivationState["forms"]
-                                        ).publicSiteKey
-                                      }
-                                      onChange={(event) =>
-                                        updateProviderActivationEntry(key, {
-                                          publicSiteKey: event.target.value,
-                                        })
-                                      }
-                                      placeholder="0x4AAAA..."
-                                    />
-                                  </div>
-                                </div>
-                              ) : null}
-
-                              <div className="space-y-2">
-                                <Label>Notes</Label>
-                                <Textarea
-                                  value={entry.notes}
-                                  onChange={(event) =>
-                                    updateProviderActivationEntry(key, {
-                                      notes: event.target.value,
-                                    })
-                                  }
-                                  rows={3}
-                                  placeholder="Setup notes, pending tasks, or handoff details"
-                                />
-                              </div>
-                            </div>
-                          ))}
-                      </div>
-
-                      <div className="flex justify-end">
-                        <Button
-                          variant="outline"
-                          onClick={saveProviderActivation}
-                          disabled={actionLoading === "providerActivation"}
-                        >
-                          {actionLoading === "providerActivation" ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            <Save className="size-4" />
-                          )}
-                          Save Provider Workflow
-                        </Button>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ) : null}
-
-                <SitePreviewFrame
-                  key={sitePreviewUrl ?? site.slug}
-                  businessName={biz.name}
-                  sitePreviewUrl={sitePreviewUrl}
-                  siteSlug={site.slug}
-                />
               </>
             ) : (
               <Card>
@@ -2983,7 +2503,7 @@ export default function BusinessDetailPage() {
                           Packaging Overrides
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          These toggles affect post-sale provider packs only.
+                          These toggles affect the post-sale managed stack only.
                           They do not generate a fake backend inside the site
                           bundle.
                         </p>
@@ -2999,8 +2519,6 @@ export default function BusinessDetailPage() {
                               setSiteCapabilityOverride((current) => ({
                                 ...current,
                                 includeCmsPack: checked,
-                                includeStorePack:
-                                  checked && current.includeStorePack,
                               }));
                             }}
                           />
@@ -3009,52 +2527,20 @@ export default function BusinessDetailPage() {
                               Include external CMS pack
                             </span>
                             <span className="block text-xs text-muted-foreground">
-                              Structure the site for Storyblok or Sanity after
-                              the sale instead of shipping an in-site owner
-                              portal.
-                            </span>
-                          </span>
-                        </label>
-                        <label className="flex items-start gap-3 text-sm">
-                          <input
-                            type="checkbox"
-                            className="mt-0.5 size-4 rounded border border-input"
-                            checked={siteCapabilityOverride.includeStorePack}
-                            onChange={(event) => {
-                              const checked = event.target.checked;
-                              setSiteCapabilityOverride((current) => ({
-                                ...current,
-                                includeStorePack: checked,
-                              }));
-                            }}
-                          />
-                          <span>
-                            <span className="font-medium">
-                              Include Shopify store pack
-                            </span>
-                            <span className="block text-xs text-muted-foreground">
-                              Keep the public site static now, then activate a
-                              real Shopify admin after the sale.
+                              Structure the site for Sanity after the sale
+                              instead of shipping an in-site owner portal.
                             </span>
                           </span>
                         </label>
                       </div>
                       {capabilityProfile ? (
                         <p className="mt-3 text-xs text-muted-foreground">
-                          Model recommendation: CMS{" "}
+                          Model recommendation: managed CMS{" "}
                           {recommendedSiteCapabilityOverride.includeCmsPack
                             ? "on"
                             : "off"}
-                          , store{" "}
-                          {recommendedSiteCapabilityOverride.includeStorePack
-                            ? "on"
-                            : "off"}
-                          {recommendedSiteCapabilityOverride.includeStorePack
-                            ? ` via ${providerLabel(
-                                recommendedSiteCapabilityOverride.commerceProvider
-                              )}`
-                            : ""}
-                          .
+                          . Store, booking, and membership workflows stay
+                          custom-only.
                         </p>
                       ) : null}
                     </div>
@@ -3089,6 +2575,412 @@ export default function BusinessDetailPage() {
               />
             ) : null}
           </div>
+        </TabsContent>
+
+        <TabsContent value="launch">
+          {site ? (
+            <div className="space-y-6">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Public Preview</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3 text-sm">
+                    <div className="space-y-1">
+                      <p className="font-medium">Current public URL</p>
+                      <p className="break-all text-muted-foreground">
+                        {publicPreviewUrl ?? "Not deployed yet"}
+                      </p>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Source:{" "}
+                      {biz.publicPreviewUrlSource === "alias"
+                        ? `${deploymentProviderLabel(
+                            biz.publicPreviewUrlProvider
+                          )} alias`
+                        : biz.publicPreviewUrlSource === "deployment"
+                          ? `${deploymentProviderLabel(
+                              biz.publicPreviewUrlProvider
+                            )} deployment URL`
+                          : "Local preview fallback"}
+                    </p>
+                    {capabilityProfile?.operatingModel === "static-plus-packs" ? (
+                      <p className="text-xs text-muted-foreground">
+                        No internal admin preview exists. Post-sale editing
+                        should happen in the recommended provider back office,
+                        not inside the static site bundle.
+                      </p>
+                    ) : null}
+                    {previewDeployment ? (
+                      <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
+                        <p className="font-medium">Latest deployment</p>
+                        <p className="break-all text-xs text-muted-foreground">
+                          {previewDeployment.aliasUrl ||
+                            previewDeployment.deploymentUrl}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Provider:{" "}
+                          {deploymentProviderLabel(
+                            previewDeployment.deploymentProvider
+                          )}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          State: {previewDeployment.readyState ?? "Unknown"}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Deploy this site to the configured preview provider to
+                        replace the local-only preview link in outreach. The
+                        current preview target is{" "}
+                        {deploymentProviderLabel(
+                          biz.configuredPreviewDeploymentProvider
+                        )}
+                        .
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Customer Project</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3 text-sm">
+                    <div className="space-y-2">
+                      <Label htmlFor="customerDomain">Customer Domain</Label>
+                      <Input
+                        id="customerDomain"
+                        value={customerDomainDraft}
+                        onChange={(event) =>
+                          setCustomerDomainDraft(event.target.value)
+                        }
+                        placeholder="www.customerdomain.com"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Optional. When set, Curb attaches the domain to the
+                        dedicated customer project and returns any DNS
+                        verification records that are still missing.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={saveCustomerDomain}
+                        disabled={actionLoading === "deployCustomer"}
+                      >
+                        <Check className="size-4" />
+                        Save Domain
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={deployCustomerProject}
+                        disabled={
+                          generationRunning || actionLoading === "deployCustomer"
+                        }
+                      >
+                        {actionLoading === "deployCustomer" ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <Globe className="size-4" />
+                        )}
+                        {biz.customerProjectId
+                          ? "Redeploy Customer Site"
+                          : biz.configuredCustomerDeploymentProvider ===
+                                "ssh-static"
+                            ? "Deploy Customer Site"
+                            : "Create Customer Project"}
+                      </Button>
+                      {customerDeployment ? (
+                        <a
+                          href={
+                            customerDeployment.aliasUrl ||
+                            customerDeployment.deploymentUrl
+                          }
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <Button variant="outline" size="sm">
+                            <ExternalLink className="size-4" />
+                            Open Customer Site
+                          </Button>
+                        </a>
+                      ) : null}
+                    </div>
+
+                    {biz.customerProjectId ? (
+                      <div className="space-y-1 rounded-lg border bg-muted/20 p-3">
+                        <p className="font-medium">
+                          {biz.customerProjectName || "Dedicated project"}
+                        </p>
+                        <p className="break-all text-xs text-muted-foreground">
+                          Provider:{" "}
+                          {deploymentProviderLabel(
+                            biz.customerProjectProvider
+                          )}
+                        </p>
+                        <p className="break-all text-xs text-muted-foreground">
+                          Project ID: {biz.customerProjectId}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        Use this after a deal is closed and you want a dedicated
+                        live deployment for the customer site. The current
+                        customer target is{" "}
+                        {deploymentProviderLabel(
+                          biz.configuredCustomerDeploymentProvider
+                        )}
+                        .
+                      </p>
+                    )}
+
+                    {biz.customerDomain &&
+                    biz.customerDomainVerification.length > 0 &&
+                    !biz.customerDomainVerified ? (
+                      <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
+                        <div className="flex items-start gap-2">
+                          <CircleAlert className="mt-0.5 size-4" />
+                          <div className="space-y-1">
+                            <p className="font-medium">
+                              DNS verification required for {biz.customerDomain}
+                            </p>
+                            {biz.customerDomainVerification.map((challenge) => (
+                              <div
+                                key={`${challenge.type}-${challenge.domain}-${challenge.value}`}
+                                className="space-y-1 text-xs"
+                              >
+                                <p>
+                                  Add a {challenge.type} record on{" "}
+                                  {challenge.domain}
+                                </p>
+                                <p className="break-all font-mono">
+                                  {challenge.value}
+                                </p>
+                                {challenge.reason ? (
+                                  <p>{challenge.reason}</p>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : biz.customerDomain ? (
+                      <p className="text-xs text-muted-foreground">
+                        {biz.customerDomainVerified
+                          ? `${biz.customerDomain} is verified on the customer project.`
+                          : `${biz.customerDomain} is saved for the next customer deployment.`}
+                      </p>
+                    ) : null}
+                  </CardContent>
+                </Card>
+              </div>
+
+              {providerActivation ? (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">
+                      Provider Activation Workflow
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <p className="text-sm text-muted-foreground">
+                      Track the real post-sale setup here. This replaces the old
+                      fake in-site admin handoff.
+                    </p>
+
+                    <div className="grid gap-4 xl:grid-cols-2">
+                      {providerActivationEntries.map(([key, entry]) => (
+                        <div
+                          key={key}
+                          className="space-y-3 rounded-lg border bg-muted/20 p-4"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <p className="font-medium capitalize">{key}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {entry.provider}
+                              </p>
+                            </div>
+                            <Badge
+                              className={providerActivationStatusBadge(
+                                entry.status
+                              )}
+                            >
+                              {providerActivationStatusLabel(entry.status)}
+                            </Badge>
+                          </div>
+
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="space-y-2">
+                              <Label>Status</Label>
+                              <Select
+                                value={entry.status}
+                                onValueChange={(value) =>
+                                  updateProviderActivationEntry(key, {
+                                    status:
+                                      value as ProviderActivationStatus,
+                                    lastUpdatedAt: new Date().toISOString(),
+                                  })
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="not-started">
+                                    Not Started
+                                  </SelectItem>
+                                  <SelectItem value="in-progress">
+                                    In Progress
+                                  </SelectItem>
+                                  <SelectItem value="configured">
+                                    Configured
+                                  </SelectItem>
+                                  <SelectItem value="live">Live</SelectItem>
+                                  <SelectItem value="not-needed">
+                                    Not Needed
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label>Credential Owner</Label>
+                              <Select
+                                value={entry.owner}
+                                onValueChange={(value) =>
+                                  updateProviderActivationEntry(key, {
+                                    owner:
+                                      value as ProviderActivationOwner,
+                                    lastUpdatedAt: new Date().toISOString(),
+                                  })
+                                }
+                              >
+                                <SelectTrigger>
+                                  <SelectValue
+                                    placeholder={providerActivationOwnerLabel(
+                                      entry.owner
+                                    )}
+                                  />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="curb">Curb</SelectItem>
+                                  <SelectItem value="client">Client</SelectItem>
+                                  <SelectItem value="shared">Shared</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label>Account Label</Label>
+                              <Input
+                                value={entry.accountLabel}
+                                onChange={(event) =>
+                                  updateProviderActivationEntry(key, {
+                                    accountLabel: event.target.value,
+                                  })
+                                }
+                                placeholder="Workspace, store, or project name"
+                              />
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label>Dashboard URL</Label>
+                              <Input
+                                value={entry.dashboardUrl}
+                                onChange={(event) =>
+                                  updateProviderActivationEntry(key, {
+                                    dashboardUrl: event.target.value,
+                                  })
+                                }
+                                placeholder="https://..."
+                              />
+                            </div>
+                          </div>
+
+                          {key === "forms" ? (
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label>Endpoint URL</Label>
+                                <Input
+                                  value={
+                                    (
+                                      entry as ProviderActivationState["forms"]
+                                    ).endpointUrl
+                                  }
+                                  onChange={(event) =>
+                                    updateProviderActivationEntry(key, {
+                                      endpointUrl: event.target.value,
+                                    })
+                                  }
+                                  placeholder="https://forms.example.com/submit"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Turnstile Site Key</Label>
+                                <Input
+                                  value={
+                                    (
+                                      entry as ProviderActivationState["forms"]
+                                    ).publicSiteKey
+                                  }
+                                  onChange={(event) =>
+                                    updateProviderActivationEntry(key, {
+                                      publicSiteKey: event.target.value,
+                                    })
+                                  }
+                                  placeholder="0x4AAAA..."
+                                />
+                              </div>
+                            </div>
+                          ) : null}
+
+                          <div className="space-y-2">
+                            <Label>Notes</Label>
+                            <Textarea
+                              value={entry.notes}
+                              onChange={(event) =>
+                                updateProviderActivationEntry(key, {
+                                  notes: event.target.value,
+                                })
+                              }
+                              rows={3}
+                              placeholder="Setup notes, pending tasks, or handoff details"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex justify-end">
+                      <Button
+                        variant="outline"
+                        onClick={saveProviderActivation}
+                        disabled={actionLoading === "providerActivation"}
+                      >
+                        {actionLoading === "providerActivation" ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <Save className="size-4" />
+                        )}
+                        Save Provider Workflow
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
+            </div>
+          ) : (
+            <Card>
+              <CardContent className="py-8 text-sm text-muted-foreground">
+                Generate a site first to unlock preview deployment, customer
+                deployment, and launch workflow tracking.
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="sales">

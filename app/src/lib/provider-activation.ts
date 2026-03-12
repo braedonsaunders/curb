@@ -1,9 +1,6 @@
 import { getConfig, type Config } from "@/lib/config";
 import {
-  includeBookingPack,
   includeCmsPack,
-  includeMembershipPack,
-  includeStorePack,
   type SiteCapabilityProfile,
 } from "@/lib/site-capabilities";
 
@@ -103,28 +100,18 @@ function buildProviderLabel(
       return "Not needed";
     }
 
-    return profile.cms.provider === "sanity" ? "Sanity" : "Storyblok";
+    return "Sanity";
   }
 
   if (category === "commerce") {
-    return profile && includeStorePack(profile) ? "Shopify" : "Not needed";
+    return "Custom managed add-on";
   }
 
   if (category === "booking") {
-    if (!profile || !includeBookingPack(profile)) {
-      return "Not needed";
-    }
-
-    return profile.booking.provider === "cal-com"
-      ? "Cal.com"
-      : "Square Appointments";
+    return "Custom managed add-on";
   }
 
-  if (!profile || !includeMembershipPack(profile)) {
-    return "Not needed";
-  }
-
-  return profile.memberships.provider === "clerk" ? "Clerk" : "Memberstack";
+  return "Custom managed add-on";
 }
 
 function buildDefaultProviderActivationState(
@@ -151,17 +138,11 @@ function buildDefaultProviderActivationState(
       buildProviderLabel("cms", profile),
       profile && includeCmsPack(profile) ? "not-started" : "not-needed"
     ),
-    commerce: buildEntry(
-      buildProviderLabel("commerce", profile),
-      profile && includeStorePack(profile) ? "not-started" : "not-needed"
-    ),
-    booking: buildEntry(
-      buildProviderLabel("booking", profile),
-      profile && includeBookingPack(profile) ? "not-started" : "not-needed"
-    ),
+    commerce: buildEntry(buildProviderLabel("commerce", profile), "not-needed"),
+    booking: buildEntry(buildProviderLabel("booking", profile), "not-needed"),
     memberships: buildEntry(
       buildProviderLabel("memberships", profile),
-      profile && includeMembershipPack(profile) ? "not-started" : "not-needed"
+      "not-needed"
     ),
   };
 }
@@ -233,9 +214,9 @@ export function normalizeProviderActivationState(
     hosting: normalizeEntry(source.hosting, defaults.hosting),
     forms: normalizeFormsEntry(source.forms, defaults.forms),
     cms: normalizeEntry(source.cms, defaults.cms),
-    commerce: normalizeEntry(source.commerce, defaults.commerce),
-    booking: normalizeEntry(source.booking, defaults.booking),
-    memberships: normalizeEntry(source.memberships, defaults.memberships),
+    commerce: defaults.commerce,
+    booking: defaults.booking,
+    memberships: defaults.memberships,
   };
 }
 
@@ -244,4 +225,3 @@ export function serializeProviderActivationState(
 ): string {
   return JSON.stringify(value);
 }
-

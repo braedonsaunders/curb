@@ -157,14 +157,15 @@ Technical requirements:
 - When the Capability Recommendation section says `static-only`, do not invent
   login CMS UI, admin dashboards, carts, or fake store mechanics.
 - When the Capability Recommendation section says `static-plus-packs`, keep the
-  public experience static but structure it so real external providers can be
+  public experience static but structure it so the narrow standard stack can be
   connected cleanly after the sale.
 - If CMS is recommended, organize content into stable sections and dedicated
-  pages that can map cleanly into Storyblok or Sanity.
-- If commerce is recommended, give products or offerings a clear dedicated page
-  or section and keep the storefront simple enough to connect to Shopify later.
-- If booking is recommended, use honest booking CTAs and placeholders that can
-  later point to Square Appointments or Cal.com. Do not invent a fake scheduler.
+  pages that can map cleanly into Sanity.
+- The standard stack is Cloudflare Pages, shared Cloudflare forms, Stripe, and
+  optional Sanity. Do not assume other provider packs are available by default.
+- If commerce, booking, or memberships are recommended, keep the brochure site
+  honest and scope those workflows as later custom add-ons. Do not invent fake
+  carts, checkouts, schedulers, logins, or dashboards.
 - If the Capability Recommendation section says `custom-app`, keep the
   marketing site excellent, but do not fake authenticated or highly dynamic app
   flows inside the static bundle.

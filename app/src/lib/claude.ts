@@ -1638,10 +1638,10 @@ export async function generateSite(
     "- When the Architecture Recommendation section says multi-page is required, you must return a multi-page bundle with at least the stated minimum number of substantive HTML pages.",
     "- Multi-page is required when there are multiple substantive source pages, large navigation, or complex flows such as store, booking, or portal behavior.",
     "- When the Capability Recommendation section says static-only, do not invent admin dashboards, editor UI, member login, carts, or fake store functionality.",
-    "- When the Capability Recommendation section says static-plus-packs, keep the public site static but structure content so real external providers can be connected cleanly after the sale.",
-    "- If CMS is recommended, organize content into stable sections and dedicated pages that can map cleanly into Storyblok or Sanity later.",
-    "- If commerce is recommended, give products or offerings a clear dedicated page or section and keep the storefront simple enough to connect to Shopify later.",
-    "- If booking is recommended, use honest booking CTAs and layouts that can later connect to Square Appointments or Cal.com. Do not invent a fake scheduler.",
+    "- When the Capability Recommendation section says static-plus-packs, keep the public site static but structure content so the narrow standard stack can be connected cleanly after the sale.",
+    "- If CMS is recommended, organize content into stable sections and dedicated pages that can map cleanly into Sanity later.",
+    "- The standard stack is Cloudflare Pages, shared Cloudflare forms, Stripe, and optional Sanity. Do not assume other provider packs are available by default.",
+    "- If commerce, booking, or memberships are recommended, keep the brochure site honest and scope those workflows as later custom add-ons. Do not invent fake carts, checkouts, schedulers, logins, or dashboards.",
     "- If the Capability Recommendation section says custom-app, keep the marketing site excellent, but do not fake complex authenticated flows inside the static bundle.",
     "- If single-page, consolidate content into anchored sections and use working in-page navigation like #about-us or #specials.",
     "- If multi-page, return a static site bundle with one file per page and keep all internal navigation relative to the site bundle.",
@@ -1976,7 +1976,7 @@ ${buildPageSignalsSummary(input.pageSignals)}
 
 Judge the site the way a business owner would, not with technical speed or SEO metrics.
 Focus on visual polish, modern feel, clarity, trust, and whether the owner would likely feel proud or embarrassed to send customers there.
-Also decide whether this business should stay fully static, use external provider packs on top of a static site, or be treated as a custom-app case.
+Also decide whether this business should stay fully static, use the narrow standard stack on top of a static site, or be treated as a custom-app case.
 
 Return JSON with exactly these fields:
 {
@@ -1989,17 +1989,17 @@ Return JSON with exactly these fields:
   "replacementDifficulty": "hard",
   "advancedFeatures": ["online store"],
   "capabilityProfile": {
-    "operatingModel": "static-plus-packs",
+    "operatingModel": "custom-app",
     "confidence": "high",
     "cms": {
-      "need": "required",
-      "provider": "storyblok",
-      "editableAreas": ["homepage", "products", "contact"]
+      "need": "recommended",
+      "provider": "sanity",
+      "editableAreas": ["homepage", "contact"]
     },
     "commerce": {
       "need": "required",
-      "provider": "shopify",
-      "productStrategy": "buy-button"
+      "provider": "none",
+      "productStrategy": "none"
     },
     "booking": {
       "need": "none",
@@ -2020,11 +2020,11 @@ Use only static-only, static-plus-packs, or custom-app for capabilityProfile.ope
 Use only low, medium, or high for capabilityProfile.confidence.
 Use only none, optional, recommended, or required for capabilityProfile.cms.need and capabilityProfile.commerce.need.
 Use only none, optional, recommended, or required for capabilityProfile.booking.need and capabilityProfile.memberships.need.
-Use only none, storyblok, or sanity for capabilityProfile.cms.provider.
-Use only none or shopify for capabilityProfile.commerce.provider.
-Use only none, buy-button, or storefront-api for capabilityProfile.commerce.productStrategy.
-Use only none, square-appointments, or cal-com for capabilityProfile.booking.provider.
-Use only none, memberstack, or clerk for capabilityProfile.memberships.provider.
+Use only none or sanity for capabilityProfile.cms.provider.
+Use only none for capabilityProfile.commerce.provider unless a legacy value is unavoidable.
+Use only none for capabilityProfile.commerce.productStrategy unless a legacy value is unavoidable.
+Use only none for capabilityProfile.booking.provider unless a legacy value is unavoidable.
+Use only none for capabilityProfile.memberships.provider unless a legacy value is unavoidable.
 No markdown code fences.`;
   }
 
