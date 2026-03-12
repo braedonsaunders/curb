@@ -11,6 +11,7 @@ export type DeploymentProvider =
   | "ssh-static";
 
 export interface Config {
+  appBaseUrl: string;
   googlePlacesApiKey: string;
   aiProvider: AiProvider;
   anthropicApiKey: string;
@@ -57,6 +58,8 @@ export interface Config {
   turnstileSecretKey: string;
   resendApiKey: string;
   resendFromEmail: string;
+  stripeSecretKey: string;
+  stripeWebhookSecret: string;
   sshHost: string;
   sshPort: number;
   sshUser: string;
@@ -74,6 +77,7 @@ export interface Config {
 type SettingKey = keyof Config;
 
 const DEFAULT_CONFIG: Config = {
+  appBaseUrl: "http://localhost:3000",
   googlePlacesApiKey: "",
   aiProvider: "anthropic",
   anthropicApiKey: "",
@@ -120,6 +124,8 @@ const DEFAULT_CONFIG: Config = {
   turnstileSecretKey: "",
   resendApiKey: "",
   resendFromEmail: "",
+  stripeSecretKey: "",
+  stripeWebhookSecret: "",
   sshHost: "",
   sshPort: 22,
   sshUser: "",

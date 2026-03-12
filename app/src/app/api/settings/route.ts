@@ -94,6 +94,11 @@ interface SettingsPayload {
   pricing: {
     text: string;
   };
+  sales: {
+    appBaseUrl: string;
+    stripeSecretKey: string;
+    stripeWebhookSecret: string;
+  };
 }
 
 type WritableSettingsSection =
@@ -102,7 +107,8 @@ type WritableSettingsSection =
   | "deployments"
   | "forms"
   | "outreach"
-  | "pricing";
+  | "pricing"
+  | "sales";
 
 function toSettingsPayload(config: Config): SettingsPayload {
   return {
@@ -173,6 +179,11 @@ function toSettingsPayload(config: Config): SettingsPayload {
     },
     pricing: {
       text: config.pricingText,
+    },
+    sales: {
+      appBaseUrl: config.appBaseUrl,
+      stripeSecretKey: config.stripeSecretKey,
+      stripeWebhookSecret: config.stripeWebhookSecret,
     },
   };
 }
@@ -330,6 +341,14 @@ function flattenSettingsPayload(
     };
   }
 
+  if (section === "sales") {
+    return {
+      appBaseUrl: String(source.appBaseUrl ?? "").trim(),
+      stripeSecretKey: String(source.stripeSecretKey ?? ""),
+      stripeWebhookSecret: String(source.stripeWebhookSecret ?? ""),
+    };
+  }
+
   throw new Error(`Unsupported settings section "${section}".`);
 }
 
@@ -357,6 +376,7 @@ function flattenFullPayload(data: unknown): Partial<Config> {
     ...("pricing" in source
       ? flattenSettingsPayload("pricing", source.pricing)
       : {}),
+    ...("sales" in source ? flattenSettingsPayload("sales", source.sales) : {}),
   };
 }
 

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { ensureActivationWorkerRunning } from '@/lib/activation-jobs';
 import {
   ensureEnrichmentWorkerRunning,
   runPendingEnrichmentPass,
@@ -8,6 +9,10 @@ import { getDb } from '@/lib/db';
 import { getConfig } from '@/lib/config';
 import { normalizeEmailRecord } from '@/lib/email-record';
 import { normalizeProviderActivationState } from '@/lib/provider-activation';
+import {
+  getLatestSaleForBusiness,
+  listActivationJobsForBusiness,
+} from '@/lib/sales';
 import {
   normalizeSiteCapabilityProfile,
 } from '@/lib/site-capabilities';
@@ -130,6 +135,7 @@ export async function GET(
   try {
     initializeDatabase();
     ensureEnrichmentWorkerRunning();
+    ensureActivationWorkerRunning();
     const db = getDb();
     const { id } = await context.params;
     const businessId = parseInt(id, 10);
@@ -169,6 +175,8 @@ export async function GET(
     );
     const customerProjectState = getCustomerProjectState(businessId);
     const config = getConfig();
+    const sale = getLatestSaleForBusiness(businessId);
+    const activationJobs = listActivationJobsForBusiness(businessId);
 
     // Add camelCase aliases for audits
     const normalizedAudits = (audits as Record<string, unknown>[]).map((audit) => {
@@ -236,6 +244,8 @@ export async function GET(
       publicPreviewUrlSource: previewLink.source,
       capabilityProfile,
       providerActivation,
+      sale,
+      activationJobs,
       audits: normalizedAudits,
       generatedSites: normalizedSites,
       emails: normalizedEmails,

@@ -50,8 +50,11 @@ import {
   ScanSearch,
   Camera,
   CircleAlert,
+  Copy,
+  DollarSign,
   Sparkles,
   FileCode2,
+  Link2,
 } from "lucide-react";
 import { SiteEditorDialog } from "@/components/site-editor-dialog";
 import {
@@ -200,12 +203,61 @@ interface BusinessDetail {
   publicPreviewUrlSource: "alias" | "deployment" | "local";
   capabilityProfile: SiteCapabilityProfile | null;
   providerActivation: ProviderActivationState;
+  sale: SaleData | null;
+  activationJobs: ActivationJobData[];
   hours_json: string | null;
   photos_json: string | null;
   audits: AuditData[];
   generatedSites: SiteData[];
   emails: EmailDraft[];
   siteDeployments: SiteDeploymentData[];
+}
+
+interface SaleData {
+  id: number;
+  publicToken: string;
+  mode: "handoff" | "managed";
+  status:
+    | "draft"
+    | "payment-pending"
+    | "paid"
+    | "fulfilled"
+    | "activation-failed"
+    | "cancelled";
+  currency: string;
+  oneTimeAmountCents: number;
+  monthlyAmountCents: number;
+  description: string;
+  customerEmail: string;
+  customerName: string;
+  notes: string;
+  stripePaymentLinkUrl: string | null;
+  stripeSubscriptionId: string | null;
+  paidAt: string | null;
+  fulfilledAt: string | null;
+  errorMessage: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+interface ActivationJobData {
+  id: number;
+  kind: string;
+  status: "queued" | "running" | "completed" | "failed";
+  attemptCount: number;
+  errorMessage: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+interface SaleDraftState {
+  mode: "handoff" | "managed";
+  currency: string;
+  oneTimeAmount: string;
+  monthlyAmount: string;
+  description: string;
+  customerEmail: string;
+  customerName: string;
+  notes: string;
 }
 
 interface GenerationActivity {
@@ -248,6 +300,36 @@ type SiteCapabilityOverrideState = {
   includeStorePack: boolean;
   commerceProvider: StoreCommerceProvider;
 };
+
+function centsToInput(value: number): string {
+  return value > 0 ? (value / 100).toFixed(2) : "";
+}
+
+function dollarsInputToCents(value: string): number {
+  const normalized = value.trim();
+  if (!normalized) {
+    return 0;
+  }
+
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? Math.round(parsed * 100)
+    : 0;
+}
+
+function buildSaleDraftState(business: BusinessDetail | null): SaleDraftState {
+  const sale = business?.sale;
+  return {
+    mode: sale?.mode ?? "handoff",
+    currency: sale?.currency ?? "usd",
+    oneTimeAmount: centsToInput(sale?.oneTimeAmountCents ?? 0),
+    monthlyAmount: centsToInput(sale?.monthlyAmountCents ?? 0),
+    description: sale?.description ?? "",
+    customerEmail: sale?.customerEmail ?? business?.email ?? "",
+    customerName: sale?.customerName ?? business?.name ?? "",
+    notes: sale?.notes ?? "",
+  };
+}
 
 function isTerminalGenerationStage(stage: string): boolean {
   return TERMINAL_GENERATION_STAGES.has(stage);
@@ -512,6 +594,9 @@ export default function BusinessDetailPage() {
   const [customerDomainDraft, setCustomerDomainDraft] = useState("");
   const [providerActivationDraft, setProviderActivationDraft] =
     useState<ProviderActivationState | null>(null);
+  const [saleDraft, setSaleDraft] = useState<SaleDraftState>(
+    buildSaleDraftState(null)
+  );
   const [siteCapabilityOverride, setSiteCapabilityOverride] =
     useState<SiteCapabilityOverrideState>({
       includeCmsPack: false,
@@ -545,6 +630,7 @@ export default function BusinessDetailPage() {
       setNotes(data.notes || "");
       setCustomerDomainDraft(data.customerDomain || "");
       setProviderActivationDraft(data.providerActivation);
+      setSaleDraft(buildSaleDraftState(data));
     } catch {
       toast.error("Failed to load business");
     } finally {
@@ -889,6 +975,9 @@ export default function BusinessDetailPage() {
   const publicPreviewUrl = biz?.publicPreviewUrl ?? null;
   const providerActivation =
     providerActivationDraft ?? biz?.providerActivation ?? null;
+  const sale = biz?.sale ?? null;
+  const activationJobs = biz?.activationJobs ?? [];
+  const latestActivationJob = activationJobs[0] ?? null;
   const providerActivationEntries = providerActivation
     ? ([
         ["hosting", providerActivation.hosting],
@@ -1146,6 +1235,116 @@ export default function BusinessDetailPage() {
         error instanceof Error
           ? error.message
           : "Failed to save provider activation"
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function saveSaleDraft() {
+    setActionLoading("sale");
+    try {
+      const res = await fetch(`/api/businesses/${id}/sale`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sale: {
+            currency: saleDraft.currency,
+            customerEmail: saleDraft.customerEmail,
+            customerName: saleDraft.customerName,
+            description: saleDraft.description,
+            mode: saleDraft.mode,
+            monthlyAmountCents: dollarsInputToCents(saleDraft.monthlyAmount),
+            notes: saleDraft.notes,
+            oneTimeAmountCents: dollarsInputToCents(saleDraft.oneTimeAmount),
+          },
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Failed to save sale draft");
+      }
+
+      toast.success("Sale draft saved");
+      await fetchBusiness();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to save sale draft"
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function createPaymentLink() {
+    setActionLoading("paymentLink");
+    try {
+      const res = await fetch(`/api/businesses/${id}/sale/payment-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sale: {
+            currency: saleDraft.currency,
+            customerEmail: saleDraft.customerEmail,
+            customerName: saleDraft.customerName,
+            description: saleDraft.description,
+            mode: saleDraft.mode,
+            monthlyAmountCents: dollarsInputToCents(saleDraft.monthlyAmount),
+            notes: saleDraft.notes,
+            oneTimeAmountCents: dollarsInputToCents(saleDraft.oneTimeAmount),
+          },
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            error?: string;
+            paymentLinkUrl?: string;
+          }
+        | null;
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Failed to create payment link");
+      }
+
+      if (data?.paymentLinkUrl) {
+        await navigator.clipboard
+          .writeText(data.paymentLinkUrl)
+          .catch(() => undefined);
+      }
+      toast.success(
+        data?.paymentLinkUrl
+          ? "Stripe payment link created and copied"
+          : "Stripe payment link created"
+      );
+      await fetchBusiness();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to create payment link"
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function queueSaleActivationRun() {
+    setActionLoading("saleActivation");
+    try {
+      const res = await fetch(`/api/businesses/${id}/sale/activate`, {
+        method: "POST",
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+      if (!res.ok) {
+        throw new Error(data?.error ?? "Failed to queue activation");
+      }
+
+      toast.success("Activation queued");
+      await fetchBusiness();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to queue activation"
       );
     } finally {
       setActionLoading(null);
@@ -1431,6 +1630,57 @@ export default function BusinessDetailPage() {
     return "Curb";
   }
 
+  function saleStatusLabel(status: SaleData["status"]) {
+    if (status === "payment-pending") {
+      return "Payment Pending";
+    }
+    if (status === "paid") {
+      return "Paid";
+    }
+    if (status === "fulfilled") {
+      return "Fulfilled";
+    }
+    if (status === "activation-failed") {
+      return "Activation Failed";
+    }
+    if (status === "cancelled") {
+      return "Cancelled";
+    }
+    return "Draft";
+  }
+
+  function saleStatusBadge(status: SaleData["status"]) {
+    if (status === "payment-pending") {
+      return "bg-amber-100 text-amber-800";
+    }
+    if (status === "paid") {
+      return "bg-blue-100 text-blue-800";
+    }
+    if (status === "fulfilled") {
+      return "bg-emerald-100 text-emerald-800";
+    }
+    if (status === "activation-failed") {
+      return "bg-red-100 text-red-800";
+    }
+    if (status === "cancelled") {
+      return "bg-slate-100 text-slate-700";
+    }
+    return "bg-muted text-muted-foreground";
+  }
+
+  function activationJobStatusBadge(status: ActivationJobData["status"]) {
+    if (status === "running") {
+      return "bg-blue-100 text-blue-800";
+    }
+    if (status === "completed") {
+      return "bg-emerald-100 text-emerald-800";
+    }
+    if (status === "failed") {
+      return "bg-red-100 text-red-800";
+    }
+    return "bg-amber-100 text-amber-800";
+  }
+
   const generationProgressPanel =
     generationRunning ||
     generationActivity.length > 0 ||
@@ -1640,6 +1890,7 @@ export default function BusinessDetailPage() {
           <TabsTrigger value="info">Info</TabsTrigger>
           <TabsTrigger value="audit">Audit</TabsTrigger>
           <TabsTrigger value="site">Site</TabsTrigger>
+          <TabsTrigger value="sales">Sales</TabsTrigger>
           <TabsTrigger value="outreach">Outreach</TabsTrigger>
         </TabsList>
 
@@ -2837,6 +3088,354 @@ export default function BusinessDetailPage() {
                 }}
               />
             ) : null}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="sales">
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <DollarSign className="size-4" />
+                  Checkout Offer
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Sale Mode</Label>
+                    <Select
+                      value={saleDraft.mode}
+                      onValueChange={(value) =>
+                        setSaleDraft((current) => ({
+                          ...current,
+                          mode: value === "managed" ? "managed" : "handoff",
+                          monthlyAmount:
+                            value === "handoff" ? "" : current.monthlyAmount,
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="handoff">
+                          One-Time ZIP Handoff
+                        </SelectItem>
+                        <SelectItem value="managed">
+                          Managed Hosting
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      `handoff` sells downloadable files only. `managed` sells
+                      the initial build plus monthly hosting and launch
+                      automation.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="saleCurrency">Currency</Label>
+                    <Input
+                      id="saleCurrency"
+                      value={saleDraft.currency}
+                      onChange={(event) =>
+                        setSaleDraft((current) => ({
+                          ...current,
+                          currency: event.target.value.toLowerCase(),
+                        }))
+                      }
+                      placeholder="usd"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="saleOneTimeAmount">One-Time Amount</Label>
+                    <Input
+                      id="saleOneTimeAmount"
+                      inputMode="decimal"
+                      value={saleDraft.oneTimeAmount}
+                      onChange={(event) =>
+                        setSaleDraft((current) => ({
+                          ...current,
+                          oneTimeAmount: event.target.value,
+                        }))
+                      }
+                      placeholder="1500.00"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="saleMonthlyAmount">Monthly Amount</Label>
+                    <Input
+                      id="saleMonthlyAmount"
+                      inputMode="decimal"
+                      value={saleDraft.monthlyAmount}
+                      onChange={(event) =>
+                        setSaleDraft((current) => ({
+                          ...current,
+                          monthlyAmount: event.target.value,
+                        }))
+                      }
+                      placeholder={saleDraft.mode === "managed" ? "99.00" : "Leave blank"}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Managed mode requires a monthly amount. Handoff mode
+                      should leave this blank.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="saleCustomerEmail">Customer Email</Label>
+                    <Input
+                      id="saleCustomerEmail"
+                      value={saleDraft.customerEmail}
+                      onChange={(event) =>
+                        setSaleDraft((current) => ({
+                          ...current,
+                          customerEmail: event.target.value,
+                        }))
+                      }
+                      placeholder="owner@business.com"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="saleCustomerName">Customer Name</Label>
+                    <Input
+                      id="saleCustomerName"
+                      value={saleDraft.customerName}
+                      onChange={(event) =>
+                        setSaleDraft((current) => ({
+                          ...current,
+                          customerName: event.target.value,
+                        }))
+                      }
+                      placeholder="Owner name"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="saleDescription">Offer Description</Label>
+                  <Input
+                    id="saleDescription"
+                    value={saleDraft.description}
+                    onChange={(event) =>
+                      setSaleDraft((current) => ({
+                        ...current,
+                        description: event.target.value,
+                      }))
+                    }
+                    placeholder="Optional internal label for this offer"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="saleNotes">Internal Notes</Label>
+                  <Textarea
+                    id="saleNotes"
+                    rows={4}
+                    value={saleDraft.notes}
+                    onChange={(event) =>
+                      setSaleDraft((current) => ({
+                        ...current,
+                        notes: event.target.value,
+                      }))
+                    }
+                    placeholder="Scope, delivery notes, or terms you want attached to this offer"
+                  />
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={saveSaleDraft}
+                    disabled={actionLoading === "sale"}
+                  >
+                    {actionLoading === "sale" ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Save className="size-4" />
+                    )}
+                    Save Offer
+                  </Button>
+                  <Button
+                    onClick={createPaymentLink}
+                    disabled={actionLoading === "paymentLink"}
+                  >
+                    {actionLoading === "paymentLink" ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <Link2 className="size-4" />
+                    )}
+                    Create Stripe Payment Link
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {sale ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center justify-between gap-3">
+                    <span>Current Sale</span>
+                    <Badge className={saleStatusBadge(sale.status)}>
+                      {saleStatusLabel(sale.status)}
+                    </Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 text-sm">
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Mode</p>
+                      <p className="font-medium">
+                        {sale.mode === "handoff"
+                          ? "One-Time ZIP Handoff"
+                          : "Managed Hosting"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">
+                        One-Time Amount
+                      </p>
+                      <p className="font-medium">
+                        {sale.currency.toUpperCase()} {centsToInput(sale.oneTimeAmountCents) || "0.00"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">
+                        Monthly Amount
+                      </p>
+                      <p className="font-medium">
+                        {sale.currency.toUpperCase()} {centsToInput(sale.monthlyAmountCents) || "0.00"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="text-xs text-muted-foreground">Paid At</p>
+                      <p className="font-medium">
+                        {sale.paidAt ? formatStoredDateTime(sale.paidAt) : "Not yet"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {sale.stripePaymentLinkUrl ? (
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="font-medium">Stripe Payment Link</p>
+                      <p className="break-all text-xs text-muted-foreground">
+                        {sale.stripePaymentLinkUrl}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <a
+                          href={sale.stripePaymentLinkUrl}
+                          rel="noopener noreferrer"
+                          target="_blank"
+                        >
+                          <Button variant="outline" size="sm">
+                            <ExternalLink className="size-4" />
+                            Open Link
+                          </Button>
+                        </a>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            await navigator.clipboard
+                              .writeText(sale.stripePaymentLinkUrl ?? "")
+                              .catch(() => undefined);
+                            toast.success("Payment link copied");
+                          }}
+                        >
+                          <Copy className="size-4" />
+                          Copy Link
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {sale.publicToken ? (
+                    <div className="rounded-lg border bg-muted/20 p-3">
+                      <p className="font-medium">Public Purchase Page</p>
+                      <p className="break-all text-xs text-muted-foreground">
+                        {typeof window !== "undefined"
+                          ? `${window.location.origin}/purchase/${sale.publicToken}`
+                          : `/purchase/${sale.publicToken}`}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {sale.errorMessage ? (
+                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                      {sale.errorMessage}
+                    </div>
+                  ) : null}
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={queueSaleActivationRun}
+                      disabled={
+                        actionLoading === "saleActivation" ||
+                        sale.status === "draft" ||
+                        sale.status === "payment-pending"
+                      }
+                    >
+                      {actionLoading === "saleActivation" ? (
+                        <Loader2 className="size-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="size-4" />
+                      )}
+                      Queue Activation
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Activation Jobs</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                {latestActivationJob ? (
+                  <div className="space-y-3">
+                    {activationJobs.map((job) => (
+                      <div
+                        key={job.id}
+                        className="rounded-lg border bg-muted/20 p-3"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <p className="font-medium">{job.kind}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Created {formatStoredDateTime(job.createdAt)}
+                            </p>
+                          </div>
+                          <Badge className={activationJobStatusBadge(job.status)}>
+                            {job.status}
+                          </Badge>
+                        </div>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Attempts: {job.attemptCount}
+                        </p>
+                        {job.errorMessage ? (
+                          <p className="mt-2 text-xs text-red-700">
+                            {job.errorMessage}
+                          </p>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-muted-foreground">
+                    No activation jobs have run for this business yet.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
 

@@ -130,6 +130,11 @@ interface SettingsData {
   pricing: {
     text: string;
   };
+  sales: {
+    appBaseUrl: string;
+    stripeSecretKey: string;
+    stripeWebhookSecret: string;
+  };
 }
 
 interface ProviderModelsResponse {
@@ -169,6 +174,7 @@ type SettingsResponse = Partial<
     | "forms"
     | "outreach"
     | "pricing"
+    | "sales"
   >
 > & {
   credentials?: Partial<SettingsData["credentials"]>;
@@ -183,6 +189,7 @@ type SettingsResponse = Partial<
   };
   outreach?: Partial<SettingsData["outreach"]>;
   pricing?: Partial<SettingsData["pricing"]>;
+  sales?: Partial<SettingsData["sales"]>;
 };
 
 const DEFAULT_SETTINGS: SettingsData = {
@@ -258,6 +265,11 @@ const DEFAULT_SETTINGS: SettingsData = {
   },
   outreach: { yourName: "", businessName: "", address: "", email: "" },
   pricing: { text: "" },
+  sales: {
+    appBaseUrl: "http://localhost:3000",
+    stripeSecretKey: "",
+    stripeWebhookSecret: "",
+  },
 };
 
 const DEPLOYMENT_PROVIDER_LABELS: Record<DeploymentProvider, string> = {
@@ -376,6 +388,7 @@ function normalizeSettingsData(data: SettingsResponse): SettingsData {
     },
     outreach: { ...DEFAULT_SETTINGS.outreach, ...(data.outreach ?? {}) },
     pricing: { ...DEFAULT_SETTINGS.pricing, ...(data.pricing ?? {}) },
+    sales: { ...DEFAULT_SETTINGS.sales, ...(data.sales ?? {}) },
   };
 }
 
@@ -397,6 +410,8 @@ export default function SettingsPage() {
     sharedFormSigningSecret: false,
     turnstileSecretKey: false,
     resendApiKey: false,
+    stripeSecretKey: false,
+    stripeWebhookSecret: false,
     sshPrivateKey: false,
   });
   const [oauthPhase, setOauthPhase] = useState<
@@ -692,6 +707,13 @@ export default function SettingsPage() {
 
   function toggleKeyVisibility(key: string) {
     setShowKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function updateSales(key: keyof SettingsData["sales"], value: string) {
+    setSettings((prev) => ({
+      ...prev,
+      sales: { ...prev.sales, [key]: value },
+    }));
   }
 
   const loadProviderModels = useCallback(async (
@@ -1164,6 +1186,7 @@ export default function SettingsPage() {
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="deployments">Deployments</TabsTrigger>
           <TabsTrigger value="forms">Forms</TabsTrigger>
+          <TabsTrigger value="sales">Sales</TabsTrigger>
           <TabsTrigger value="credentials">AI & APIs</TabsTrigger>
           <TabsTrigger value="defaults">Defaults</TabsTrigger>
           <TabsTrigger value="outreach">Outreach</TabsTrigger>
@@ -1841,6 +1864,116 @@ export default function SettingsPage() {
                     <Save className="size-4" />
                   )}
                   Save Form Settings
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="sales" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <DollarSign className="size-4" />
+                Sales Automation
+              </CardTitle>
+              <CardDescription>
+                Configure the public checkout return URL and the Stripe keys
+                used for automated payment links and post-payment activation.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="appBaseUrl">Public App Base URL</Label>
+                <Input
+                  id="appBaseUrl"
+                  value={settings.sales.appBaseUrl}
+                  onChange={(e) => updateSales("appBaseUrl", e.target.value)}
+                  placeholder="https://curb.example.com"
+                />
+                <p className="text-xs text-muted-foreground">
+                  This must be the public URL where Stripe should redirect
+                  buyers after checkout. Curb uses it for the public purchase
+                  status and ZIP download pages.
+                </p>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="stripeSecretKey">Stripe Secret Key</Label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Input
+                        id="stripeSecretKey"
+                        type={showKeys.stripeSecretKey ? "text" : "password"}
+                        value={settings.sales.stripeSecretKey}
+                        onChange={(e) =>
+                          updateSales("stripeSecretKey", e.target.value)
+                        }
+                        placeholder="sk_live_..."
+                      />
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => toggleKeyVisibility("stripeSecretKey")}
+                    >
+                      {showKeys.stripeSecretKey ? (
+                        <EyeOff className="size-4" />
+                      ) : (
+                        <Eye className="size-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="stripeWebhookSecret">
+                    Stripe Webhook Secret
+                  </Label>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Input
+                        id="stripeWebhookSecret"
+                        type={showKeys.stripeWebhookSecret ? "text" : "password"}
+                        value={settings.sales.stripeWebhookSecret}
+                        onChange={(e) =>
+                          updateSales("stripeWebhookSecret", e.target.value)
+                        }
+                        placeholder="whsec_..."
+                      />
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => toggleKeyVisibility("stripeWebhookSecret")}
+                    >
+                      {showKeys.stripeWebhookSecret ? (
+                        <EyeOff className="size-4" />
+                      ) : (
+                        <Eye className="size-4" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border bg-muted/20 p-4 text-sm text-muted-foreground">
+                Point Stripe at <code>{settings.sales.appBaseUrl || "https://your-app.example.com"}/api/stripe/webhook</code> for
+                <code className="ml-1">checkout.session.completed</code>.
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => saveSection("sales")}
+                  disabled={saving === "sales"}
+                >
+                  {saving === "sales" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Save className="size-4" />
+                  )}
+                  Save Sales Settings
                 </Button>
               </div>
             </CardContent>

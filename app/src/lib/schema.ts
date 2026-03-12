@@ -152,6 +152,47 @@ export function initializeDatabase(): void {
       created_at TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS sales (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      business_id INTEGER NOT NULL REFERENCES businesses(id),
+      public_token TEXT UNIQUE NOT NULL,
+      mode TEXT NOT NULL DEFAULT 'handoff',
+      status TEXT NOT NULL DEFAULT 'draft',
+      currency TEXT NOT NULL DEFAULT 'usd',
+      one_time_amount_cents INTEGER NOT NULL DEFAULT 0,
+      monthly_amount_cents INTEGER NOT NULL DEFAULT 0,
+      description TEXT,
+      customer_email TEXT,
+      customer_name TEXT,
+      notes TEXT,
+      stripe_payment_link_id TEXT,
+      stripe_payment_link_url TEXT,
+      stripe_checkout_session_id TEXT,
+      stripe_customer_id TEXT,
+      stripe_subscription_id TEXT,
+      paid_at TEXT,
+      fulfilled_at TEXT,
+      error_message TEXT,
+      metadata_json TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS activation_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      business_id INTEGER NOT NULL REFERENCES businesses(id),
+      sale_id INTEGER REFERENCES sales(id),
+      kind TEXT NOT NULL DEFAULT 'post-payment-activation',
+      status TEXT NOT NULL DEFAULT 'queued',
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT,
+      result_json TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE INDEX IF NOT EXISTS idx_businesses_status ON businesses(status);
     CREATE INDEX IF NOT EXISTS idx_businesses_category ON businesses(category);
     CREATE INDEX IF NOT EXISTS idx_audits_business_id ON audits(business_id);
@@ -160,6 +201,10 @@ export function initializeDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_site_deployments_generated_site_id ON site_deployments(generated_site_id);
     CREATE INDEX IF NOT EXISTS idx_emails_business_id ON emails(business_id);
     CREATE INDEX IF NOT EXISTS idx_activity_logs_created_at ON activity_logs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sales_business_id ON sales(business_id, created_at DESC, id DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_public_token ON sales(public_token);
+    CREATE INDEX IF NOT EXISTS idx_activation_jobs_business_id ON activation_jobs(business_id, created_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_activation_jobs_status ON activation_jobs(status, created_at ASC, id ASC);
   `);
 
   ensureColumn("audits", "owner_sentiment", "owner_sentiment TEXT");
@@ -260,6 +305,58 @@ export function initializeDatabase(): void {
     "metadata_json",
     "metadata_json TEXT"
   );
+  ensureColumn("sales", "public_token", "public_token TEXT");
+  ensureColumn("sales", "mode", "mode TEXT NOT NULL DEFAULT 'handoff'");
+  ensureColumn("sales", "status", "status TEXT NOT NULL DEFAULT 'draft'");
+  ensureColumn("sales", "currency", "currency TEXT NOT NULL DEFAULT 'usd'");
+  ensureColumn(
+    "sales",
+    "one_time_amount_cents",
+    "one_time_amount_cents INTEGER NOT NULL DEFAULT 0"
+  );
+  ensureColumn(
+    "sales",
+    "monthly_amount_cents",
+    "monthly_amount_cents INTEGER NOT NULL DEFAULT 0"
+  );
+  ensureColumn("sales", "description", "description TEXT");
+  ensureColumn("sales", "customer_email", "customer_email TEXT");
+  ensureColumn("sales", "customer_name", "customer_name TEXT");
+  ensureColumn("sales", "notes", "notes TEXT");
+  ensureColumn(
+    "sales",
+    "stripe_payment_link_id",
+    "stripe_payment_link_id TEXT"
+  );
+  ensureColumn(
+    "sales",
+    "stripe_payment_link_url",
+    "stripe_payment_link_url TEXT"
+  );
+  ensureColumn(
+    "sales",
+    "stripe_checkout_session_id",
+    "stripe_checkout_session_id TEXT"
+  );
+  ensureColumn("sales", "stripe_customer_id", "stripe_customer_id TEXT");
+  ensureColumn(
+    "sales",
+    "stripe_subscription_id",
+    "stripe_subscription_id TEXT"
+  );
+  ensureColumn("sales", "paid_at", "paid_at TEXT");
+  ensureColumn("sales", "fulfilled_at", "fulfilled_at TEXT");
+  ensureColumn("sales", "error_message", "error_message TEXT");
+  ensureColumn("sales", "metadata_json", "metadata_json TEXT");
+  ensureColumn(
+    "activation_jobs",
+    "attempt_count",
+    "attempt_count INTEGER NOT NULL DEFAULT 0"
+  );
+  ensureColumn("activation_jobs", "error_message", "error_message TEXT");
+  ensureColumn("activation_jobs", "result_json", "result_json TEXT");
+  ensureColumn("activation_jobs", "started_at", "started_at TEXT");
+  ensureColumn("activation_jobs", "completed_at", "completed_at TEXT");
   ensureColumn("generated_sites", "warnings_json", "warnings_json TEXT");
 
   db.prepare(
