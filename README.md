@@ -1,4 +1,3 @@
-# curb
 
 <p align="center">
   <img src="curb-readme.png" alt="Curb" width="600" />
