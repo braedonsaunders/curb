@@ -1,7 +1,8 @@
 # curb
 
 <p align="center">
-  <img src="./docs/readme-hero.svg" alt="Curb hero showing the flow from weak websites to generated previews and proof-first outreach." width="100%" />
+  <img src="curb-readme.png" alt="Curb" width="600" />
+  />
 </p>
 
 <p align="center"><strong>Cold outreach with receipts.</strong></p>
