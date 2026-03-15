@@ -1,7 +1,6 @@
 
 <p align="center">
   <img src="curb-readme.png" alt="Curb" width="600" />
-  />
 </p>
 
 <p align="center"><strong>Cold outreach with receipts.</strong></p>
