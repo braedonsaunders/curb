@@ -10,14 +10,20 @@ out/
 *.db-journal
 *.db-wal
 *.db-shm
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 
 # Launcher runtime
 .curb-runtime/
 
-# Generated sites
+# Local generated content
 sites/
 !app/src/app/api/sites/
 !app/src/app/api/sites/**
+site-backups/
+output/
 
 # Environment
 .env

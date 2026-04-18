@@ -72,9 +72,12 @@ This is not another generic AI site builder. It is an outbound engine for sellin
 
 - `curb.db` stores the pipeline data.
 - `sites/` stores generated websites.
+- `site-backups/` stores automatic edit backups for generated sites.
 - `.curb-runtime/` stores launcher and runtime state.
 - `app/` contains the local dashboard and API routes.
 - No auth is required just to use the product.
+
+Local runtime data and customer artifacts stay on your machine and should stay out of git.
 
 The default preview base URL is local. If you want prospects to open the site from your outreach email, set a public `Preview Base URL` in Settings before sending anything.
 
@@ -121,10 +124,11 @@ Then open [http://localhost:3000](http://localhost:3000).
 ```text
 curb/
 ├── app/               # Next.js dashboard and local API routes
-├── sites/             # generated static sites
+├── sites/             # generated static sites (local, gitignored)
+├── site-backups/      # automatic edit backups (local, gitignored)
 ├── prompts/           # AI prompt templates
 ├── scripts/           # launcher scripts
-├── curb.db            # SQLite database
+├── curb.db            # SQLite database (local, gitignored)
 └── .curb-runtime/     # launcher/runtime state
 ```
 

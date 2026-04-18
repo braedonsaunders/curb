@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1979,11 +1980,14 @@ export default function BusinessDetailPage() {
                     {photos.map((photo, i) => (
                       <div
                         key={photo.reference || i}
-                        className="aspect-square overflow-hidden rounded-lg bg-muted"
+                        className="relative aspect-square overflow-hidden rounded-lg bg-muted"
                       >
-                        <img
+                        <Image
                           src={photo.url}
                           alt={`${biz.name} photo ${i + 1}`}
+                          fill
+                          unoptimized
+                          sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, 25vw"
                           className="size-full object-cover"
                           loading="lazy"
                         />
@@ -2184,10 +2188,13 @@ export default function BusinessDetailPage() {
                   </CardHeader>
                   <CardContent>
                     {audit.screenshotUrl ? (
-                      <img
+                      <Image
                         src={audit.screenshotUrl}
                         alt={`${biz.name} website screenshot`}
-                        className="w-full rounded-xl border object-cover"
+                        width={1600}
+                        height={900}
+                        unoptimized
+                        className="h-auto w-full rounded-xl border object-cover"
                       />
                     ) : (
                       <div className="flex min-h-64 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground">
